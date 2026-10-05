@@ -241,6 +241,19 @@ async function gmail(db: any, auth: any, op: string, p: URLSearchParams): Promis
   if (op === 'mkdir') {
     const name = (p.get('name') || '').trim()
     if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 })
+    // PASTA DE CARRO NUNCA NA RAIZ (Márcio, 05/out/2026 — a pasta de e-mail do carro é sagrada): nome que começa com
+    // código de carro («US.037 - HellMonster») é criado/achado DENTRO de Rides. Foi assim que nasceu pasta solta na raiz.
+    if (/^(US.QT|US|SC|WV|PO|SHP|BR).d/.test(name)) {
+      const exR = await (await fetch(`${API}/labels`, { headers: GH })).json()
+      const full = 'Rides/' + name
+      const cod = name.split(' ')[0]
+      const hitR = (exR?.labels || []).find((l: any) => String(l.name).toLowerCase() === full.toLowerCase())
+        || (exR?.labels || []).find((l: any) => { const n = String(l.name); return n.toLowerCase().startsWith('rides/') && (n.slice(6) === cod || n.slice(6).startsWith(cod + ' ')) })
+      if (hitR) return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: hitR.id, name: hitR.name }, existed: true })
+      const cR = await (await fetch(`${API}/labels`, { method: 'POST', headers: { ...GH, 'Content-Type': 'application/json' }, body: JSON.stringify({ name: full, labelListVisibility: 'labelShow', messageListVisibility: 'show' }) })).json()
+      if (!cR?.id) return NextResponse.json({ error: cR?.error?.message || 'mkdir failed' }, { status: 502 })
+      return NextResponse.json({ account: auth.account, provider: 'gmail', folder: { id: cR.id, name: cR.name }, existed: false })
+    }
     // Rotulo repetido devolve 409 no Gmail; procurar antes deixa o op idempotente.
     const ex = await (await fetch(`${API}/labels`, { headers: GH })).json()
     const hit = (ex?.labels || []).find((l: any) => String(l.name).toLowerCase() === name.toLowerCase())
@@ -448,6 +461,23 @@ export async function GET(req: NextRequest) {
     const name = (p.get('name') || '').trim()
     if (!name) return NextResponse.json({ error: 'missing name' }, { status: 400 })
     const ex = await fetch(`${G}/me/mailFolders?$top=200&$select=id,displayName`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+    // PASTA DE CARRO NUNCA NA RAIZ (Márcio, 05/out/2026 — sagrada): nome que começa com código de carro é criado/achado
+    // DENTRO de Rides (a pasta deste código, se já existe, é a devolvida). Este op criava só na raiz, e foi assim que
+    // «US.037 - HellMonster» nasceu fora de Rides nas caixas 1 e 2.
+    if (/^(US.QT|US|SC|WV|PO|SHP|BR).d/.test(name)) {
+      const rides = (ex?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
+      if (rides) {
+        const kids: any[] = []
+        let next: string | null = `${G}/me/mailFolders/${encodeURIComponent(rides.id)}/childFolders?$top=100&$select=id,displayName`
+        while (next) { const r: any = await fetch(next, { headers: gh(token) }).then(x => x.json()).catch(() => null); kids.push(...(r?.value || [])); next = r?.['@odata.nextLink'] || null }
+        const cod = name.split(' ')[0]
+        const hitR = kids.find(f => String(f.displayName).toLowerCase() === name.toLowerCase()) || kids.find(f => { const n = String(f.displayName); return n === cod || n.startsWith(cod + ' ') })
+        if (hitR) return NextResponse.json({ account: auth.account, folder: { id: hitR.id, name: hitR.displayName, parent: 'Rides' }, existed: true })
+        const cR = await fetch(`${G}/me/mailFolders/${encodeURIComponent(rides.id)}/childFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: name }) }).then(r => r.json()).catch(() => null)
+        if (!cR?.id) return NextResponse.json({ error: cR?.error?.message || 'mkdir failed' }, { status: 502 })
+        return NextResponse.json({ account: auth.account, folder: { id: cR.id, name: cR.displayName, parent: 'Rides' }, existed: false })
+      }
+    }
     const hit = (ex?.value || []).find((f: any) => String(f.displayName).toLowerCase() === name.toLowerCase())
     if (hit) return NextResponse.json({ account: auth.account, folder: { id: hit.id, name: hit.displayName }, existed: true })
     const c = await fetch(`${G}/me/mailFolders`, { method: 'POST', headers: { ...gh(token), 'Content-Type': 'application/json' }, body: JSON.stringify({ displayName: name }) }).then(r => r.json()).catch(() => null)
