@@ -1328,7 +1328,8 @@ const BS_FIELDS: BSField[] = [
   { key: 'fuel_pump', label: 'FuelPump', kind: 'so' },
   { key: 'bap', label: 'BAP', kind: 'enum', options: ['NO', 'YES'] },
   { key: 'fuel_line', label: 'FuelLine', kind: 'so' },
-  { key: 'fuel_press_regulator', label: 'FuelPress Regulator', kind: 'enum', options: ['Stock', 'External'] },
+  // Stock / External / Other + texto livre (Márcio, 05/out/2026): regulador que não é nem o de fábrica nem «External» puro.
+  { key: 'fuel_press_regulator', label: 'FuelPress Regulator', kind: 'so', options: ['External'] },
   { key: 'flex_sensor', label: 'FlexSensor', kind: 'enum', options: ['Stock', 'ECU Wired', 'Gauge Wired', 'NO'] },
   { key: 'fuel', label: 'Fuel', kind: 'enum', options: BS_FUEL_OPTIONS },
   { key: 'transmission', label: 'Transmission', kind: 'so' },
