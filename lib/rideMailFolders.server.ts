@@ -320,3 +320,168 @@ export async function ensureRideMailFolders(
   }))
   return out
 }
+
+// ── E-MAIL DE CARRO NA CAIXA DA OUTRA EMPRESA VOLTA PARA CASA (Márcio, 05/out/2026: «Remove empty, move the mail») ──
+// Sobra da época em que qualquer caixa guardava qualquer carro: «Rides/BR.538 - RussianRoulette» com 14 mensagens na
+// gz28us@hotmail, «Rides/US.038 - SublimeHell» com 4 na galpaoz28. E-mail não MUDA de conta por «move» — o Graph só move
+// dentro da mesma caixa. Então, para cada mensagem de uma pasta `foreign`:
+//   1. nasce uma CÓPIA na pasta do mesmo carro, na caixa principal da empresa dele (US → 1, BR → 2): mesmo remetente,
+//      destinatários, corpo, anexos, data de envio e de chegada, lida/não lida — e NÃO como rascunho (PR_MESSAGE_FLAGS);
+//   2. a cópia é conferida (existe, não é rascunho, anexos todos lá);
+//   3. só então o ORIGINAL sai da pasta do carro para o «Arquivo morto» (Archive) da caixa de origem. NADA É APAGADO: o
+//      original, com os cabeçalhos de internet que a cópia não carrega, continua existindo — importa em caso de disputa;
+//   4. pasta esvaziada (ou que já estava vazia) é removida.
+// Idempotente: a cópia leva a marca GZ28Origem (id de internet do original); rodar de novo não duplica — acha a cópia,
+// e só termina o passo 3. Mensagem com anexo que não dá para copiar inteiro (anexo-item, link de nuvem, > 3 MB) NÃO é
+// tocada: fica onde está e vai para `failed`. Só roda quando chamado (POST action=repatriate) — o cron não faz isto.
+export const CAIXA_PRINCIPAL: Record<Empresa, number> = { US: 1, BR: 2 }
+const MARCA_ORIGEM = 'String {66f5a359-4659-4830-9070-00047ec6ac6e} Name GZ28Origem'
+const GRAPH = 'https://graph.microsoft.com/v1.0'
+export type RepatriateFolderReport = {
+  from: string; to: string; total: number
+  copied: number; alreadyThere: number; archived: number; folderRemoved: boolean
+  failed: string[]; note: string
+  plan?: { subject: string; received: string; attachments: string[] }[]
+}
+
+async function graphJson(url: string, init: RequestInit): Promise<{ ok: boolean; status: number; j: any }> {
+  const r = await comFolego(url, init)
+  const j: any = await r.json().catch(() => null)
+  return { ok: r.ok, status: r.status, j }
+}
+
+export async function repatriateRideMail(
+  db: SupabaseClient, frotas: Record<Empresa, RideMailCar[]>, opts: { dryRun?: boolean; folder?: string; limit?: number } = {},
+): Promise<RepatriateFolderReport[]> {
+  const out: RepatriateFolderReport[] = []
+  const tokens = new Map<number, { token: string; account: string; provider: string } | null>()
+  const caixa = async (slot: number) => {
+    if (tokens.has(slot)) return tokens.get(slot)!
+    const auth = await getMailAuth(db, slot)
+    const token = auth?.refresh_token ? await freshAccessToken(db, auth) : null
+    const v = auth && token ? { token, account: String(auth.account || ''), provider: mailProvider(auth) } : null
+    tokens.set(slot, v)
+    return v
+  }
+  const arvores = new Map<number, Awaited<ReturnType<typeof graphAll>>>()
+  const arvore = async (slot: number, token: string) => { if (!arvores.has(slot)) arvores.set(slot, await graphAll(token)); return arvores.get(slot)! }
+  const filhasDeRides = (todas: Awaited<ReturnType<typeof graphAll>>) => {
+    const pai = todas.find(f => !f.parentId && String(f.displayName).trim().toLowerCase() === 'rides')
+    return pai ? todas.filter(f => f.parentId === pai.id) : []
+  }
+  const tipo = (a: any) => String(a?.['@odata.type'] || '').split('.').pop() || 'anexo'
+  const kb = (a: any) => Math.round(Number(a?.size) / 1024)
+  let restam = opts.limit && opts.limit > 0 ? opts.limit : Infinity
+
+  for (const slotOrigem of [...CAIXAS_DA_EMPRESA.US, ...CAIXAS_DA_EMPRESA.BR]) {
+    const casa = empresaDaCaixa(slotOrigem)!
+    const o = await caixa(slotOrigem)
+    if (!o) { out.push({ from: `caixa ${slotOrigem}`, to: '', total: 0, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: ['caixa sem conexão'], note: '' }); continue }
+    if (o.provider === 'gmail') continue   // Gmail como origem ainda não é atendido; a auditoria (`foreign`) continua acusando se aparecer
+    const HO = { Authorization: `Bearer ${o.token}`, 'Content-Type': 'application/json' }
+    const deFora = filhasDeRides(await arvore(slotOrigem, o.token)).filter(f => CARA_DE_CODIGO.test(f.displayName.trim()) && empresaDoCodigo(f.displayName) !== casa)
+    const removeSeVazia = async (id: string) => {
+      const info = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}?$select=id,totalItemCount,childFolderCount`, { headers: HO })
+      if (!info.ok || info.j.totalItemCount || info.j.childFolderCount) return false
+      return (await comFolego(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}`, { method: 'DELETE', headers: HO })).ok
+    }
+    for (const pasta of deFora) {
+      if (opts.folder && pasta.displayName.trim() !== opts.folder.trim()) continue
+      const dono = empresaDoCodigo(pasta.displayName)
+      const rep: RepatriateFolderReport = { from: `${o.account} · Rides/${pasta.displayName}`, to: '', total: pasta.itens, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: [], note: '' }
+      out.push(rep)
+      try {
+        // Pasta vazia de carro de fora: só a casca. Sai.
+        if (!pasta.itens) {
+          if (!opts.dryRun) rep.folderRemoved = await removeSeVazia(pasta.id)
+          rep.note = 'vazia' + (opts.dryRun ? ' — seria removida' : rep.folderRemoved ? ' — removida' : ' — não saiu')
+          continue
+        }
+        // O carro desta pasta: mesmo código E mesmo nome. Código de um, nome de outro = não é dele; gente decide.
+        const car = frotas[dono].find(c => daPasta(pasta.displayName, limpa(c.code), limpa(c.name)))
+        if (!car) { rep.note = `nenhum carro do ${dono} com este código e este nome — nada feito`; continue }
+        const slotDestino = CAIXA_PRINCIPAL[dono]
+        const d = await caixa(slotDestino)
+        if (!d || d.provider === 'gmail') { rep.failed.push(`caixa ${slotDestino} (destino) sem conexão`); continue }
+        const HD = { Authorization: `Bearer ${d.token}`, 'Content-Type': 'application/json' }
+        const alvo = alvoDe(car)
+        const destino = filhasDeRides(await arvore(slotDestino, d.token)).find(f => f.displayName.trim() === alvo)
+        rep.to = `${d.account} · Rides/${alvo}`
+        if (!destino) { rep.failed.push('a pasta do carro ainda não existe na caixa de destino — rode a sincronização primeiro'); continue }
+
+        // As mensagens da pasta (todas as páginas), mais antigas primeiro.
+        const msgs: any[] = []
+        let next: string | null = `${GRAPH}/me/mailFolders/${encodeURIComponent(pasta.id)}/messages?$top=25&$orderby=receivedDateTime asc&$select=id,subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,body,receivedDateTime,sentDateTime,internetMessageId,importance,isRead,isDraft,categories`
+        while (next) {
+          const r: { ok: boolean; status: number; j: any } = await graphJson(next, { headers: HO })
+          if (!r.ok) throw new Error('listar mensagens: HTTP ' + r.status)
+          msgs.push(...(r.j.value || []))
+          next = r.j['@odata.nextLink'] || null
+        }
+        if (opts.dryRun) rep.plan = []
+        for (const m of msgs) {
+          if (restam <= 0) { rep.note = 'limite desta chamada atingido — rode de novo para o resto'; break }
+          const rotulo = `«${String(m.subject || '(sem assunto)').slice(0, 60)}» ${String(m.receivedDateTime || '').slice(0, 10)}`
+          try {
+            if (m.isDraft) { rep.failed.push(`${rotulo}: é rascunho — fica onde está`); continue }
+            // Anexos: só arquivo de até 3 MB vai inteiro pela API simples. O resto não se copia pela metade.
+            const la = await graphJson(`${GRAPH}/me/messages/${encodeURIComponent(m.id)}/attachments?$select=id,name,contentType,size,isInline`, { headers: HO })
+            if (!la.ok) throw new Error('listar anexos: HTTP ' + la.status)
+            const anexos: any[] = la.j.value || []
+            const ruim = anexos.find(a => a['@odata.type'] !== '#microsoft.graph.fileAttachment' || Number(a.size) > 3 * 1024 * 1024)
+            if (opts.dryRun) rep.plan!.push({ subject: String(m.subject || ''), received: String(m.receivedDateTime || ''), attachments: anexos.map(a => `${a.name} · ${kb(a)} KB · ${tipo(a)}`) })
+            if (ruim) { rep.failed.push(`${rotulo}: anexo «${ruim.name}» não dá para copiar inteiro (${tipo(ruim)}, ${kb(ruim)} KB) — a mensagem fica onde está`); continue }
+            if (opts.dryRun) continue
+
+            const origem = String(m.internetMessageId || m.id)
+            const filtro = `singleValueExtendedProperties/Any(ep: ep/id eq '${MARCA_ORIGEM}' and ep/value eq '${origem.replace(/'/g, "''")}')`
+            const ja = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(destino.id)}/messages?$select=id,isDraft&$top=1&$filter=${encodeURIComponent(filtro)}`, { headers: HD })
+            if (!ja.ok) throw new Error(`procurar a cópia no destino: HTTP ${ja.status} ${JSON.stringify(ja.j?.error || {}).slice(0, 140)}`)
+            let copiaId = String(ja.j.value?.[0]?.id || '')
+            if (copiaId) rep.alreadyThere++
+            else {
+              const corpo: any = {
+                subject: m.subject ?? '', body: m.body, importance: m.importance || 'normal', categories: m.categories || [],
+                toRecipients: m.toRecipients || [], ccRecipients: m.ccRecipients || [], bccRecipients: m.bccRecipients || [], replyTo: m.replyTo || [],
+                singleValueExtendedProperties: [
+                  { id: 'Integer 0x0E07', value: '1' },                        // PR_MESSAGE_FLAGS = lida, e NÃO «não enviada» (rascunho)
+                  { id: MARCA_ORIGEM, value: origem },
+                  ...(m.receivedDateTime ? [{ id: 'SystemTime 0x0E06', value: m.receivedDateTime }] : []),   // PR_MESSAGE_DELIVERY_TIME
+                  ...(m.sentDateTime ? [{ id: 'SystemTime 0x0039', value: m.sentDateTime }] : []),           // PR_CLIENT_SUBMIT_TIME
+                ],
+              }
+              if (m.from?.emailAddress?.address) corpo.from = m.from
+              if (m.sender?.emailAddress?.address) corpo.sender = m.sender
+              const cr = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(destino.id)}/messages`, { method: 'POST', headers: HD, body: JSON.stringify(corpo) })
+              if (!cr.ok || !cr.j?.id) throw new Error(`criar a cópia: HTTP ${cr.status} ${JSON.stringify(cr.j?.error || {}).slice(0, 160)}`)
+              copiaId = String(cr.j.id)
+              const desfaz = async (porque: string): Promise<never> => { await comFolego(`${GRAPH}/me/messages/${encodeURIComponent(copiaId)}`, { method: 'DELETE', headers: HD }); throw new Error(porque + ' — cópia desfeita, original intacto') }
+              if (cr.j.isDraft) await desfaz('a cópia nasceu como rascunho')
+              for (const a of anexos) {
+                const ga = await graphJson(`${GRAPH}/me/messages/${encodeURIComponent(m.id)}/attachments/${encodeURIComponent(a.id)}`, { headers: HO })
+                if (!ga.ok || !ga.j?.contentBytes) await desfaz(`ler o anexo «${a.name}»: HTTP ${ga.status}`)
+                const pa = await graphJson(`${GRAPH}/me/messages/${encodeURIComponent(copiaId)}/attachments`, { method: 'POST', headers: HD, body: JSON.stringify({ '@odata.type': '#microsoft.graph.fileAttachment', name: ga.j.name, contentType: ga.j.contentType, contentBytes: ga.j.contentBytes, isInline: !!ga.j.isInline, ...(ga.j.contentId ? { contentId: ga.j.contentId } : {}) }) })
+                if (!pa.ok) await desfaz(`gravar o anexo «${a.name}»: HTTP ${pa.status} ${JSON.stringify(pa.j?.error || {}).slice(0, 120)}`)
+              }
+              if (m.isRead === false) await comFolego(`${GRAPH}/me/messages/${encodeURIComponent(copiaId)}`, { method: 'PATCH', headers: HD, body: JSON.stringify({ isRead: false }) })
+              rep.copied++
+            }
+            // Confere a cópia antes de mexer no original: existe, não é rascunho, anexos todos lá.
+            const cf = await graphJson(`${GRAPH}/me/messages/${encodeURIComponent(copiaId)}?$select=id,isDraft,subject&$expand=attachments($select=id)`, { headers: HD })
+            if (!cf.ok || cf.j.isDraft || (cf.j.attachments || []).length !== anexos.length) { rep.failed.push(`${rotulo}: a cópia não conferiu (HTTP ${cf.status}, rascunho ${!!cf.j?.isDraft}, anexos ${(cf.j?.attachments || []).length}/${anexos.length}) — original intacto`); continue }
+            const mv = await graphJson(`${GRAPH}/me/messages/${encodeURIComponent(m.id)}/move`, { method: 'POST', headers: HO, body: JSON.stringify({ destinationId: 'archive' }) })
+            if (!mv.ok) { rep.failed.push(`${rotulo}: cópia feita, mas o original não foi para o Arquivo morto (HTTP ${mv.status}) — continua na pasta`); continue }
+            rep.archived++
+            restam--
+          } catch (e) {
+            rep.failed.push(`${rotulo}: ${String((e as Error)?.message || e).slice(0, 220)}`)
+          }
+        }
+        if (!opts.dryRun && !rep.failed.length && !rep.note) rep.folderRemoved = await removeSeVazia(pasta.id)
+      } catch (e) {
+        rep.failed.push(String((e as Error)?.message || e).slice(0, 220))
+      }
+    }
+  }
+  return out
+}

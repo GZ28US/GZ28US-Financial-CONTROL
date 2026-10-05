@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
-import { ensureRideMailFolders, empresaDoCodigo, CAIXAS_DA_EMPRESA, type RideMailCar, type Empresa, type EnsureSlotReport } from '@/lib/rideMailFolders.server'
+import { ensureRideMailFolders, repatriateRideMail, empresaDoCodigo, CAIXAS_DA_EMPRESA, type RideMailCar, type Empresa, type EnsureSlotReport } from '@/lib/rideMailFolders.server'
 
 // A PASTA DE E-MAIL DO CARRO É SAGRADA (Márcio, 05/out/2026): «all the folders there must be 100% synced with the app».
 // E CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (ele, no mesmo dia): «gz28 both hotmail and gmais should have US cars /
@@ -62,6 +62,18 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   if (!cronOk(req) && !readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => ({}))
+  // { action: 'repatriate', dryRun?, folder?, limit? } — e-mail de carro que está na caixa da OUTRA empresa volta para casa
+  // (Márcio, 05/out/2026: «Remove empty, move the mail»). Cópia conferida no destino, original para o Arquivo morto da
+  // origem, casca vazia removida; nada é apagado. Só roda por este pedido explícito — o cron (GET) nunca faz isto.
+  if (b.action === 'repatriate') {
+    try {
+      const [us, br] = await Promise.all([frota('US'), frota('BR')])
+      const folders = await repatriateRideMail(streamDb(), { US: us, BR: br }, { dryRun: !!b.dryRun, folder: b.folder ? String(b.folder) : undefined, limit: Number(b.limit) || undefined })
+      return NextResponse.json({ ok: !folders.some(f => f.failed.length), dryRun: !!b.dryRun, folders })
+    } catch (e) {
+      return NextResponse.json({ ok: false, error: String((e as Error)?.message || e).slice(0, 300) }, { status: 500 })
+    }
+  }
   const code = String(b.code || '').trim(), name = String(b.name || '').trim()
   if (!code) return NextResponse.json({ error: 'code obrigatório' }, { status: 400 })
   if (/^(US|BR)\.QT\./.test(code)) return NextResponse.json({ ok: true, result: 'quote não tem pasta de e-mail', slots: [] })
