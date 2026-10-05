@@ -310,10 +310,17 @@ export async function GET(req: NextRequest) {
 
   if (op === 'folders') {
     const walk = async (base: string, depth: number): Promise<any[]> => {
-      const r = await fetch(`${base}?$top=200&$select=id,displayName,totalItemCount,unreadItemCount,childFolderCount`, { headers: gh(token) })
-      const data = await r.json().catch(() => null)
+      // PAGINA até o fim (05/out/2026): lia só a 1ª página de 200, e «Rides» da galpaoz28 passou de 185 pastas quando os
+      // carros do BR ganharam pasta — a listagem devolvia um pedaço da frota e quem arquivava «não achava» a pasta do carro.
+      const itens: any[] = []
+      let next: string | null = `${base}?$top=200&$select=id,displayName,totalItemCount,unreadItemCount,childFolderCount`
+      while (next) {
+        const data: any = await fetch(next, { headers: gh(token) }).then(r => r.json()).catch(() => null)
+        itens.push(...(data?.value || []))
+        next = data?.['@odata.nextLink'] || null
+      }
       const out: any[] = []
-      for (const f of data?.value || []) {
+      for (const f of itens) {
         const node: any = { id: f.id, name: f.displayName, total: f.totalItemCount, unread: f.unreadItemCount }
         if (depth > 0 && f.childFolderCount > 0) node.children = await walk(`${G}/me/mailFolders/${f.id}/childFolders`, depth - 1)
         out.push(node)
