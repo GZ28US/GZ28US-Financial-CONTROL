@@ -178,7 +178,8 @@ export async function ensureRideMailFolders(
 
       // As duas caixas falam línguas diferentes; daqui para baixo é uma só: `irmas` = as pastas dentro de Rides.
       let irmas: { id: string; nome: string }[] = []
-      let raiz: string[] = []
+      let raiz: { id: string; nome: string }[] = []
+      let trazer: (id: string, nome: string) => Promise<string | null>   // pasta da raiz → dentro de Rides, já com o nome certo
       let criar: (nome: string) => Promise<string | null>          // devolve o erro, ou null
       let renomear: (id: string, nome: string) => Promise<string | null>
 
@@ -194,12 +195,13 @@ export async function ensureRideMailFolders(
         const prefixo = (pai ? String(pai.name) : 'Rides') + '/'
         if (!pai && !opts.dryRun) { const e = await novaLabel('Rides'); if (e) { rep.errors.push('criar a label Rides: ' + e); continue } }
         irmas = user.filter((l: any) => String(l.name).toLowerCase().startsWith('rides/') && !String(l.name).slice(6).includes('/')).map((l: any) => ({ id: String(l.id), nome: String(l.name).slice(6) }))
-        raiz = user.filter((l: any) => !String(l.name).includes('/')).map((l: any) => String(l.name))
+        raiz = user.filter((l: any) => !String(l.name).includes('/')).map((l: any) => ({ id: String(l.id), nome: String(l.name) }))
         criar = nome => novaLabel(prefixo + nome)
         renomear = async (id, nome) => {
           const p = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ name: prefixo + nome }) })
           return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
         }
+        trazer = renomear   // no Gmail, mudar o nome da label para «Rides/…» É mover — as mensagens vão junto
       } else {
         const todas = await graphAll(token)
         let paiId = todas.find(f => !f.parentId && String(f.displayName).trim().toLowerCase() === 'rides')?.id || ''
@@ -214,7 +216,7 @@ export async function ensureRideMailFolders(
         }
         const pid = paiId
         irmas = pid ? todas.filter(f => f.parentId === pid).map(f => ({ id: f.id, nome: String(f.displayName) })) : []
-        raiz = todas.filter(f => !f.parentId).map(f => String(f.displayName))
+        raiz = todas.filter(f => !f.parentId).map(f => ({ id: f.id, nome: String(f.displayName) }))
         criar = async nome => {
           const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(pid)}/childFolders`, { method: 'POST', headers: H, body: JSON.stringify({ displayName: nome }) })
           return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
@@ -222,6 +224,13 @@ export async function ensureRideMailFolders(
         renomear = async (id, nome) => {
           const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ displayName: nome }) })
           return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
+        }
+        // A pasta inteira muda de pai (as mensagens vão junto); o id muda no move, então o nome é acertado no id novo.
+        trazer = async (id, nome) => {
+          const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(id)}/move`, { method: 'POST', headers: H, body: JSON.stringify({ destinationId: pid }) })
+          const j: any = await p.json().catch(() => null)
+          if (!p.ok || !j?.id) return `mover: HTTP ${p.status} ${JSON.stringify(j?.error || {}).slice(0, 120)}`
+          return String(j.displayName || '').trim() === nome ? null : renomear(String(j.id), nome)
         }
       }
 
@@ -250,11 +259,20 @@ export async function ensureRideMailFolders(
           for (const f of ocupada) donas.add(f.id)
           continue
         }
+        // A pasta deste carro existe, mas solta na RAIZ da caixa (o mkdir antigo criava lá): ela ENTRA em Rides com as
+        // mensagens — criar uma segunda, vazia, deixaria o e-mail do carro partido em duas.
+        const solta = raiz.find(f => daPasta(f.nome, code, limpa(car.name)))
+        if (solta) {
+          if (!opts.dryRun) { const e = await trazer(solta.id, alvo); if (e) { rep.errors.push(`trazer «${solta.nome}» da raiz: ${e}`); continue } irmas.push({ id: 'novo:' + alvo, nome: alvo }) }
+          rep.renamed.push(`${solta.nome} (raiz) → Rides/${alvo}`)
+          raiz = raiz.filter(f => f.id !== solta.id)
+          continue
+        }
         if (!opts.dryRun) { const e = await criar(alvo); if (e) { rep.errors.push(`criar ${alvo}: ${e}`); continue } irmas.push({ id: 'novo:' + alvo, nome: alvo }) }
         rep.created.push(`Rides/${alvo}`)
       }
       // Só relato: pasta do carro perdida na RAIZ, e (na auditoria da frota inteira) pasta com cara de código que não é de carro nenhum.
-      for (const car of cars) { const code = limpa(car.code); for (const n of raiz) if (code && daPasta(n, code, limpa(car.name))) rep.misplaced.push(`«${n}» está na raiz, fora de Rides`) }
+      for (const car of cars) { const code = limpa(car.code); for (const f of raiz) if (code && daPasta(f.nome, code, limpa(car.name))) rep.misplaced.push(`«${f.nome}» está na raiz, e o carro já tem pasta em Rides`) }
       if (opts.audit) for (const f of irmas) if (!donas.has(f.id) && !f.id.startsWith('novo:') && CARA_DE_CODIGO.test(f.nome.trim())) rep.extras.push(`Rides/${f.nome}`)
     } catch (e) {
       rep.errors.push(String((e as Error)?.message || e).slice(0, 200))

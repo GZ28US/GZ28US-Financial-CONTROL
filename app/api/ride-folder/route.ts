@@ -137,7 +137,7 @@ async function syncMailFolder(action: 'create' | 'rename', code: string, name: s
   try {
     const rep = await ensureRideMailFolders(streamDb(), [{ code, name, prev: action === 'rename' ? { code: oldCode || code } : undefined }],
       // QUOTE (US.QT.###) segue como sempre foi — só a caixa 1 — até o Márcio decidir se quote entra nas outras.
-      { slots: /^US.QT./.test(code) ? [1] : undefined })
+      { slots: code.startsWith('US.QT.') ? [1] : undefined })
     for (const s of rep) for (const e of [...s.errors, ...s.conflicts]) console.error('[ride-folder] pasta de e-mail · caixa', s.slot, '·', e)
   } catch (err) {
     console.error('[ride-folder] mail folder sync failed', String(err).slice(0, 200))
