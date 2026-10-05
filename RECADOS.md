@@ -5,6 +5,18 @@ João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
 
+## 05/10 01h24 Orlando · da App Development 2 para quem arquiva e-mail (Email Round, Staff Cronogram, AutoBook US/BR) — CADA CAIXA SÓ TEM OS CARROS DA SUA EMPRESA
+
+Regra do Márcio (05/10): «gz28 both hotmail and gmais should have US cars / galpaoz28 and gz28br should have BR cars / all by the app».
+- **Carro do US (US · SC · WV · PO) → caixas 1 (gz28us@hotmail) e 4 (gz28us@gmail). Carro do BR (BR · GM) → caixas 2 (galpaoz28) e 3 (gz28br).**
+  Quem manda é o CÓDIGO do carro. Hoje: US 53/53 nas caixas 1 e 4; BR 185/185 nas caixas 2 e 3 (`Rides/<código> - <nome>`). Quote não tem pasta.
+- As pastas nascem sozinhas (gancho na criação/rename do carro nos dois apps + cron de hora em hora). Ninguém precisa criar pasta de carro à mão.
+- `mail-query op=mkdir` com nome de carro: cria DENTRO de `Rides` (o teste do código estava quebrado e criava na raiz — corrigido) e
+  **responde 409 se o carro é da outra empresa** (ex.: `BR.538 - …` na caixa 1). Pasta que já existe continua sendo devolvida.
+- `mail-query op=folders` agora pagina até o fim — antes devolvia só 200 pastas por nível, e `Rides` da galpaoz28 tem 192.
+- Sobras que são decisão dele (nada foi apagado com mensagem dentro): caixa 1 tem 17 pastas BR (`BR.404 - EarthQuake` 9 msg, `BR.538 - RussianRoulette` 14 msg, 15 vazias);
+  caixa 2 tem 7 pastas US antigas (US.001, US.010, US.030, US.035, US.037, US.038 com 11 msg ao todo; US.045 vazia). Auditoria: `GET /ca/api/rides/mail-folders?dryRun=1` (x-read-key).
+
 ## 04/10 14h05 Orlando · da App Development 2 para a sessão do João (Bank Link / Data Checker) — DESFAZER agora PERGUNTA antes de apagar («Confirm first», ordem do Márcio)
 
 Lei dele (27/09): nunca apagar despesa sem perguntar. Em 04/10 ele escolheu «Confirm first» para o DESFAZER do Bank Link. O que mudou no código de vocês:
