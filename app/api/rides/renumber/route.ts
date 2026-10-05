@@ -4,7 +4,7 @@ import { requireUser, cronOk, readKeyOk, selfCallHeaders } from '@/lib/apiAuth.s
 import { supabaseBRService } from '@/lib/supabaseBR.server'
 import { streamDb } from '@/lib/stream.server'
 import { ROOTS, sanitize, dbxAccessToken, dbx, findFolderByCode, ensureSubfolders, pathExists, recodeTree, recodeName } from '@/lib/dropboxRides.server'
-import { renameRideMailFolders } from '@/lib/rideMailFolders.server'
+import { renameRideMailFolders, ensureRideMailFolders } from '@/lib/rideMailFolders.server'
 import { parseRideCode, checkRideCode, scaleOf } from '@/lib/rideCodes'
 
 // RENUMERAR / RENOMEAR UM CARRO — UM CAMINHO SÓ (27/set/2026).
@@ -262,6 +262,14 @@ export async function POST(req: NextRequest) {
   const mailErro = mail.filter(m => m.errors.length || m.conflicts.length)
   passos.push({ passo: 'e-mail', ok: !mailErro.length, detalhe: mail.map(m => ({ slot: m.slot, conta: m.account, renomeadas: m.renamed, conflitos: m.conflicts, erros: m.errors })) })
   if (mailErro.length) return NextResponse.json({ ok: false, result: 'parou em «e-mail»', falhouEm: 'e-mail', passos, oldCode, newCode, retomar: { rideId, newCode, retryFrom: oldCode, retryFromName: oldName } }, { status: 500 })
+
+  // 2h. A PASTA DE E-MAIL EXISTE? (Márcio, 05/out/2026 — sagrada). O passo acima só RENOMEIA pasta que já existia; quote
+  // promovida a carro (US.QT.017 → US.047) nunca teve pasta e ficava sem. Quote e SHP continuam fora (decisão dele pendente).
+  if (!/^(US\.QT|SHP)\./.test(newCode)) {
+    const garante = await ensureRideMailFolders(streamDb(), [{ code: newCode, name: newName }]).catch(e => [{ slot: 0, account: '', provider: '', ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], errors: [String((e as Error)?.message || e).slice(0, 200)] }])
+    const ruim = garante.filter(m => m.errors.length || m.conflicts.length)
+    passos.push({ passo: 'e-mail (pasta do carro)', ok: !ruim.length, detalhe: garante.map(m => ({ slot: m.slot, conta: m.account, criadas: m.created, renomeadas: m.renamed, conflitos: m.conflicts, erros: m.errors })) })
+  }
 
   return NextResponse.json({ ok: true, result: retomada ? 'retomado e concluído' : 'concluído', oldCode, newCode, oldName, newName, brComum: !!brRide, passos })
 }

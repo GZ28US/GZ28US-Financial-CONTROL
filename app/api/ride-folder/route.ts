@@ -4,7 +4,7 @@ import { createHash } from 'node:crypto'
 import { createClient } from '@supabase/supabase-js'
 import { supplierDirectoryFrom, matchSupplier } from '@/lib/supplierMatch'
 import { streamDb } from '@/lib/stream.server'
-import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
+import { ensureRideMailFolders } from '@/lib/rideMailFolders.server'
 import { ROOTS, sanitize, dbxAccessToken, dbx, nomeNu, findFolderByCode, SUBFOLDERS, ensureSubfolders } from '@/lib/dropboxRides.server'
 
 // RIDE FOLDER SYNC — keeps the physical Dropbox ride folders in step with the
@@ -128,39 +128,17 @@ async function listaArquivos(token: string, path: string): Promise<{ name: strin
   return out
 }
 
-// MAIL FOLDER SYNC — the gz28us@hotmail mailbox mirrors the ride archive under
-// its "Rides" parent folder ("Rides/US.028 - GenesiZ"). Ride create/rename keeps
-// that folder in step too (zone US only — BR cars have no mail-folder convention
-// yet). Best-effort: a Graph hiccup never fails the Dropbox sync.
+// PASTA DE E-MAIL DO CARRO — SAGRADA (Márcio, 05/out/2026): «all the folders there must be 100% synced with the app».
+// O syncMailFolder que morava aqui criava «Rides/<código> - <nome>» só na caixa 1 e casava a pasta só pelo código.
+// Agora create/rename chamam a régua única das caixas 1, 2 e 4 (lib/rideMailFolders.server.ts · ensureRideMailFolders):
+// cria o que falta, renomeia a pasta deste carro, não sobrescreve vizinho. Melhor esforço — um soluço do Graph/Gmail
+// nunca derruba a sincronização do Dropbox, e o cron /api/rides/mail-folders refaz de hora em hora.
 async function syncMailFolder(action: 'create' | 'rename', code: string, name: string, oldCode?: string) {
   try {
-    const db = streamDb()
-    const auth = await getMailAuth(db, 1)
-    if (!auth?.refresh_token) return
-    const token = await freshAccessToken(db, auth)
-    if (!token) return
-    const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
-    const top = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders?$top=100', { headers: H }).then(r => r.json()).catch(() => null)
-    const rides = (top?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
-    if (!rides) return
-    const kids = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders?$top=200`, { headers: H }).then(r => r.json()).catch(() => null)
-    const target = `${code}${name ? ' - ' + name : ''}`
-    const byCode = (c: string) => (kids?.value || []).find((f: any) => {
-      const dn = String(f.displayName || '')
-      return dn === c || dn.startsWith(c + ' ')
-    })
-    const existing = byCode(code) || (action === 'rename' && oldCode ? byCode(oldCode) : null)
-    if (existing) {
-      if (existing.displayName !== target) {
-        await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(existing.id)}`, {
-          method: 'PATCH', headers: H, body: JSON.stringify({ displayName: target }),
-        })
-      }
-      return
-    }
-    await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders`, {
-      method: 'POST', headers: H, body: JSON.stringify({ displayName: target }),
-    })
+    const rep = await ensureRideMailFolders(streamDb(), [{ code, name, prev: action === 'rename' ? { code: oldCode || code } : undefined }],
+      // QUOTE (US.QT.###) segue como sempre foi — só a caixa 1 — até o Márcio decidir se quote entra nas outras.
+      { slots: /^US.QT./.test(code) ? [1] : undefined })
+    for (const s of rep) for (const e of [...s.errors, ...s.conflicts]) console.error('[ride-folder] pasta de e-mail · caixa', s.slot, '·', e)
   } catch (err) {
     console.error('[ride-folder] mail folder sync failed', String(err).slice(0, 200))
   }

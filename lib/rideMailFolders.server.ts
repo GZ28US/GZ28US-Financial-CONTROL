@@ -132,3 +132,133 @@ export async function renameRideMailFolders(
   }
   return out
 }
+
+// ── A PASTA DE E-MAIL DO CARRO É SAGRADA (Márcio, 05/out/2026) ──────────────────────────────────────────────────
+// «the email folder must be treated as an app or dropbox rule, it's sacred, all the folders there must be 100% synced
+// with the app» · «that is sacred, must be perfect». Achado da sessão Staff Cronogram 2: o syncMailFolder do
+// /api/ride-folder criava «Rides/<código> - <nome>» só na caixa 1, e carro que virava real por renumeração (quote
+// promovida) nunca ganhava pasta. Medido em 05/out: caixa 1 faltava 1 dos 53 carros; caixas 2 e 4 faltavam 47.
+//
+// ensureRideMailFolders garante, nas caixas 1, 2 (Outlook) e 4 (Gmail, label aninhada), UMA pasta por carro dentro de
+// «Rides», com o nome do Dropbox. Idempotente e conservadora:
+//   • já existe com o nome certo → nada;
+//   • existe a pasta DESTE carro com grafia velha (mesmo código e mesmo nome sem pontuação, ou só o código) → renomeia;
+//   • existe pasta com o MESMO código e OUTRO nome → conflito relatado, nada é criado (pode ser o carro antigo do código —
+//     quem decide é gente); com `prev` (rename vindo da tela) a pasta do nome antigo é a deste carro e é renomeada;
+//   • não existe → cria.
+// Nunca apaga, nunca move mensagem. `misplaced` e `extras` só RELATAM (pasta do carro na raiz; pasta com cara de código
+// em Rides que não é de nenhum carro passado) — limpar é decisão do Márcio.
+export type RideMailCar = { code: string; name: string; prev?: { code?: string; name?: string } }
+export type EnsureSlotReport = {
+  slot: number; account: string; provider: string
+  ok: number; created: string[]; renamed: string[]; conflicts: string[]; misplaced: string[]; extras: string[]; errors: string[]
+}
+const limpa = (s: string) => String(s || '').replace(/[\\/:*?"<>|]/g, ' ').replace(/\s+/g, ' ').trim()
+const alvoDe = (c: RideMailCar) => `${limpa(c.code)}${limpa(c.name) ? ' - ' + limpa(c.name) : ''}`
+// O nome começa com ESTE código (e não com US.030.4 quando o código é US.030)?
+const temCodigo = (dn: string, code: string) => new RegExp(`^${esc(code)}(?![\\d.])`).test(String(dn || '').trim()) || String(dn || '').trim() === code
+const CARA_DE_CODIGO = /^(US\.QT|US|SC|WV|PO|SHP)\.\d/
+
+export async function ensureRideMailFolders(
+  db: SupabaseClient, cars: RideMailCar[], opts: { slots?: number[]; dryRun?: boolean; audit?: boolean } = {},
+): Promise<EnsureSlotReport[]> {
+  const slots = opts.slots || [1, 2, 4]
+  const out: EnsureSlotReport[] = []
+  for (const slot of slots) {
+    const rep: EnsureSlotReport = { slot, account: '', provider: '', ok: 0, created: [], renamed: [], conflicts: [], misplaced: [], extras: [], errors: [] }
+    out.push(rep)
+    try {
+      const auth = await getMailAuth(db, slot)
+      if (!auth?.refresh_token) { rep.errors.push('caixa sem conexão (refresh_token)'); continue }
+      rep.account = String(auth.account || '')
+      rep.provider = mailProvider(auth)
+      const token = await freshAccessToken(db, auth)
+      if (!token) { rep.errors.push('token não renovou'); continue }
+      const H = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+
+      // As duas caixas falam línguas diferentes; daqui para baixo é uma só: `irmas` = as pastas dentro de Rides.
+      let irmas: { id: string; nome: string }[] = []
+      let raiz: string[] = []
+      let criar: (nome: string) => Promise<string | null>          // devolve o erro, ou null
+      let renomear: (id: string, nome: string) => Promise<string | null>
+
+      if (rep.provider === 'gmail') {
+        const r: any = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', { headers: H }).then(x => x.json()).catch(() => null)
+        if (!Array.isArray(r?.labels)) { rep.errors.push('Gmail labels falhou: ' + JSON.stringify(r?.error || r || {}).slice(0, 160)); continue }
+        const user = r.labels.filter((l: any) => l.type === 'user')
+        const novaLabel = async (name: string) => {
+          const p = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/labels', { method: 'POST', headers: H, body: JSON.stringify({ name, labelListVisibility: 'labelShow', messageListVisibility: 'show' }) })
+          return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
+        }
+        const pai = user.find((l: any) => String(l.name).toLowerCase() === 'rides')
+        const prefixo = (pai ? String(pai.name) : 'Rides') + '/'
+        if (!pai && !opts.dryRun) { const e = await novaLabel('Rides'); if (e) { rep.errors.push('criar a label Rides: ' + e); continue } }
+        irmas = user.filter((l: any) => String(l.name).toLowerCase().startsWith('rides/') && !String(l.name).slice(6).includes('/')).map((l: any) => ({ id: String(l.id), nome: String(l.name).slice(6) }))
+        raiz = user.filter((l: any) => !String(l.name).includes('/')).map((l: any) => String(l.name))
+        criar = nome => novaLabel(prefixo + nome)
+        renomear = async (id, nome) => {
+          const p = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/labels/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ name: prefixo + nome }) })
+          return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
+        }
+      } else {
+        const todas = await graphAll(token)
+        let paiId = todas.find(f => !f.parentId && String(f.displayName).trim().toLowerCase() === 'rides')?.id || ''
+        if (!paiId) {
+          if (opts.dryRun) rep.conflicts.push('a caixa não tem a pasta «Rides» — seria criada')
+          else {
+            const p = await fetch('https://graph.microsoft.com/v1.0/me/mailFolders', { method: 'POST', headers: H, body: JSON.stringify({ displayName: 'Rides' }) })
+            const j: any = await p.json().catch(() => null)
+            if (!p.ok || !j?.id) { rep.errors.push('criar a pasta Rides: HTTP ' + p.status); continue }
+            paiId = String(j.id)
+          }
+        }
+        const pid = paiId
+        irmas = pid ? todas.filter(f => f.parentId === pid).map(f => ({ id: f.id, nome: String(f.displayName) })) : []
+        raiz = todas.filter(f => !f.parentId).map(f => String(f.displayName))
+        criar = async nome => {
+          const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(pid)}/childFolders`, { method: 'POST', headers: H, body: JSON.stringify({ displayName: nome }) })
+          return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
+        }
+        renomear = async (id, nome) => {
+          const p = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders/${encodeURIComponent(id)}`, { method: 'PATCH', headers: H, body: JSON.stringify({ displayName: nome }) })
+          return p.ok ? null : `HTTP ${p.status} ${(await p.text()).slice(0, 120)}`
+        }
+      }
+
+      const donas = new Set<string>()   // ids das pastas que são de algum carro (para o relatório de extras)
+      for (const car of cars) {
+        const code = limpa(car.code), alvo = alvoDe(car)
+        if (!code) continue
+        const exata = irmas.find(f => f.nome.trim() === alvo)
+        if (exata) { rep.ok++; donas.add(exata.id); continue }
+        const prevCode = limpa(car.prev?.code || '') || code
+        const prevName = car.prev?.name != null ? limpa(car.prev.name) : ''
+        // a pasta DESTE carro com outra grafia — ou, vindo de um rename da tela, a do código/nome anteriores
+        const minha = irmas.find(f => daPasta(f.nome, code, limpa(car.name)))
+          || (car.prev ? irmas.find(f => (prevName ? daPasta(f.nome, prevCode, prevName) : temCodigo(f.nome, prevCode))) : undefined)
+        if (minha) {
+          donas.add(minha.id)
+          const de = minha.nome
+          if (irmas.some(f => f.id !== minha.id && f.nome.trim() === alvo)) { rep.conflicts.push(`${de}: já existe «${alvo}»`); continue }
+          if (!opts.dryRun) { const e = await renomear(minha.id, alvo); if (e) { rep.errors.push(`renomear ${de}: ${e}`); continue } minha.nome = alvo }
+          rep.renamed.push(`Rides/${de} → Rides/${alvo}`)
+          continue
+        }
+        const ocupada = irmas.filter(f => temCodigo(f.nome, code))
+        if (ocupada.length) {
+          rep.conflicts.push(`${alvo}: o código já tem pasta com outro nome (${ocupada.map(f => '«' + f.nome + '»').join(', ')}) — nada criado`)
+          for (const f of ocupada) donas.add(f.id)
+          continue
+        }
+        if (!opts.dryRun) { const e = await criar(alvo); if (e) { rep.errors.push(`criar ${alvo}: ${e}`); continue } irmas.push({ id: 'novo:' + alvo, nome: alvo }) }
+        rep.created.push(`Rides/${alvo}`)
+      }
+      // Só relato: pasta do carro perdida na RAIZ, e (na auditoria da frota inteira) pasta com cara de código que não é de carro nenhum.
+      for (const car of cars) { const code = limpa(car.code); for (const n of raiz) if (code && daPasta(n, code, limpa(car.name))) rep.misplaced.push(`«${n}» está na raiz, fora de Rides`) }
+      if (opts.audit) for (const f of irmas) if (!donas.has(f.id) && !f.id.startsWith('novo:') && CARA_DE_CODIGO.test(f.nome.trim())) rep.extras.push(`Rides/${f.nome}`)
+    } catch (e) {
+      rep.errors.push(String((e as Error)?.message || e).slice(0, 200))
+    }
+  }
+  return out
+}
