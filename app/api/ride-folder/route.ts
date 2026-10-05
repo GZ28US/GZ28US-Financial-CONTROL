@@ -134,10 +134,11 @@ async function listaArquivos(token: string, path: string): Promise<{ name: strin
 // cria o que falta, renomeia a pasta deste carro, não sobrescreve vizinho. Melhor esforço — um soluço do Graph/Gmail
 // nunca derruba a sincronização do Dropbox, e o cron /api/rides/mail-folders refaz de hora em hora.
 async function syncMailFolder(action: 'create' | 'rename', code: string, name: string, oldCode?: string) {
+  // QUOTE NÃO TEM PASTA DE E-MAIL (Márcio, 05/out/2026: «No folder for quotes»): a pasta nasce quando o carro vira real —
+  // no rename/renumber da quote para US.###, que cai aqui embaixo ou no /api/rides/renumber, e no cron de hora em hora.
+  if (code.startsWith('US.QT.')) return
   try {
-    const rep = await ensureRideMailFolders(streamDb(), [{ code, name, prev: action === 'rename' ? { code: oldCode || code } : undefined }],
-      // QUOTE (US.QT.###) segue como sempre foi — só a caixa 1 — até o Márcio decidir se quote entra nas outras.
-      { slots: code.startsWith('US.QT.') ? [1] : undefined })
+    const rep = await ensureRideMailFolders(streamDb(), [{ code, name, prev: action === 'rename' ? { code: oldCode || code } : undefined }])
     for (const s of rep) for (const e of [...s.errors, ...s.conflicts]) console.error('[ride-folder] pasta de e-mail · caixa', s.slot, '·', e)
   } catch (err) {
     console.error('[ride-folder] mail folder sync failed', String(err).slice(0, 200))
