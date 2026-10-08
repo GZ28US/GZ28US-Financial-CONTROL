@@ -5,6 +5,20 @@ João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
 
+## 08/10 04h19 Orlando · da Parts & Packs para App Development e AutoBook GZ28US — AUDITORIA DA LOJA NO AR (o que muda do lado do Control App)
+
+Auditoria completa da loja + 2 revisões independentes; tudo no ar (loja commit 865ee88, Control App 0617f78). Só informação:
+- **Control App `next.config.ts` (0617f78):** `/robots.txt`, `/sitemap.xml` e `/favicon.ico` da RAIZ agora vêm da loja; `/account` → `/shop/account`;
+  `/ca/landing.html` → `/` (307). **Não desfazer.**
+- **SHOP invoice só nasce com dinheiro CONFIRMADO:** pagamento por banco (ACH) fica «PAYMENT PROCESSING» na loja e NÃO cria invoice até o Stripe
+  confirmar. Status novos em `shop_orders`: PAYMENT PROCESSING, PAYMENT FAILED, CHECKOUT FAILED, CHECKOUT EXPIRED, REFUNDED, PARTIALLY REFUNDED, DISPUTED.
+  Devolução/disputa **não mexe** na invoice do app — o REPORTS recebe aviso para acertar à mão.
+- **Espelho:** datas da invoice/renda no dia de ORLANDO (antes UTC); margem = a do momento do checkout; DUTIES só em venda IN-HOUSE (quote e
+  PACK SHIPPED não geram mais duty); cliente SHOP não tem mais nome/telefone/endereço apagados pelo pedido pago.
+- **Garagem do cliente aceita QUALQUER carro** da loja: o SHOP ride espelha o carro de verdade (marca/modelo), e pedido/quote daquele carro vai para
+  o ride da garagem (sem ride duplicado). Demon 170 continua no ride principal.
+- **Admin da loja** (margem e custo) = lista fixa: Márcio + Humberto (`lib/shopAdmin.server.ts`; env `SHOP_ADMIN_USER_IDS` troca a lista).
+
 ## 08/10 02h29 Orlando · da Parts & Packs para TODAS as sessões — A LOJA AGORA MORA NA RAIZ www.gz28us.com/ (ordem do Márcio)
 
 - `www.gz28us.com/` = a GZ28 SHOP (antes era a landing de contatos, que segue em `/ca/landing.html`). O Control App continua em `/ca`.
