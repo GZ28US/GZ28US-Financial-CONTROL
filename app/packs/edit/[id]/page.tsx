@@ -9,6 +9,8 @@ import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } f
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { loadCarGroups, addGroupCars, type CarGroup } from '@/lib/carGroups'
 import { normPN } from '@/lib/partsDb'
+import { scopeKey, type PackScope } from '@/lib/packScope'
+import { PackLogo, ScopeBadge, ScopeSelect, ShopImagePicker, ShopThumb } from '@/components/PackBits'
 
 // FULL pack editor — a standalone page that mirrors the invoice editor's item
 // machinery (EXPENSES + PARTS + SERVICES + GRAND TOTAL + NOTES, auto-CALCULATE,
@@ -17,11 +19,14 @@ import { normPN } from '@/lib/partsDb'
 // tables). No dates / payments / reports / inventory moves. Kept deliberately
 // separate from the invoice editor; changes meant for both go in both by hand.
 
-type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
-type Part = { description: string; unit_price: string; quantity: string; base_cost?: string; kit_group?: string; kit_name?: string; source_item?: string }
-type Service = { description: string; price: string }
-type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; export_status?: string; kit_group?: string; kit_name?: string }
-type Note = { note: string }
+// logo_url / pack_name POR CARRO (Parts & Packs, 08/10/2026): no mesmo pack o Demon 2018 vende como «Z1000 AlphaOGD Pack» com o seu
+// logo, os RedEye como AlphaEye com o deles. A loja usa: logo do carro → logo do pack → título. Regravar `cars` sem eles apaga a loja.
+type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[]; logo_url?: string | null; pack_name?: string }
+// scope: BOTH | SHIPPED | IN_HOUSE | APP_ONLY (lib/packScope.ts) · image_url: a foto da peça no bucket shop-images (a loja lê dali).
+type Part = { description: string; unit_price: string; quantity: string; base_cost?: string; kit_group?: string; kit_name?: string; source_item?: string; image_url?: string | null; scope?: string }
+type Service = { description: string; price: string; scope?: string }
+type Expense = { supplier: string; item: string; part_number?: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; export_status?: string; kit_group?: string; kit_name?: string; scope?: string }
+type Note = { note: string; scope?: string }
 // A duty do PACK é só a TAREFA — sem responsável (Márcio, 26/ago/2026). O
 // Packs DB é compartilhado US/BR e um staff_id do US não existe no app do BR;
 // gravar pessoa no template quebraria do outro lado. Quem faz se escolhe na
@@ -75,6 +80,11 @@ export default function EditPackPage() {
   // GZ28 SHOP LOCKED (Márcio, 04/10/2026): pack da vitrine da loja — só a sessão Parts & Packs mexe (o banco recusa a
   // escrita do app). Aqui a tela inteira fica só-leitura, como um CLOSED que não reabre.
   const [shopLocked, setShopLocked] = useState(false)
+  // LOGO DO PACK (packs.logo_url): PNG branco em fundo transparente no bucket shop-images/packs/ — a loja põe no lugar do título.
+  const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  // Foto do Parts DB por PN e por nome: IMPORT ITEMS FROM EXPENSES já traz a foto da peça para a linha do pack.
+  const [imgByPN, setImgByPN] = useState<Map<string, string>>(new Map())
+  const [imgByName, setImgByName] = useState<Map<string, string>>(new Map())
   const locked = status === 'CLOSED' || shopLocked
 
   const [bMan, setBMan] = useState(''); const [bBrand, setBBrand] = useState('')
@@ -195,9 +205,12 @@ export default function EditPackPage() {
     setKindSupported(data.kind !== undefined)
     setStatus(data.status || 'DRAFT')
     setShopLocked(!!data.shop_locked)
+    setLogoUrl(data.logo_url || null)
     setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
       manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
       years: Array.isArray(c.years) ? c.years.map(Number) : (c.year != null && c.year !== '' ? [Number(c.year)] : []),
+      ...(c.logo_url ? { logo_url: String(c.logo_url) } : {}),
+      ...(c.pack_name ? { pack_name: String(c.pack_name) } : {}),
     })) : [])
     setTargetGrandTotal(data.target_grand_total != null ? String(data.target_grand_total) : '')
     setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '')
@@ -208,21 +221,26 @@ export default function EditPackPage() {
     // the saved margin (base = price / (1 + savedMargin/100)), re-attaching every item
     // to the live MARGIN re-pricer with no price jump at the saved margin.
     const savedFactor = 1 + (parseFloat(data.import_margin != null ? String(data.import_margin) : '0') || 0) / 100
-    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined })))
-    setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '' })))
-    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: e.kit_group || undefined, kit_name: e.kit_name || undefined })))
+    setParts((data.parts || []).map((p: any) => ({ description: p.description || '', unit_price: p.unit_price != null ? String(p.unit_price) : '', quantity: p.quantity != null ? String(p.quantity) : '1', base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : (p.unit_price != null ? String(p.unit_price) : undefined)), kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined , ...(p.image_url ? { image_url: String(p.image_url) } : {}), ...scopeKey(p) })))
+    setServices((data.services || []).map((s: any) => ({ description: s.description || '', price: s.price != null ? String(s.price) : '', ...scopeKey(s) })))
+    setExpenses((data.expenses || []).map((e: any) => ({ supplier: e.supplier || '', item: e.item || '', part_number: e.part_number || '', amount: e.amount != null ? String(e.amount) : '', tax: e.tax != null ? String(e.tax) : '0', extra: e.extra != null ? String(e.extra) : '0', quantity: e.quantity != null ? String(e.quantity) : '1', item_discount: e.item_discount != null ? String(e.item_discount) : '0', export_status: e.export_status || 'FRESH', kit_group: e.kit_group || undefined, kit_name: e.kit_name || undefined, ...scopeKey(e) })))
     setDuties(sortPackDuties((data.duties || []).map((d: any) => ({ description: d.description || '', priority: String(d.priority || '1'), estimated_seconds: Number(d.estimated_seconds) > 0 ? Math.round(Number(d.estimated_seconds)) : null }))))
-    setNotes((data.notes || []).map((n: any) => ({ note: n.note || '' })))
+    setNotes((data.notes || []).map((n: any) => ({ note: n.note || '', ...scopeKey(n) })))
 
     const { data: sup } = await supabase.from('suppliers').select('name, discount, discount_type, aliases')
     if (sup) setSuppliers(sup.map((s: any) => ({ name: s.name || '', discount: Number(s.discount) || 0, discount_type: s.discount_type === 'VARIABLE' ? 'VARIABLE' : 'FIXED', aliases: s.aliases || '' })))
 
-    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, currency').neq('currency', 'BRL')
+    const { data: dbParts } = await supabase.from('parts_database').select('item, alias, part_number, map_price, shipping, handling, currency, image_url').neq('currency', 'BRL')
     const am = new Map<string, string>()
     const mp = new Map<string, number>()
     const mn = new Map<string, number>()
     const pm = new Map<string, string>()
+    const ip = new Map<string, string>(), iname = new Map<string, string>()
     for (const d of dbParts || []) {
+      if ((d as any).image_url) {
+        const k = normPN(d.part_number || ''); if (k && !ip.has(k)) ip.set(k, (d as any).image_url)
+        for (const n of [d.item, d.alias]) { const nk = (n || '').trim().toLowerCase(); if (nk && !iname.has(nk)) iname.set(nk, (d as any).image_url) }
+      }
       if (d.alias) am.set((d.item || '').trim().toLowerCase(), d.alias)
       // PN pelo nome do item E pelo alias — o import grava o alias como
       // description, entao sem as duas chaves o item aliasado ficaria sem PN.
@@ -250,6 +268,8 @@ export default function EditPackPage() {
     setMapByPN(mp)
     setMapByName(mn)
     setPnByItem(pm)
+    setImgByPN(ip)
+    setImgByName(iname)
 
     setLabor(await loadFixedMember())
 
@@ -369,7 +389,7 @@ export default function EditPackPage() {
   function importItemsFromExpenses() {
     const margin = parseFloat(importMargin) || 0
     const factor = 1 + margin / 100
-    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string }>()
+    const sourceMap = new Map<string, { description: string; base: number; quantity: number; kit_group?: string; kit_name?: string; source_item: string; image_url?: string }>()
     const importedIndices: number[] = []
     expenses.forEach((e, idx) => {
       if (SKIP_WORDS.test(e.item)) return
@@ -396,7 +416,7 @@ export default function EditPackPage() {
       const key = `${e.kit_group || ''}|${desc.toLowerCase()}|${unitBase.toFixed(4)}`
       const existing = sourceMap.get(key)
       if (existing) existing.quantity += qty
-      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_group, kit_name: e.kit_name, source_item: desc })
+      else sourceMap.set(key, { description: desc, base: unitBase, quantity: qty, kit_group: e.kit_group, kit_name: e.kit_name, source_item: desc, image_url: (pn ? imgByPN.get(pn) : undefined) || imgByName.get(desc.toLowerCase()) })
       importedIndices.push(idx)
     })
     if (importedIndices.length === 0) { alert('No FRESH expenses to import.'); return }
@@ -409,6 +429,7 @@ export default function EditPackPage() {
       kit_group: src.kit_group,
       kit_name: src.kit_name,
       source_item: src.source_item,
+      ...(src.image_url ? { image_url: src.image_url } : {}),
     }))
     setParts(prev => [...prev, ...toAdd])
     setPartExpandedKits(prev => { const n = new Set(prev); toAdd.forEach(p => { if (p.kit_group) n.add(p.kit_group) }); return n })
@@ -629,9 +650,17 @@ export default function EditPackPage() {
   function removeNote(index: number) { setNotes(notes.filter((_, i) => i !== index)) }
   function startEditNote(index: number) { setEditingNoteIndex(index); setEditingNote(notes[index].note) }
   function saveEditNote() {
-    const updated = [...notes]; updated[editingNoteIndex!] = { note: editingNote }; setNotes(updated)
+    const updated = [...notes]; updated[editingNoteIndex!] = { ...updated[editingNoteIndex!], note: editingNote }; setNotes(updated)
     setEditingNoteIndex(null); setEditingNote('')
   }
+
+  // SCOPE e FOTO direto na linha, sem abrir o EDIT dela.
+  const setPartScope = (i: number, sc: PackScope) => setParts(prev => prev.map((x, j) => j === i ? { ...x, scope: sc } : x))
+  const setPartImage = (i: number, url: string | null) => setParts(prev => prev.map((x, j) => j === i ? { ...x, image_url: url } : x))
+  const setServiceScope = (i: number, sc: PackScope) => setServices(prev => prev.map((x, j) => j === i ? { ...x, scope: sc } : x))
+  const setExpenseScope = (i: number, sc: PackScope) => setExpenses(prev => prev.map((x, j) => j === i ? { ...x, scope: sc } : x))
+  const setNoteScope = (i: number, sc: PackScope) => setNotes(prev => prev.map((x, j) => j === i ? { ...x, scope: sc } : x))
+  const setCarField = (i: number, patch: Partial<Car>) => setCars(prev => prev.map((c, j) => j === i ? { ...c, ...patch } : c))
 
   // ---- Save ----
   async function save(nextStatus?: string) {
@@ -643,18 +672,20 @@ export default function EditPackPage() {
       name: name.trim(),
       platform: platform.trim().toUpperCase() || null,
       ...(kindSupported ? { kind } : {}),
-      cars,
+      // nome/logo por carro só vão quando existem — carro sem eles continua no formato antigo
+      cars: cars.map(({ logo_url, pack_name, ...c }) => ({ ...c, ...(logo_url ? { logo_url } : {}), ...((pack_name || '').trim() ? { pack_name: (pack_name || '').trim() } : {}) })),
+      logo_url: logoUrl || null,
       status: nextStatus || status,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       import_margin: parseFloat(importMargin) || 0,
       show_part_numbers: showPartNumbers,
-      parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null, kit_group: p.kit_group || null, kit_name: p.kit_name || null, source_item: p.source_item || null })),
-      services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
-      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, export_status: e.export_status || 'FRESH', kit_group: e.kit_group || null, kit_name: e.kit_name || null })),
+      parts: parts.filter(p => p.description.trim()).map(p => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: (p.base_cost != null && p.base_cost !== '') ? parseFloat(p.base_cost) : null, kit_group: p.kit_group || null, kit_name: p.kit_name || null, source_item: p.source_item || null, ...(p.image_url ? { image_url: p.image_url } : {}), ...scopeKey(p) })),
+      services: services.filter(s => s.description.trim()).map(s => ({ description: s.description.trim(), price: parseFloat(s.price) || 0, ...scopeKey(s) })),
+      expenses: expenses.filter(e => e.item.trim()).map(e => ({ supplier: e.supplier.trim(), item: e.item.trim(), part_number: (e.part_number || '').trim() || null, amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, export_status: e.export_status || 'FRESH', kit_group: e.kit_group || null, kit_name: e.kit_name || null, ...scopeKey(e) })),
       duties: duties.filter(d => d.description.trim()).map(d => ({ description: d.description.trim(), priority: d.priority || '1', estimated_seconds: Number(d.estimated_seconds) > 0 ? Math.round(Number(d.estimated_seconds)) : null })),
-      notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim() })),
+      notes: notes.filter(n => n.note.trim()).map(n => ({ note: n.note.trim(), ...scopeKey(n) })),
       updated_at: new Date().toISOString(),
     }
     const { error } = await supabase.from('packs').update(row).eq('id', id)
@@ -722,15 +753,38 @@ export default function EditPackPage() {
 
       <div className="grid grid-cols-1 gap-6 max-w-2xl">
 
+        {/* LOGO DO PACK (packs.logo_url) — Márcio, 08/10/2026: «The LOGO of the PACK in packs db!!!!». Branco em PNG transparente. */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">PACK LOGO</label>
+          <div className="flex items-center gap-3 flex-wrap bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3">
+            {logoUrl ? <PackLogo url={logoUrl} height={56} /> : <span className="text-gray-500">no logo — the shop shows the pack name in text</span>}
+            {!locked && <ShopImagePicker kind="packs" name={name || id} label={logoUrl ? 'CHANGE' : 'LOGO'} onDone={(u) => setLogoUrl(u)} />}
+            {!locked && logoUrl && <button onClick={() => setLogoUrl(null)} className="bg-gray-700 hover:bg-gray-600 px-3 py-1 rounded-xl font-bold text-xs" title="the picture stays in storage; only the pack stops pointing to it">✕ REMOVE FROM PACK</button>}
+          </div>
+        </div>
+
         {/* CARS */}
         <div>
           <label className="block mb-3 text-lg font-bold">CARS THIS PACKAGE FITS ({cars.length})</label>
           {cars.length > 0 && (
             <div className="space-y-2 mb-4">
               {cars.map((c, i) => (
-                <div key={i} className="flex items-center justify-between gap-3 bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3">
-                  <span className="text-lg">{carLabel(c)}</span>
-                  {!locked && <button onClick={() => setCars(cars.filter((_, j) => j !== i))} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded-2xl font-bold">✕</button>}
+                <div key={i} className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-lg">{carLabel(c)}</span>
+                    {!locked && <button onClick={() => setCars(cars.filter((_, j) => j !== i))} className="bg-red-700 hover:bg-red-600 px-3 py-2 rounded-2xl font-bold">✕</button>}
+                  </div>
+                  {/* NOME e LOGO deste carro dentro do pack (vazio = o nome e o logo do pack). */}
+                  {(c.logo_url || c.pack_name || !locked) && (
+                    <div className="flex items-center gap-2 flex-wrap">
+                      {c.logo_url && <PackLogo url={c.logo_url} height={32} />}
+                      {locked
+                        ? (c.pack_name ? <span className="text-sm font-bold text-gray-300">{c.pack_name}</span> : null)
+                        : <input value={c.pack_name || ''} onChange={(e) => setCarField(i, { pack_name: e.target.value })} placeholder={`name for this car (blank = ${name || 'pack name'})`} className="bg-gray-800 border border-gray-700 rounded-xl px-3 py-1 text-sm flex-1 min-w-48" />}
+                      {!locked && <ShopImagePicker kind="packs" name={`${name || id}-${c.version || c.model || 'car'}`} label="CAR LOGO" onDone={(u) => setCarField(i, { logo_url: u })} />}
+                      {!locked && c.logo_url && <button onClick={() => setCarField(i, { logo_url: null })} className="bg-gray-700 hover:bg-gray-600 px-2 py-1 rounded-xl font-bold text-xs" title="use the pack logo for this car">✕</button>}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -853,6 +907,7 @@ export default function EditPackPage() {
                             <p className="text-base font-bold truncate" title={e.item}>{e.item}{e.part_number ? <span className="text-xs text-gray-500"> · PN {e.part_number}</span> : ''}</p>
                             <p className="text-sm text-gray-400">{e.quantity} × {formatUSD(parseFloat(e.amount) || 0)} = {formatUSD(expenseLineTotal(e))}{e.supplier ? ` · ${e.supplier}` : ''}{(parseFloat(e.item_discount || '0') || 0) > 0 ? ` · ${parseFloat(e.item_discount || '0')}% off` : ''}</p>
                             {dbRefLine(e.part_number, e.item)}
+                            <div className="mt-1">{locked ? <ScopeBadge scope={e.scope} showBoth /> : <ScopeSelect scope={e.scope} onChange={(sc) => setExpenseScope(index, sc)} />}</div>
                             {(() => { const st = e.export_status || 'FRESH'; const color = st === 'EXPORTED' ? 'text-green-400' : st === 'REMOVED' ? 'text-red-400' : 'text-gray-400'; return (
                               <p className="text-xs mt-0.5"><span className={`font-bold ${color}`}>{st}</span>{st !== 'FRESH' && !locked && <button onClick={() => resetExportStatus(index)} className="ml-2 text-gray-400 underline hover:text-white">RESET</button>}</p>
                             ) })()}
@@ -966,10 +1021,15 @@ export default function EditPackPage() {
                       </div>
                     ) : (
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < parts.length - 1 ? 'border-b border-gray-700' : ''}`}>
+                        <ShopThumb url={part.image_url} size={44} />
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-bold truncate" title={part.description}>{part.description}</p>
                           {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                           <p className="text-sm text-gray-400">{formatUSD(parseFloat(part.unit_price))} × {part.quantity} = {formatUSD(getPartTotal(part))}</p>
+                          <div className="flex items-center gap-2 mt-1 flex-wrap">
+                            {locked ? <ScopeBadge scope={part.scope} showBoth /> : <ScopeSelect scope={part.scope} onChange={(sc) => setPartScope(index, sc)} />}
+                            {!locked && <ShopImagePicker kind="parts" name={pnFor(part) || part.description} label={part.image_url ? 'PHOTO' : 'ADD PHOTO'} onDone={(u) => setPartImage(index, u)} />}
+                          </div>
                         </div>
                         {!locked && (
                           <div className="flex gap-2 shrink-0">
@@ -1040,6 +1100,7 @@ export default function EditPackPage() {
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-bold truncate" title={svc.description}>{svc.description}</p>
                           <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                          <div className="mt-1">{locked ? <ScopeBadge scope={svc.scope} showBoth /> : <ScopeSelect scope={svc.scope} onChange={(sc) => setServiceScope(index, sc)} />}</div>
                         </div>
                         {!locked && (
                           <div className="flex gap-2 shrink-0">
@@ -1212,7 +1273,10 @@ export default function EditPackPage() {
                       </div>
                     ) : (
                       <div className={`flex items-start justify-between gap-4 px-4 py-3 ${index < notes.length - 1 ? 'border-b border-gray-700' : ''}`}>
-                        <p className="flex-1 text-base text-gray-300 whitespace-pre-wrap">{n.note}</p>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-base text-gray-300 whitespace-pre-wrap">{n.note}</p>
+                          <div className="mt-1">{locked ? <ScopeBadge scope={n.scope} showBoth /> : <ScopeSelect scope={n.scope} onChange={(sc) => setNoteScope(index, sc)} />}</div>
+                        </div>
                         {!locked && (
                           <div className="flex gap-2 shrink-0">
                             <button onClick={() => startEditNote(index)} className="bg-blue-700 hover:bg-blue-600 px-3 py-1 rounded-xl font-bold text-sm">EDIT</button>

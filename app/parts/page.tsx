@@ -9,11 +9,14 @@ import { sessionHeaders } from '@/components/BankReconcileCard'
 import { enrollParts, enrollOne, normPN } from '@/lib/partsDb'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
+import { ShopImagePicker, ShopThumb } from '@/components/PackBits'
 
 type Part = {
   id: string
   // GZ28 SHOP LOCKED (04/10/2026): peça da vitrine da loja — só a sessão Parts & Packs mexe; aqui não tem EDIT, REMOVE nem cadeado.
   shop_locked?: boolean | null
+  // FOTO da peça (07/10/2026): cópia da foto do fornecedor no bucket público shop-images/parts/ — a loja e os packs leem daqui.
+  image_url?: string | null
   item: string
   part_number: string | null
   alias: string | null
@@ -136,6 +139,14 @@ export default function PartsPage() {
   async function saveAlias(p: Part) {
     const { error } = await supabase.from('parts_database').update({ alias: (p.alias || '').trim() || null, updated_at: new Date().toISOString() }).eq('id', p.id)
     if (error) { alert(error.message); return }
+  }
+
+  // Troca a foto: a imagem nova já está no bucket (ShopImagePicker → /api/shop-images); aqui só a peça passa a apontar para ela.
+  // Peça GZ28 SHOP LOCKED ou 🔒 TRAVADA não chega aqui (sem botão) — e o banco recusaria a travada da loja de qualquer jeito.
+  async function savePhoto(p: Part, url: string) {
+    const { error } = await supabase.from('parts_database').update({ image_url: url, updated_at: new Date().toISOString() }).eq('id', p.id)
+    if (error) { alert(error.message); return }
+    setParts(prev => prev.map(x => x.id === p.id ? { ...x, image_url: url } : x))
   }
 
   async function removePart(p: Part) {
@@ -645,6 +656,7 @@ export default function PartsPage() {
           {filtered.map((p) => p.is_kit ? (
             <div key={p.id} className="bg-gray-900 border border-teal-800 rounded-3xl p-5">
               <div className="flex items-center justify-between gap-6 flex-wrap">
+                <ShopThumb url={p.image_url} size={72} title={p.alias || p.item} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <button onClick={() => toggleKit(p.id)} className="text-lg text-gray-300">{expandedKits.has(p.id) ? '▾' : '▸'}</button>
@@ -665,6 +677,7 @@ export default function PartsPage() {
                     <button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button>
                   ) : (
                     <>
+                      <ShopImagePicker kind="parts" name={p.part_number || p.alias || p.item} label={p.image_url ? 'PHOTO' : 'ADD PHOTO'} onDone={(u) => savePhoto(p, u)} />
                       <button onClick={() => openKitEdit(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">EDIT</button>
                       <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
                       <button onClick={() => toggleLock(p)} className="bg-purple-950 hover:bg-purple-900 border border-purple-800 px-4 py-2 rounded-2xl font-bold text-sm" title="dados conferidos? trava e congela">🔒 TRAVAR</button>
@@ -682,6 +695,7 @@ export default function PartsPage() {
             </div>
           ) : (
             <div key={p.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-5 flex items-center justify-between gap-6 flex-wrap">
+              <ShopThumb url={p.image_url} size={72} title={p.alias || p.item} />
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-3 mb-1 flex-wrap">
                   {/* The BIG TITLE is the ALIAS; the full description goes smaller below it. */}
@@ -738,6 +752,7 @@ export default function PartsPage() {
               <div className="flex items-end gap-3 shrink-0"><button onClick={() => toggleLock(p)} className="bg-purple-900 hover:bg-purple-800 border border-purple-700 px-4 py-2 rounded-2xl font-bold text-sm" title="editar exige destravar — fica na trilha">🔓 DESTRAVAR</button></div>
               ) : (
               <div className="flex items-end gap-3 shrink-0 flex-wrap">
+                <div className="self-end"><ShopImagePicker kind="parts" name={p.part_number || p.alias || p.item} label={p.image_url ? 'PHOTO' : 'ADD PHOTO'} onDone={(u) => savePhoto(p, u)} /></div>
                 <div className="self-end"><button onClick={() => toggleLock(p)} className="bg-purple-950 hover:bg-purple-900 border border-purple-800 px-4 py-2 rounded-2xl font-bold text-sm" title="dados conferidos? trava e congela">🔒 TRAVAR</button></div>
                 <div>
                   <label className="block mb-1 text-xs text-gray-400 font-bold">ALIAS</label>

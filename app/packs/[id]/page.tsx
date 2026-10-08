@@ -9,6 +9,7 @@ import { carLabel } from '@/lib/carData'
 import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
 import { dutyPriorityBadge } from '@/lib/utils'
 import { HOUSE_HOURLY_USD, sumEstimatedSeconds } from '@/lib/laborCost'
+import { PackLogo, ScopeBadge, ShopThumb } from '@/components/PackBits'
 
 const money = (n: any) => (n == null || n === '' ? '—' : `$${Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`)
 
@@ -81,14 +82,37 @@ export default function ViewPackPage() {
 
       <div className="flex items-center justify-between gap-4 mb-2 flex-wrap">
         <div className="flex items-center gap-3 flex-wrap">
+          <PackLogo url={pack.logo_url} height={64} />
           <h1 className="text-4xl font-bold">{pack.name || '—'}</h1>
           <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
         </div>
         {/* GZ28 SHOP LOCKED (04/10/2026): pack da vitrine da loja não se edita pelo app. */}
         {pack.shop_locked ? <span className="px-4 py-3 rounded-2xl font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span> : <Link href={`/packs/edit/${pack.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
       </div>
-      <p className="text-lg text-gray-400 mb-8">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
+      <p className={`text-lg text-gray-400 ${cars.some((c: any) => c.logo_url || c.pack_name) ? 'mb-4' : 'mb-8'}`}>{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
+      {/* NOME e LOGO POR CARRO (Parts & Packs, 08/10/2026): no mesmo pack, o Demon 2018 vende como «Z1000 AlphaOGD Pack» e os RedEye
+          como AlphaEye, cada um com o seu logo. A loja usa o do carro; sem ele, o do pack; sem os dois, o título em texto. */}
+      {cars.some((c: any) => c.logo_url || c.pack_name) && (
+        <div className="max-w-4xl mb-8 space-y-2">
+          {cars.map((c: any, i: number) => (
+            <div key={i} className="flex items-center gap-4 bg-gray-900 border border-gray-800 rounded-2xl px-4 py-2 flex-wrap">
+              {c.logo_url ? <PackLogo url={c.logo_url} height={40} /> : <span className="text-xs text-gray-600 w-24">pack logo</span>}
+              <div className="min-w-0">
+                <p className="font-bold">{c.pack_name || pack.name}</p>
+                <p className="text-sm text-gray-400">{carLabel(c)}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
+      {/* SCOPE: linha sem selo vale nos dois modos; o selo diz quando ela é só de um (lib/packScope.ts). */}
+      {[...parts, ...services, ...expenses, ...notes].some((l: any) => l.scope && l.scope !== 'BOTH') && (
+        <p className="max-w-4xl mb-4 text-sm text-gray-400 flex items-center gap-2 flex-wrap">
+          Lines without a tag count in both modes ·
+          <ScopeBadge scope="SHIPPED" /> only the shipped pack · <ScopeBadge scope="IN_HOUSE" /> only the in-house build · <ScopeBadge scope="APP_ONLY" /> only inside the app
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-6 max-w-4xl">
         <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
           <h2 className="text-lg font-bold mb-3">TOTALS CONFIG</h2>
@@ -117,12 +141,12 @@ export default function ViewPackPage() {
                         <span className="font-bold text-white">{money(total)}</span>
                       </div>
                       <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
-                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.description} — {money(partSell(m))}{m.base_cost != null ? ` (cost ${money(partCost(m))})` : ''}</p>)}
+                        {members.map((m: any, j: number) => <div key={j} className="flex items-center gap-3"><ShopThumb url={m.image_url} size={40} /><p className="flex-1">{m.quantity}× {m.description} — {money(partSell(m))}{m.base_cost != null ? ` (cost ${money(partCost(m))})` : ''}</p><ScopeBadge scope={m.scope} /></div>)}
                       </div>
                     </div>
                   )
                 }
-                return <p key={i}>{p.quantity}× {p.description} — {money(partSell(p))}{p.base_cost != null ? ` (cost ${money(partCost(p))})` : ''}</p>
+                return <div key={i} className="flex items-center gap-3"><ShopThumb url={p.image_url} size={40} /><p className="flex-1">{p.quantity}× {p.description} — {money(partSell(p))}{p.base_cost != null ? ` (cost ${money(partCost(p))})` : ''}</p><ScopeBadge scope={p.scope} /></div>
               }) })()}
             </div>
           </div>
@@ -132,7 +156,7 @@ export default function ViewPackPage() {
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-lg font-bold mb-3">SERVICES ({services.length})</h2>
             <div className="space-y-1 text-lg text-gray-300">
-              {services.map((s: any, i: number) => <p key={i}>{s.description} — {money(svcPrice(s))}</p>)}
+              {services.map((s: any, i: number) => <div key={i} className="flex items-center gap-3"><p className="flex-1">{s.description} — {money(svcPrice(s))}</p><ScopeBadge scope={s.scope} /></div>)}
             </div>
           </div>
         )}
@@ -154,12 +178,12 @@ export default function ViewPackPage() {
                         <span className="font-bold text-white">{money(total)}</span>
                       </div>
                       <div className="pl-5 border-l-2 border-teal-800 ml-3 py-1 space-y-1">
-                        {members.map((m: any, j: number) => <p key={j}>{m.quantity}× {m.item}{m.supplier ? ` @ ${m.supplier}` : ''} — {money(expAmount(m))}</p>)}
+                        {members.map((m: any, j: number) => <div key={j} className="flex items-center gap-3"><p className="flex-1">{m.quantity}× {m.item}{m.supplier ? ` @ ${m.supplier}` : ''} — {money(expAmount(m))}</p><ScopeBadge scope={m.scope} /></div>)}
                       </div>
                     </div>
                   )
                 }
-                return <p key={i}>{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(expAmount(e))}</p>
+                return <div key={i} className="flex items-center gap-3"><p className="flex-1">{e.quantity}× {e.item}{e.supplier ? ` @ ${e.supplier}` : ''} — {money(expAmount(e))}</p><ScopeBadge scope={e.scope} /></div>
               }) })()}
             </div>
           </div>
@@ -190,7 +214,7 @@ export default function ViewPackPage() {
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-lg font-bold mb-3">NOTES ({notes.length})</h2>
             <div className="space-y-1 text-lg text-gray-300">
-              {notes.map((n: any, i: number) => <p key={i}>{n.note}</p>)}
+              {notes.map((n: any, i: number) => <div key={i} className="flex items-center gap-3"><p className="flex-1">{n.note}</p><ScopeBadge scope={n.scope} /></div>)}
             </div>
           </div>
         )}

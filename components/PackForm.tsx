@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
 import { loadCarGroups, addGroupCars, type CarGroup } from '@/lib/carGroups'
+import { scopeKey } from '@/lib/packScope'
 
 // A performance-package template. Mirrors the pack-relevant content of an invoice
 // (totals config + PARTS / SERVICES / EXPENSES / NOTES) plus the set of cars it
@@ -12,10 +13,11 @@ import { loadCarGroups, addGroupCars, type CarGroup } from '@/lib/carGroups'
 // import on the new-quote screen.
 
 export type Car = { manufacturer: string; brand: string; model: string; version: string; years: number[] }
-type Part = { description: string; unit_price: string; quantity: string; base_cost: string }
-type Service = { description: string; price: string }
-type Expense = { supplier: string; item: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string }
-type Note = { note: string }
+// scope (lib/packScope.ts) e a foto da peça viajam junto quando o pack novo começa de um pack fechado.
+type Part = { description: string; unit_price: string; quantity: string; base_cost: string; image_url?: string; scope?: string }
+type Service = { description: string; price: string; scope?: string }
+type Expense = { supplier: string; item: string; amount: string; tax: string; extra: string; quantity: string; item_discount: string; scope?: string }
+type Note = { note: string; scope?: string }
 
 export type PackData = {
   name: string
@@ -139,10 +141,10 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
     setFloridaTaxes(p.florida_taxes != null ? String(p.florida_taxes) : '')
     setGlobalDiscount(p.global_discount != null ? String(p.global_discount) : '')
     setImportMargin(p.import_margin != null ? String(p.import_margin) : '0')
-    setParts((p.parts || []).map((x: any) => ({ description: x.description || '', unit_price: x.unit_price != null ? String(x.unit_price) : '', quantity: x.quantity != null ? String(x.quantity) : '1', base_cost: x.base_cost != null ? String(x.base_cost) : '' })))
-    setServices((p.services || []).map((x: any) => ({ description: x.description || '', price: x.price != null ? String(x.price) : '' })))
-    setExpenses((p.expenses || []).map((x: any) => ({ supplier: x.supplier || '', item: x.item || '', amount: x.amount != null ? String(x.amount) : '', tax: x.tax != null ? String(x.tax) : '0', extra: x.extra != null ? String(x.extra) : '0', quantity: x.quantity != null ? String(x.quantity) : '1', item_discount: x.item_discount != null ? String(x.item_discount) : '0' })))
-    setNotes((p.notes || []).map((x: any) => ({ note: x.note || '' })))
+    setParts((p.parts || []).map((x: any) => ({ description: x.description || '', unit_price: x.unit_price != null ? String(x.unit_price) : '', quantity: x.quantity != null ? String(x.quantity) : '1', base_cost: x.base_cost != null ? String(x.base_cost) : '', ...(x.image_url ? { image_url: String(x.image_url) } : {}), ...scopeKey(x) })))
+    setServices((p.services || []).map((x: any) => ({ description: x.description || '', price: x.price != null ? String(x.price) : '', ...scopeKey(x) })))
+    setExpenses((p.expenses || []).map((x: any) => ({ supplier: x.supplier || '', item: x.item || '', amount: x.amount != null ? String(x.amount) : '', tax: x.tax != null ? String(x.tax) : '0', extra: x.extra != null ? String(x.extra) : '0', quantity: x.quantity != null ? String(x.quantity) : '1', item_discount: x.item_discount != null ? String(x.item_discount) : '0', ...scopeKey(x) })))
+    setNotes((p.notes || []).map((x: any) => ({ note: x.note || '', ...scopeKey(x) })))
   }
 
   function content(finalCars: Car[]) {
@@ -153,10 +155,10 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       import_margin: parseFloat(importMargin) || 0,
-      parts: parts.filter((p) => p.description.trim()).map((p) => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: p.base_cost !== '' ? parseFloat(p.base_cost) : null })),
-      services: services.filter((s) => s.description.trim()).map((s) => ({ description: s.description.trim(), price: parseFloat(s.price) || 0 })),
-      expenses: expenses.filter((e) => e.item.trim()).map((e) => ({ supplier: e.supplier.trim(), item: e.item.trim(), amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0 })),
-      notes: notes.filter((n) => n.note.trim()).map((n) => ({ note: n.note.trim() })),
+      parts: parts.filter((p) => p.description.trim()).map((p) => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: p.base_cost !== '' ? parseFloat(p.base_cost) : null, ...(p.image_url ? { image_url: p.image_url } : {}), ...scopeKey(p) })),
+      services: services.filter((s) => s.description.trim()).map((s) => ({ description: s.description.trim(), price: parseFloat(s.price) || 0, ...scopeKey(s) })),
+      expenses: expenses.filter((e) => e.item.trim()).map((e) => ({ supplier: e.supplier.trim(), item: e.item.trim(), amount: parseFloat(e.amount) || 0, tax: parseFloat(e.tax) || 0, extra: parseFloat(e.extra) || 0, quantity: parseFloat(e.quantity) || 1, item_discount: parseFloat(e.item_discount) || 0, ...scopeKey(e) })),
+      notes: notes.filter((n) => n.note.trim()).map((n) => ({ note: n.note.trim(), ...scopeKey(n) })),
     }
   }
 

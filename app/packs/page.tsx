@@ -8,6 +8,10 @@ import { supabase } from '@/lib/supabase'
 import { formatUSD, partMatches } from '@/lib/utils'
 import { carLabel } from '@/lib/carData'
 import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
+import { PackLogo } from '@/components/PackBits'
+
+// O logo que a loja mostra para o pack: o do próprio pack; sem ele, o do primeiro carro que tiver um (os packs 2.7L só têm logo por carro).
+const logoOf = (p: any): string | null => p.logo_url || (Array.isArray(p.cars) ? p.cars.find((c: any) => c?.logo_url)?.logo_url : null) || null
 
 // A pack's GRAND TOTAL = the QUOTE price: parts + services, less the global
 // discount. Florida tax is EXCLUDED — quotes are sold tax-exclusive (it's added
@@ -222,6 +226,7 @@ export default function PacksPage() {
                     const cars = Array.isArray(p.cars) ? p.cars : []
                     return (
                       <div key={p.id} className="border border-gray-800 rounded-2xl p-4 flex items-center justify-between gap-6 flex-wrap">
+                        <PackLogo url={logoOf(p)} height={36} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-3 mb-1 flex-wrap">
                             <span className={`px-3 py-1 rounded-full text-sm font-bold ${closed ? 'bg-green-700 text-white' : 'bg-gray-700 text-gray-300'}`}>{closed ? 'CLOSED' : 'DRAFT'}</span>
@@ -254,6 +259,7 @@ export default function PacksPage() {
             const cars = Array.isArray(p.cars) ? p.cars : []
             return (
               <div key={p.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
+                <PackLogo url={logoOf(p)} height={48} />
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-3 mb-1 flex-wrap">
                     <h2 className="text-2xl font-bold">{p.name || '—'}</h2>
