@@ -82,6 +82,8 @@ export default function EditPackPage() {
   const [shopLocked, setShopLocked] = useState(false)
   // LOGO DO PACK (packs.logo_url): PNG branco em fundo transparente no bucket shop-images/packs/ — a loja põe no lugar do título.
   const [logoUrl, setLogoUrl] = useState<string | null>(null)
+  // SUMMARY (packs.summary) — «THE TABLE» em uma linha: «Crank Pinning + Spark Plugs + Tune + Headers». A loja mostra no card do pack.
+  const [summary, setSummary] = useState('')
   // Foto do Parts DB por PN e por nome: IMPORT ITEMS FROM EXPENSES já traz a foto da peça para a linha do pack.
   const [imgByPN, setImgByPN] = useState<Map<string, string>>(new Map())
   const [imgByName, setImgByName] = useState<Map<string, string>>(new Map())
@@ -206,6 +208,7 @@ export default function EditPackPage() {
     setStatus(data.status || 'DRAFT')
     setShopLocked(!!data.shop_locked)
     setLogoUrl(data.logo_url || null)
+    setSummary(data.summary || '')
     setCars(Array.isArray(data.cars) ? data.cars.map((c: any) => ({
       manufacturer: c.manufacturer || '', brand: c.brand || '', model: c.model || '', version: c.version || '',
       years: Array.isArray(c.years) ? c.years.map(Number) : (c.year != null && c.year !== '' ? [Number(c.year)] : []),
@@ -675,6 +678,7 @@ export default function EditPackPage() {
       // nome/logo por carro só vão quando existem — carro sem eles continua no formato antigo
       cars: cars.map(({ logo_url, pack_name, ...c }) => ({ ...c, ...(logo_url ? { logo_url } : {}), ...((pack_name || '').trim() ? { pack_name: (pack_name || '').trim() } : {}) })),
       logo_url: logoUrl || null,
+      summary: summary.trim() || null,
       status: nextStatus || status,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
@@ -752,6 +756,14 @@ export default function EditPackPage() {
       </div>
 
       <div className="grid grid-cols-1 gap-6 max-w-2xl">
+
+        {/* SUMMARY — o que o pack leva, em uma linha, como no card da loja. Inglês (Packs DB só em inglês). */}
+        <div>
+          <label className="block mb-3 text-lg font-bold">SUMMARY <span className="text-sm font-normal text-gray-500">— one line, shown on the pack card in the shop</span></label>
+          {locked
+            ? <p className="bg-gray-900 border border-gray-800 rounded-2xl px-4 py-3 text-lg font-bold text-amber-300">{summary || <span className="text-gray-500 font-normal">no summary</span>}</p>
+            : <input value={summary} onChange={(e) => setSummary(e.target.value)} placeholder="Crank Pinning + Spark Plugs + Tune + Headers" className={inputClass} />}
+        </div>
 
         {/* LOGO DO PACK (packs.logo_url) — Márcio, 08/10/2026: «The LOGO of the PACK in packs db!!!!». Branco em PNG transparente. */}
         <div>

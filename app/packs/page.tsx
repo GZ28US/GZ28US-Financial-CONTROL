@@ -234,6 +234,7 @@ export default function PacksPage() {
                             <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">{formatUSD(packGrandTotal(p))}</span>
                             <span className="text-sm text-gray-500">{p.name}</span>
                           </div>
+                          {p.summary && <p className="text-sm font-bold text-amber-300">{p.summary}</p>}
                           <p className="text-lg text-gray-400">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
                         </div>
                         <div className="flex gap-3 flex-wrap shrink-0">
@@ -269,6 +270,7 @@ export default function PacksPage() {
                     {p.shop_locked && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span>}
                     <span className="px-3 py-1 rounded-full text-sm font-extrabold bg-amber-500 text-black">GRAND TOTAL: {formatUSD(packGrandTotal(p))}</span>
                   </div>
+                  {p.summary && <p className="text-base font-bold text-amber-300">{p.summary}</p>}
                   <p className="text-lg text-gray-400">{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">

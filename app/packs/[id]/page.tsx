@@ -89,6 +89,8 @@ export default function ViewPackPage() {
         {/* GZ28 SHOP LOCKED (04/10/2026): pack da vitrine da loja não se edita pelo app. */}
         {pack.shop_locked ? <span className="px-4 py-3 rounded-2xl font-bold bg-red-900 text-red-200">🔒 GZ28 SHOP LOCKED</span> : <Link href={`/packs/edit/${pack.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>}
       </div>
+      {/* SUMMARY — «THE TABLE» do pack em uma linha (packs.summary): o que a loja mostra no card do pack. */}
+      {pack.summary && <p className="text-xl font-bold text-amber-300 mb-2 max-w-4xl">{pack.summary}</p>}
       <p className={`text-lg text-gray-400 ${cars.some((c: any) => c.logo_url || c.pack_name) ? 'mb-4' : 'mb-8'}`}>{cars.length ? packCarLabels(cars, carGroups, carLabel).join('  ·  ') : 'No cars selected'}</p>
       {/* NOME e LOGO POR CARRO (Parts & Packs, 08/10/2026): no mesmo pack, o Demon 2018 vende como «Z1000 AlphaOGD Pack» e os RedEye
           como AlphaEye, cada um com o seu logo. A loja usa o do carro; sem ele, o do pack; sem os dois, o título em texto. */}
