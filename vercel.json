@@ -56,11 +56,5 @@
       "path": "/ca/api/rides/mail-folders",
       "schedule": "11 * * * *"
     }
-  ],
-  "rewrites": [
-    {
-      "source": "/",
-      "destination": "/ca/landing.html"
-    }
   ]
 }
