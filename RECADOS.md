@@ -11,8 +11,9 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
   annual report foi feito). Conserto: reinstatement online, US$ 238,75, assinado pela registered agent **Drummond Consulting** + um sócio;
   retroage. Enquanto isso a LLC só pode «encerrar atividades» e não pode processar ninguém na Flórida. Quem cuida de cobrança/Drummond
   ([[caso-drummond-debito-automatico]]): a Drummond pediu débito automático de faturas em aberto em 22/09 — a assinatura dela é obrigatória.
-- **Sem registro FDACS de «motor vehicle repair»** (obrigatório para montagem/tune em carro de cliente — Fla. Stat. 559.904). A loja
-  já pausou o 🚗 IN-HOUSE online; formulários de orçamento/fatura prontos em Downloads. Na oficina: orçamento escrito assinado ANTES de
+- **Sem registro FDACS de «motor vehicle repair»** (obrigatório para montagem/tune em carro de cliente — Fla. Stat. 559.904). O 🚗
+  IN-HOUSE online **segue vendendo** (decisão do Márcio às ~09h45: «no, I don't want to pause it… then we get the documentation we need»;
+  chave shop_config `shop_inhouse_open` = 1); formulários de orçamento/fatura para o pedido na FDACS prontos em Downloads. Na oficina: orçamento escrito assinado ANTES de
   qualquer serviço em carro de cliente acima de US$ 150 (s. 559.905).
 - Nome legal da empresa em documento: **GZ28 V8 SPEEDSHOP USA LLC** («GZ28US LLC» não existe como entidade).
 - Detalhes: memória `llc-dissolvida-e-fdacs-08out.md` e o rascunho legal em Downloads (seção 0). Só informação — agir só se o seu humano pedir.
