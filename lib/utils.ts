@@ -235,6 +235,17 @@ export function buildDisplayLabel(buildNo: number, buildName: string | null | un
   return `Build.${String(n).padStart(2, '0')}`
 }
 
+// A SUBPASTA DO BUILD em «HB Tuning» (Márcio, 09/10/2026): «each build should create a subfolder inside HB Tuning, with the
+// number then the name of the pack… The bonestock should be the folder 00 - BoneStock». O número é o mesmo do rótulo (Build.01 →
+// «01 - <pack>»); a base é «00 - BoneStock» (ou «00 - Stock», a base própria do carro). A Build Sheet mora na pasta do build; a
+// base NÃO tem Build Sheet nas pastas, só o tune de fábrica.
+export function buildFolderName(buildNo: number, buildName: string | null | undefined, baselineNo: number | null | undefined): string {
+  const limpo = (s: string) => s.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim()
+  if (isBaselineName(buildName)) return String(buildName || '').trim().toLowerCase() === 'stock' ? '00 - Stock' : '00 - BoneStock'
+  const nn = buildDisplayLabel(buildNo, buildName, baselineNo).replace(/^Build\./, '')
+  return `${nn} - ${limpo(String(buildName || '')) || 'Unnamed'}`
+}
+
 // A BASELINE PREVISTA (ordem do usuário, 17/ago/2026): carro que nunca passou no dinamômetro
 // não tem linha de base — e sem ela não há meta, nem ganho, nem perda calculada. Então o
 // usuário CHUTA a perda e o app deriva a baseline da potência de fábrica. Ela se comporta

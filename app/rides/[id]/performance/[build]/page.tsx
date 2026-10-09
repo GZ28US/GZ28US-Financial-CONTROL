@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel, buildFolderName } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 
@@ -1435,9 +1435,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   async function loadTuneStatus() {
     if (!rideCode) return
     const found = new Set<string>()
-    await Promise.all(['US'].map(async (zone) => {
+    await Promise.all(['US'].flatMap((zone) => [undefined, '00 - BoneStock'].map((bf) => ({ zone, bf }))).map(async ({ zone, bf }) => {
       try {
-        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'find', zone, code: rideCode, name: rideName, match: 'stock tune' }) })
+        const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'find', zone, code: rideCode, name: rideName, match: 'stock tune', ...(bf ? { buildFolder: bf } : {}) }) })
         const d = await res.json().catch(() => ({}))
         for (const f of d.files || []) found.add(String(f))
       } catch { /* status display only */ }
@@ -1506,7 +1506,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       } catch { return false }
     }
     // 1) a pasta do carro — esta é a que não pode falhar
-    const noCarro = await put({ zone: 'US' })
+    const noCarro = await put({ zone: 'US', buildFolder: '00 - BoneStock' })   // a pasta da base, dentro de HB Tuning (09/10/2026)
     // 2) o acervo, nas duas zonas. O nome que o app gera já traz marca, ano,
     //    modelo, versão, câmbio, código e nome do carro: é único por construção,
     //    então numa pasta plana não colide com o tune de outro carro. E o upload
@@ -1689,6 +1689,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // Upload the PDF into the car's folder(s) — common cars have a folder in BOTH
   // archives, so try both zones; the route skips zones without a folder.
   async function syncSheetPdf() {
+    // BoneStock/Stock NÃO grava Build Sheet nas pastas (Márcio, 09/10/2026) — só o tune de fábrica, em «00 - BoneStock».
+    if (isBaselineName(buildName)) return
     try {
       const blob = await buildSheetPdf()
       const b64: string = await new Promise((resolve, reject) => {
@@ -1701,7 +1703,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
       const results = await Promise.all(['US'].map(async (zone) => {
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64, buildFolder: buildFolderName(buildNo, buildName, sheetBaseNo) }) })
           const d = await res.json().catch(() => ({}))
           return d.ok ? String(d.result) : 'error'
         } catch { return 'error' }
@@ -1733,9 +1735,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // Re-sync to the Dropbox HB Tuning folder first — the caption reports where it landed.
       const ROOT_LABEL = 'Dropbox\\001 - GZ28US\\GZ28US Rides'
       const savedIn: string[] = []
-      for (const zone of ['US']) {
+      for (const zone of (isBaselineName(buildName) ? [] : ['US'])) {   // a base não salva Build Sheet nas pastas
         try {
-          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64 }) })
+          const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64, buildFolder: buildFolderName(buildNo, buildName, sheetBaseNo) }) })
           const d = await res.json().catch(() => ({}))
           if (d.ok && d.result === 'uploaded' && typeof d.path === 'string') {
             const folderOnly = d.path.split('/').slice(0, -1).join('\\')

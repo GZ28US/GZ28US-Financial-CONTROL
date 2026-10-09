@@ -219,7 +219,10 @@ export async function POST(req: NextRequest) {
       const match = String(body.match || '').toLowerCase()
       const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder', files: [] })
-      const r = await dbx(token, 'files/list_folder', { path: `${root}/${folder}/${sub}`, recursive: false, limit: 1000 })
+      // SUBPASTA DO BUILD dentro do subfolder (09/10/2026): «NN - <pack>» ou «00 - BoneStock». O sanitize come a barra, por isso campo próprio.
+      const bf = sanitize(String(body.buildFolder || ''))
+      const subDir = bf ? `${sub}/${bf}` : sub
+      const r = await dbx(token, 'files/list_folder', { path: `${root}/${folder}/${subDir}`, recursive: false, limit: 1000 })
       if (!r.ok) return NextResponse.json({ ok: true, result: 'no-subfolder', files: [] })
       const files = (r.data.entries || [])
         .filter((e: any) => e['.tag'] === 'file' && (!match || String(e.name).toLowerCase().includes(match)))
@@ -302,6 +305,8 @@ export async function POST(req: NextRequest) {
       if (repoName) dirs.push(`${root}/${repoName}`)
       const folder = await findFolderByCode(token, root, code, name)
       if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
+      // o tune do BoneStock mora em «HB Tuning/00 - BoneStock» desde 09/10/2026 (e também se acha a base «00 - Stock»)
+      if (folder) for (const b of ['00 - BoneStock', '00 - Stock']) dirs.push(`${root}/${folder}/HB Tuning/${b}`)
       // "<prefixo> <CÓDIGO> - <Nome> <ETIQUETA DE OS> Tune.<ext>". O (.*) guloso
       // casa a ÚLTIMA ocorrência da etiqueta, que é onde ela mora — o prefixo do
       // arquivo pode conter as mesmas palavras.
@@ -553,9 +558,12 @@ export async function POST(req: NextRequest) {
       if (from === to) return NextResponse.json({ ok: true, result: 'same-name' })
       const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
+      // SUBPASTA DO BUILD dentro do subfolder (09/10/2026): «NN - <pack>» ou «00 - BoneStock». O sanitize come a barra, por isso campo próprio.
+      const bf = sanitize(String(body.buildFolder || ''))
+      const subDir = bf ? `${sub}/${bf}` : sub
       const mv = await dbx(token, 'files/move_v2', {
-        from_path: `${root}/${folder}/${sub}/${from}`,
-        to_path: `${root}/${folder}/${sub}/${to}`,
+        from_path: `${root}/${folder}/${subDir}/${from}`,
+        to_path: `${root}/${folder}/${subDir}/${to}`,
         autorename: false,
       })
       if (!mv.ok) {
@@ -564,7 +572,7 @@ export async function POST(req: NextRequest) {
         if (tag.includes('conflict')) return NextResponse.json({ ok: true, result: 'conflict' })
         return NextResponse.json({ error: 'move failed: ' + mv.text.slice(0, 200) }, { status: 502 })
       }
-      return NextResponse.json({ ok: true, result: 'renamed', path: `${folder}/${sub}/${to}` })
+      return NextResponse.json({ ok: true, result: 'renamed', path: `${folder}/${subDir}/${to}` })
     }
 
     if (action === 'upload') {
@@ -604,9 +612,13 @@ export async function POST(req: NextRequest) {
         if (!upI.ok) return NextResponse.json({ error: 'upload failed: ' + upI.text.slice(0, 200) }, { status: 502 })
         return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/Invoices/${invFolder}/${filename}` })
       }
-      const up = await dbxUpload(token, `${root}/${folder}/${sub}/${filename}`, Buffer.from(b64, 'base64'))
+      // SUBPASTA DO BUILD dentro do subfolder (09/10/2026): «NN - <pack>» ou «00 - BoneStock». O sanitize come a barra, por isso campo próprio.
+      const bf = sanitize(String(body.buildFolder || ''))
+      const subDir = bf ? `${sub}/${bf}` : sub
+      if (bf) await dbx(token, 'files/create_folder_v2', { path: `${root}/${folder}/${subDir}`, autorename: false })   // conflito = já existe
+      const up = await dbxUpload(token, `${root}/${folder}/${subDir}/${filename}`, Buffer.from(b64, 'base64'))
       if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
-      return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/${sub}/${filename}` })
+      return NextResponse.json({ ok: true, result: 'uploaded', path: `${folder}/${subDir}/${filename}` })
     }
 
     // Mail-folder mirror rides along with create/rename (US mailbox only).

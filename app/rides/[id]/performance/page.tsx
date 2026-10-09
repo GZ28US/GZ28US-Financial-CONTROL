@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { packTargetBhp, isBaselineName, BASE_PATH, buildDisplayLabel } from '@/lib/utils'
+import { packTargetBhp, isBaselineName, BASE_PATH, buildDisplayLabel, buildFolderName } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…),
@@ -117,7 +117,21 @@ export default function RideBuildsPage() {
   // Não-fatal: sem arquivo (sheet nunca gerada) não é erro.
   async function renameSheetFile(b: Build, oldName: string, newName: string) {
     if (!ride?.project_code) return
-    const fileTag = (s: string) => s.replace(/[\\/:*?"<>|]/g, '')
+    // SUBPASTA DO BUILD (09/10/2026): «NN - <pack>» dentro de HB Tuning. Renomeia a pasta e o PDF dentro dela; a base
+    // (BoneStock/Stock) não tem Build Sheet nas pastas, então não há o que renomear.
+    if (!isBaselineName(oldName) && !isBaselineName(newName)) {
+      const baseNo = builds.find(isBoneStockBuild)?.build_no ?? null
+      const deDir = buildFolderName(b.build_no, oldName, baseNo), paraDir = buildFolderName(b.build_no, newName, baseNo)
+      const chama = async (extra: Record<string, unknown>) => { try { const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'rename-file', zone: 'US', code: ride.project_code, name: ride.project_name, ...extra }) }); return await res.json().catch(() => ({})) } catch { return {} } }
+      const d = await chama({ from: deDir, to: paraDir })
+      if (d.result === 'renamed' || d.result === 'same-name') {
+        const tag = (s: string) => s.replace(/[\\/:*?"<>|]/g, '')
+        const base = `${ride.project_code}${ride.project_name ? ' - ' + ride.project_name : ''}`
+        await chama({ buildFolder: paraDir, from: `${base} ${tag(oldName.trim())} BuildSheet.pdf`, to: `${base} ${tag(newName.trim())} BuildSheet.pdf` })
+        return
+      }
+      if (d.result === 'conflict') { alert(`The Dropbox folder "${paraDir}" already exists — the old one was left as "${deDir}".`); return }
+    }    const fileTag = (s: string) => s.replace(/[\\/:*?"<>|]/g, '')
     const base = `${ride.project_code}${ride.project_name ? ' - ' + ride.project_name : ''}`
     const to = `${base} ${fileTag(newName.trim() || buildLabel(b.build_no))} BuildSheet.pdf`
     const candidates = [
