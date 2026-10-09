@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 
@@ -1384,6 +1384,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   const [sheetToClient, setSheetToClient] = useState(false)
   // The build's given name (ride_builds.name) — printed on the BuildSheet PDF header.
   const [buildName, setBuildName] = useState('')
+  // o build_no da base deste carro — o rótulo «Build.0N» conta a partir dela (buildDisplayLabel)
+  const [sheetBaseNo, setSheetBaseNo] = useState<number | null>(null)
   // A META DO PACK na Build Sheet (ordem do usuário, 17/ago/2026): a sheet é o documento
   // do pacote, então ela declara o alvo. Os números saem EXATAMENTE da mesma conta da aba
   // DYNO — mesma perda, mesmo "melhor até agora" — pra as duas telas nunca discordarem.
@@ -1396,6 +1398,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   useEffect(() => {
     void loadSheet(); void loadTuneStatus(); void loadDynoTarget()
     supabase.from('ride_builds').select('name').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle().then(({ data }) => setBuildName(data?.name || ''))
+    supabase.from('ride_builds').select('build_no, name').eq('ride_code', rideCode).then(({ data }) => setSheetBaseNo(((data || []) as any[]).find((x) => isBaselineName(x.name))?.build_no ?? null))
   }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // A perda vem da baseline do CARRO (qualquer build); o "melhor" é o mesmo conjunto que a
@@ -1593,7 +1596,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(90, 90, 90)
     doc.text(rideTitle, pageW - 8, 18, { align: 'right' })
     if (carLine) doc.text(carLine, pageW - 8, 23, { align: 'right' })
-    doc.text(`Build.${String(buildNo).padStart(2, '0')}${buildName ? ` — ${buildName}` : ''} · ${new Date().toLocaleDateString('en-US')}`, pageW - 8, carLine ? 28 : 23, { align: 'right' })
+    doc.text(`${buildDisplayLabel(buildNo, buildName, sheetBaseNo)}${buildName && !isBaselineName(buildName) ? ` — ${buildName}` : ''} · ${new Date().toLocaleDateString('en-US')}`, pageW - 8, carLine ? 28 : 23, { align: 'right' })
     const rows: Array<{ label: string; value: string; modded: boolean }> = [
       { label: 'Power Source', value: sheet.power_source || '—', modded: false },
       ...BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => {
@@ -1694,7 +1697,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         r.onerror = reject
         r.readAsDataURL(blob)
       })
-      const packTag = ((buildName || '').trim() || `Build.${String(buildNo).padStart(2, '0')}`).replace(/[\/:*?"<>|]/g, '')
+      const packTag = ((buildName || '').trim() || buildDisplayLabel(buildNo, buildName, sheetBaseNo)).replace(/[\/:*?"<>|]/g, '')
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
       const results = await Promise.all(['US'].map(async (zone) => {
         try {
@@ -1723,7 +1726,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         r.onerror = reject
         r.readAsDataURL(blob)
       })
-      const buildTag = `Build.${String(buildNo).padStart(2, '0')}`
+      const buildTag = buildDisplayLabel(buildNo, buildName, sheetBaseNo)
       // O arquivo carrega o NOME DO PACK, não Build.XX (ordem do usuário, 17/ago/2026).
       const packTag = ((buildName || '').trim() || buildTag).replace(/[\\/:*?"<>|]/g, '')
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
@@ -1938,9 +1941,10 @@ export default function RidePerformancePage() {
   const params = useParams()
   const rideId = String(params.id)
   const buildNo = Math.max(1, parseInt(String(params.build || '1'), 10) || 1)
-  const buildLabel = `Build.${String(buildNo).padStart(2, '0')}`
   const [ride, setRide] = useState<{ project_code: string | null; project_name: string | null; manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null; transmission: string | null } | null>(null)
   const [buildName, setBuildName] = useState('')
+  const [baseNo, setBaseNo] = useState<number | null>(null)
+  const buildLabel = buildDisplayLabel(buildNo, buildName, baseNo)
   const [client, setClient] = useState<{ name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null>(null)
   const [tab, setTab] = useState<Tab>('DYNO')
 
@@ -1949,6 +1953,7 @@ export default function RidePerformancePage() {
       setRide(data)
       if (data?.project_code) {
         supabase.from('ride_builds').select('name').eq('ride_code', data.project_code).eq('build_no', buildNo).maybeSingle().then(({ data: b }) => setBuildName(b?.name || ''))
+        supabase.from('ride_builds').select('build_no, name').eq('ride_code', data.project_code).then(({ data: all }) => setBaseNo(((all || []) as any[]).find((x) => isBaselineName(x.name))?.build_no ?? null))
       }
       if (data?.client_id) {
         supabase.from('clients').select('name, phone, country, preferred_message_method').eq('id', data.client_id).single().then(({ data: c }) => setClient(c))
@@ -1978,7 +1983,7 @@ export default function RidePerformancePage() {
       <Header />
 
       <div className="flex items-center justify-between mb-1 gap-4 flex-wrap">
-        <h1 className="text-4xl font-bold">PERFORMANCE — {buildLabel}{buildName ? ` — ${buildName}` : ''}</h1>
+        <h1 className="text-4xl font-bold">PERFORMANCE — {buildLabel}{buildName && !isBaselineName(buildName) ? ` — ${buildName}` : ''}</h1>
         <div className="flex gap-3">
           <Link href={`/rides/${rideId}/performance`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
           <Link href={`/rides/${rideId}`} className="bg-gray-600 hover:bg-gray-500 px-6 py-4 rounded-2xl text-xl font-bold">VIEW RIDE</Link>

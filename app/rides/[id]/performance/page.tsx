@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { packTargetBhp, isBaselineName, BASE_PATH } from '@/lib/utils'
+import { packTargetBhp, isBaselineName, BASE_PATH, buildDisplayLabel } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 
 // BUILDS — every ride's performance data is grouped into builds (Build.01, Build.02…),
@@ -90,7 +90,8 @@ export default function RideBuildsPage() {
     setAdding(true)
     try {
       const next = builds.length ? Math.max(...builds.map((b) => b.build_no)) + 1 : 1
-      const buildName = (prompt(`Pack name for ${buildLabel(next)} (e.g. Z1250sc Alpha170 Pack):`) || '').trim()
+      const baseNo = builds.find(isBoneStockBuild)?.build_no ?? null
+      const buildName = (prompt(`Pack name for ${buildDisplayLabel(next, null, baseNo)} (e.g. Z1250sc Alpha170 Pack — or BoneStock):`) || '').trim()
       // Baseline (BoneStock/Stock): só UMA por carro, e nasce como Build.01 — os outros
       // builds sobem uma casa (junto com as puxadas e build sheets deles).
       let insertNo = next
@@ -175,8 +176,8 @@ export default function RideBuildsPage() {
     const sheet = sheetByBuild[b.build_no] ? 1 : 0
     const what = [pulls ? `${pulls} dyno pull(s)` : '', sheet ? 'the build sheet' : ''].filter(Boolean).join(' and ')
     const msg = what
-      ? `DELETE ${buildLabel(b.build_no)} — ${b.name || 'Unnamed'}\n\nThis will ALSO delete ${what}.\nThis cannot be undone.\n\nDelete everything?`
-      : `DELETE ${buildLabel(b.build_no)} — ${b.name || 'Unnamed'}\n\nIt has no dyno pulls and no build sheet.\n\nDelete?`
+      ? `DELETE ${buildDisplayLabel(b.build_no, b.name, builds.find(isBoneStockBuild)?.build_no ?? null)}${isBoneStockBuild(b) ? '' : ` — ${b.name || 'Unnamed'}`}\n\nThis will ALSO delete ${what}.\nThis cannot be undone.\n\nDelete everything?`
+      : `DELETE ${buildDisplayLabel(b.build_no, b.name, builds.find(isBoneStockBuild)?.build_no ?? null)}${isBoneStockBuild(b) ? '' : ` — ${b.name || 'Unnamed'}`}\n\nIt has no dyno pulls and no build sheet.\n\nDelete?`
     if (!window.confirm(msg)) return
     setRemovingId(b.id)
     try {
@@ -252,7 +253,7 @@ export default function RideBuildsPage() {
                             roxo de fixado (mesmo padrão do duty permanente do staff). */}
                         {bone
                           ? <span className="px-3 py-1 rounded-full text-xs font-bold bg-purple-900 text-purple-300">{(b.name || '').trim().toLowerCase() === 'stock' ? '📌 THIS CAR’S BASELINE' : '📌 FACTORY BASELINE'}</span>
-                          : <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">🏁 {buildLabel(b.build_no)}</span>}
+                          : <span className="px-3 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-200">🏁 {buildDisplayLabel(b.build_no, b.name, builds.find(isBoneStockBuild)?.build_no ?? null)}</span>}
                         {/* A meta sai do próprio nome do pack (Z1250sc = 1250 bhp). */}
                         {target != null && <span className="px-3 py-1 rounded-full text-xs font-bold bg-fuchsia-900 text-fuchsia-200">🎯 {target} BHP</span>}
                       </div>

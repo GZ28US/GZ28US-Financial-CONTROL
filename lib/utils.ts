@@ -225,6 +225,16 @@ export const isBaselineName = (name: string | null | undefined) => {
   return n === 'bonestock' || n === 'stock' || n === BASELINE_PREDICTION.toLowerCase()
 }
 
+// O RÓTULO DO BUILD NA TELA (Márcio, 09/10/2026): «in the BoneStock Builds, don't call it Build, show ONLY BoneStock, and the
+// Builds should start in 1». A linha de base (BoneStock/Stock) mora no build_no 1 do banco — por isso, num carro que tem a base,
+// o build_no 2 aparece como «Build.01». Só a EXIBIÇÃO muda: build_no, links /performance/N e puxadas continuam iguais.
+// `baselineNo` = o build_no da base deste carro (null quando o carro não tem uma).
+export function buildDisplayLabel(buildNo: number, buildName: string | null | undefined, baselineNo: number | null | undefined): string {
+  if (isBaselineName(buildName)) return String(buildName || '').trim() || 'BoneStock'
+  const n = baselineNo != null && baselineNo < buildNo ? buildNo - 1 : buildNo
+  return `Build.${String(n).padStart(2, '0')}`
+}
+
 // A BASELINE PREVISTA (ordem do usuário, 17/ago/2026): carro que nunca passou no dinamômetro
 // não tem linha de base — e sem ela não há meta, nem ganho, nem perda calculada. Então o
 // usuário CHUTA a perda e o app deriva a baseline da potência de fábrica. Ela se comporta
