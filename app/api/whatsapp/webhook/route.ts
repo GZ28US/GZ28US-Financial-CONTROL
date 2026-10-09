@@ -66,7 +66,10 @@ export async function POST(req: NextRequest) {
   }
 
   try {
-    const chatId = String(d?.chatId || d?.from || '')
+    // Mensagem que o PRÓPRIO celular US manda no grupo chega com `from` = o número dele e o grupo em `to` — lendo só `from`,
+    // todo post do Márcio pelo número US (Pix do Zeus, Charger Raul, PowerTrade…) ficava fora da fila. Medido em 08/10/2026
+    // pela AutoBook GZ28BR. Mesma régua do espelho (lib/waStore.server.ts · waNormalize).
+    const chatId = String(d?.chatId || (d?.fromMe ? d?.to : d?.from) || '')
     // Só o FINANCEIRO por enquanto: é o grupo que vira dinheiro no app.
     if (chatId.includes(FINANCEIRO_GROUP.split('@')[0])) {
       const supabase = db()
