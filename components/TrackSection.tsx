@@ -33,6 +33,17 @@ type Run = {
 
 const MPH_PER_KMH = 1 / 1.609344
 const FT_PER_M = 1 / 0.3048
+// ── O MESMO ARQUIVO VIVE NOS DOIS APPS (US e BR) — muda só esta linha e o cliente do banco (`db`, abaixo).
+// US mostra mph / ft / °F; BR mostra km/h / m / °C. O banco é sempre métrico.
+const DIALECT = 'US' as 'US' | 'BR'
+const SPD = DIALECT === 'US' ? 'MPH' : 'KM/H'
+const LEN = DIALECT === 'US' ? 'ft' : 'm'
+const TMP = DIALECT === 'US' ? '°F' : '°C'
+const spd = (kmh: number | null) => (kmh == null ? null : DIALECT === 'US' ? kmh * MPH_PER_KMH : kmh)
+const len = (m: number | null) => (m == null ? null : DIALECT === 'US' ? m * FT_PER_M : m)
+const temp = (c: number | null) => (c == null ? null : DIALECT === 'US' ? c * 9 / 5 + 32 : c)
+// A tabela track_runs mora no banco US (compartilhada, como a dyno_pulls).
+const db = supabase
 const MODE_TITLE: Record<TrackMode, string> = { QUARTER: '1/4 MILE', EIGHTH: '1/8 MILE', ROLL: '100-200 km/h' }
 const MONTHS: [string, string][] = [
   ['01', 'January'], ['02', 'February'], ['03', 'March'], ['04', 'April'], ['05', 'May'], ['06', 'June'],
@@ -46,7 +57,6 @@ const isNumeric = (v: string) => v === '' || /^-?\d*\.?\d*$/.test(v)
 const f3 = (v: number | null) => (v == null ? '—' : v.toFixed(3))
 const f2 = (v: number | null) => (v == null ? '—' : v.toFixed(2))
 const f1 = (v: number | null) => (v == null ? '—' : v.toFixed(1))
-const mph = (kmh: number | null) => (kmh == null ? null : kmh * MPH_PER_KMH)
 function fmtDate(d: string | null) {
   if (!d || !/^\d{4}-\d{2}-\d{2}$/.test(d)) return '—'
   return new Date(d + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
@@ -64,40 +74,40 @@ const COLS: Record<TrackMode, Col[]> = {
   QUARTER: [
     { label: 'R/T', get: (r) => n(r.reaction_s), fmt: f3, unit: 's' },
     { label: '60 FT', get: (r) => n(r.t60ft_s), fmt: f3, better: 'lower', unit: 's' },
-    { label: '330 FT', get: (r) => n(r.t100m_s), fmt: f3, better: 'lower', unit: 's' },
+    { label: DIALECT === 'US' ? '330 FT' : '100 M', get: (r) => n(r.t100m_s), fmt: f3, better: 'lower', unit: 's' },
     { label: '1/8 ET', get: (r) => n(r.t201m_s), fmt: f3, better: 'lower', unit: 's' },
-    { label: '1/8 MPH', get: (r) => mph(n(r.v201m_kmh)), fmt: f1, better: 'higher', unit: 'mph' },
-    { label: '1000 FT', get: (r) => n(r.t302m_s), fmt: f3, better: 'lower', unit: 's' },
+    { label: `1/8 ${SPD}`, get: (r) => spd(n(r.v201m_kmh)), fmt: f1, better: 'higher' },
+    { label: DIALECT === 'US' ? '1000 FT' : '302 M', get: (r) => n(r.t302m_s), fmt: f3, better: 'lower', unit: 's' },
     { label: '1/4 ET', get: (r) => n(r.t402m_s), fmt: f3, better: 'lower', unit: 's' },
-    { label: '1/4 MPH', get: (r) => mph(n(r.v402m_kmh)), fmt: f1, better: 'higher', unit: 'mph' },
+    { label: `1/4 ${SPD}`, get: (r) => spd(n(r.v402m_kmh)), fmt: f1, better: 'higher' },
   ],
   EIGHTH: [
     { label: 'R/T', get: (r) => n(r.reaction_s), fmt: f3, unit: 's' },
     { label: '60 FT', get: (r) => n(r.t60ft_s), fmt: f3, better: 'lower', unit: 's' },
-    { label: '330 FT', get: (r) => n(r.t100m_s), fmt: f3, better: 'lower', unit: 's' },
+    { label: DIALECT === 'US' ? '330 FT' : '100 M', get: (r) => n(r.t100m_s), fmt: f3, better: 'lower', unit: 's' },
     { label: '1/8 ET', get: (r) => n(r.t201m_s), fmt: f3, better: 'lower', unit: 's' },
-    { label: '1/8 MPH', get: (r) => mph(n(r.v201m_kmh)), fmt: f1, better: 'higher', unit: 'mph' },
+    { label: `1/8 ${SPD}`, get: (r) => spd(n(r.v201m_kmh)), fmt: f1, better: 'higher' },
   ],
   ROLL: [
     { label: '100-200', get: (r) => n(r.t100_200_s), fmt: f2, better: 'lower', unit: 's' },
-    { label: 'DIST (ft)', get: (r) => (n(r.distance_m) == null ? null : n(r.distance_m)! * FT_PER_M), fmt: f1, better: 'lower', unit: 'ft' },
+    { label: `DIST (${LEN})`, get: (r) => len(n(r.distance_m)), fmt: f1, better: 'lower' },
     { label: 'SLOPE %', get: (r) => n(r.slope_pct), fmt: f2 },
-    { label: 'TEMP °F', get: (r) => (n(r.temp_c) == null ? null : n(r.temp_c)! * 9 / 5 + 32), fmt: f1 },
-    { label: 'DA (ft)', get: (r) => (n(r.density_alt_m) == null ? null : n(r.density_alt_m)! * FT_PER_M), fmt: (v) => (v == null ? '—' : Math.round(v).toString()) },
+    { label: `TEMP ${TMP}`, get: (r) => temp(n(r.temp_c)), fmt: f1 },
+    { label: `DA (${LEN})`, get: (r) => len(n(r.density_alt_m)), fmt: (v) => (v == null ? '—' : Math.round(v).toString()) },
   ],
 }
 
-// Manual form fields per page (speeds typed in MPH, stored in km/h).
+// Manual form fields per page (speeds typed in the app's unit — mph in US, km/h in BR — stored in km/h).
 type FField = { key: string; label: string; speed?: boolean }
 const FIELDS: Record<TrackMode, FField[]> = {
   QUARTER: [
-    { key: 'reaction_s', label: 'R/T' }, { key: 't60ft_s', label: '60 FT' }, { key: 't100m_s', label: '330 FT' },
-    { key: 't201m_s', label: '1/8 ET' }, { key: 'v201m_kmh', label: '1/8 MPH', speed: true }, { key: 't302m_s', label: '1000 FT' },
-    { key: 't402m_s', label: '1/4 ET' }, { key: 'v402m_kmh', label: '1/4 MPH', speed: true },
+    { key: 'reaction_s', label: 'R/T' }, { key: 't60ft_s', label: '60 FT' }, { key: 't100m_s', label: DIALECT === 'US' ? '330 FT' : '100 M' },
+    { key: 't201m_s', label: '1/8 ET' }, { key: 'v201m_kmh', label: `1/8 ${SPD}`, speed: true }, { key: 't302m_s', label: DIALECT === 'US' ? '1000 FT' : '302 M' },
+    { key: 't402m_s', label: '1/4 ET' }, { key: 'v402m_kmh', label: `1/4 ${SPD}`, speed: true },
   ],
   EIGHTH: [
-    { key: 'reaction_s', label: 'R/T' }, { key: 't60ft_s', label: '60 FT' }, { key: 't100m_s', label: '330 FT' },
-    { key: 't201m_s', label: '1/8 ET' }, { key: 'v201m_kmh', label: '1/8 MPH', speed: true },
+    { key: 'reaction_s', label: 'R/T' }, { key: 't60ft_s', label: '60 FT' }, { key: 't100m_s', label: DIALECT === 'US' ? '330 FT' : '100 M' },
+    { key: 't201m_s', label: '1/8 ET' }, { key: 'v201m_kmh', label: `1/8 ${SPD}`, speed: true },
   ],
   ROLL: [{ key: 't100_200_s', label: '100-200 (s)' }, { key: 'distance_m', label: 'DIST (m)' }],
 }
@@ -144,7 +154,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   useEffect(() => { if (packName) setForm((f) => (f.pack.trim() ? f : { ...f, pack: packName })) }, [packName])
 
   async function load() {
-    const { data } = await supabase.from('track_runs').select('*').eq('ride_code', rideCode).eq('build_no', buildNo)
+    const { data } = await db.from('track_runs').select('*').eq('ride_code', rideCode).eq('build_no', buildNo)
       .order('run_date', { ascending: true, nullsFirst: true }).order('created_at', { ascending: true })
     setRuns(((data || []) as Run[]).filter((r) => belongs(mode, r)))
     setLoading(false)
@@ -180,7 +190,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   }
 
   async function insertRun(row: Record<string, unknown>): Promise<Run | null> {
-    const { data, error } = await supabase.from('track_runs').insert([{ ride_code: rideCode, build_no: buildNo, origin: 'US', ...row }]).select().single()
+    const { data, error } = await db.from('track_runs').insert([{ ride_code: rideCode, build_no: buildNo, origin: DIALECT, ...row }]).select().single()
     if (error) { alert(error.message); return null }
     return data as Run
   }
@@ -226,7 +236,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
     for (const fld of FIELDS[mode]) {
       const v = (form.vals[fld.key] || '').trim()
       const num = v === '' ? null : parseFloat(v)
-      out[fld.key] = num == null || !Number.isFinite(num) ? null : fld.speed ? Math.round(num / MPH_PER_KMH * 100) / 100 : num
+      out[fld.key] = num == null || !Number.isFinite(num) ? null : fld.speed && DIALECT === 'US' ? Math.round(num / MPH_PER_KMH * 100) / 100 : num
     }
     const head = mode === 'QUARTER' ? out.t402m_s : mode === 'EIGHTH' ? out.t201m_s : out.t100_200_s
     if (head == null) { alert(`Enter the ${mode === 'ROLL' ? '100-200 time' : mode === 'QUARTER' ? '1/4 ET' : '1/8 ET'}.`); return null }
@@ -257,7 +267,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
     const vals: Record<string, string> = {}
     for (const fld of FIELDS[mode]) {
       const v = n((r as unknown as Record<string, unknown>)[fld.key])
-      vals[fld.key] = v == null ? '' : fld.speed ? (v * MPH_PER_KMH).toFixed(1) : String(v)
+      vals[fld.key] = v == null ? '' : fld.speed ? spd(v)!.toFixed(1) : String(v)
     }
     setForm({ pack: r.pack || '', track: (mode === 'ROLL' ? r.device : r.track) || '', dmonth: m ? m[2] : '', dday: m ? m[3] : '', dyear: m ? m[1] : '', vals })
     setEditingId(r.id)
@@ -271,7 +281,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
     delete row.kind
     setSaving(true)
     try {
-      const { error } = await supabase.from('track_runs').update(row).eq('id', editingId)
+      const { error } = await db.from('track_runs').update(row).eq('id', editingId)
       if (error) { alert(error.message); return }
       setEditingId(null)
       setForm(emptyForm())
@@ -283,7 +293,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
     // One timeslip feeds both drag tabs — say so before it disappears from the other one too.
     const both = r.kind === 'DRAG' && r.t201m_s != null && r.t402m_s != null
     if (!window.confirm(both ? 'Remove this run? It is the same timeslip on the 1/8 MILE and the 1/4 MILE tabs — it leaves both.' : 'Remove this run?')) return
-    const { error } = await supabase.from('track_runs').delete().eq('id', r.id)
+    const { error } = await db.from('track_runs').delete().eq('id', r.id)
     if (error) { alert(error.message); return }
     setRuns((prev) => prev.filter((x) => x.id !== r.id))
   }
@@ -292,17 +302,17 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   function runReport(r: Run): string {
     const m = r.kind === 'ROLL' ? 'ROLL' : r.t402m_s != null ? 'QUARTER' : 'EIGHTH'
     const when = [r.run_date ? fmtDate(r.run_date) : null, r.run_time ? r.run_time.slice(0, 5) : null].filter(Boolean).join(' · ')
-    const at = (t: number | null, v: number | null) => `${f3(t)} s${v != null ? ` @ ${f1(mph(v))} mph` : ''}`
+    const at = (t: number | null, v: number | null) => `${f3(t)} s${v != null ? ` @ ${f1(spd(v))} ${SPD.toLowerCase()}` : ''}`
     const lines: Array<string | null> = m === 'ROLL'
       ? [
           '🏁 *100-200 km/h*',
           rideTitle ? `*Ride:* ${rideTitle}` : null,
           r.pack ? `*Pack:* ${r.pack}` : null,
           `*Time:* ${f2(n(r.t100_200_s))} s${r.valid === true ? ' ✅ valid' : r.valid === false ? ' ❌ invalid' : ''}`,
-          r.distance_m != null ? `*Distance:* ${f1(n(r.distance_m)! * FT_PER_M)} ft (${f2(n(r.distance_m))} m)` : null,
+          r.distance_m != null ? `*Distance:* ${f1(len(n(r.distance_m)))} ${LEN}${DIALECT === 'US' ? ` (${f2(n(r.distance_m))} m)` : ''}` : null,
           r.slope_pct != null ? `*Slope:* ${f2(n(r.slope_pct))}%` : null,
           r.temp_c != null || r.density_alt_m != null
-            ? `*Conditions:* ${r.temp_c != null ? `${f1(n(r.temp_c)! * 9 / 5 + 32)}°F` : ''}${r.altitude_m != null ? ` · alt ${Math.round(n(r.altitude_m)! * FT_PER_M)} ft` : ''}${r.density_alt_m != null ? ` · DA ${Math.round(n(r.density_alt_m)! * FT_PER_M)} ft` : ''}`
+            ? `*Conditions:* ${r.temp_c != null ? `${f1(temp(n(r.temp_c)))}${TMP}` : ''}${r.altitude_m != null ? ` · alt ${Math.round(len(n(r.altitude_m))!)} ${LEN}` : ''}${r.density_alt_m != null ? ` · DA ${Math.round(len(n(r.density_alt_m))!)} ${LEN}` : ''}`
             : null,
           r.splits?.length ? `*Splits:* ${r.splits.map((s) => `100-${s.to} ${f2(s.s)}`).join(' · ')}` : null,
           when ? `*Date:* ${when}` : null,
@@ -314,9 +324,9 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
           r.pack ? `*Pack:* ${r.pack}` : null,
           m === 'QUARTER' ? `*ET:* ${at(n(r.t402m_s), n(r.v402m_kmh))}` : `*ET:* ${at(n(r.t201m_s), n(r.v201m_kmh))}`,
           r.t60ft_s != null ? `*60 ft:* ${f3(n(r.t60ft_s))} s` : null,
-          r.t100m_s != null ? `*330 ft:* ${f3(n(r.t100m_s))} s` : null,
+          r.t100m_s != null ? `*${DIALECT === 'US' ? '330 ft' : '100 m'}:* ${f3(n(r.t100m_s))} s` : null,
           m === 'QUARTER' && r.t201m_s != null ? `*1/8:* ${at(n(r.t201m_s), n(r.v201m_kmh))}` : null,
-          m === 'QUARTER' && r.t302m_s != null ? `*1000 ft:* ${f3(n(r.t302m_s))} s` : null,
+          m === 'QUARTER' && r.t302m_s != null ? `*${DIALECT === 'US' ? '1000 ft' : '302 m'}:* ${f3(n(r.t302m_s))} s` : null,
           r.reaction_s != null ? `*R/T:* ${f3(n(r.reaction_s))} s` : null,
           when ? `*Date:* ${when}` : null,
           r.track ? `*Track:* ${r.track}` : null,
@@ -412,7 +422,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); doc.setTextColor(120, 120, 120)
     doc.text(new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }), pageW / 2, 17.5, { align: 'center' })
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(20, 20, 20)
-    doc.text(`${title} — TIMES IN SECONDS, SPEEDS IN MPH`, pageW - 8, 20, { align: 'right' })
+    doc.text(`${title} — TIMES IN SECONDS, SPEEDS IN ${SPD}`, pageW - 8, 20, { align: 'right' })
     const WHITE: [number, number, number] = [255, 255, 255]
     const BLUE: [number, number, number] = [36, 51, 194]
     const body = ordered.map((r) => [
@@ -467,19 +477,19 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
       // Dropbox Performance folder — best effort, the WhatsApp still goes out.
       try {
         const b64: string = await new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve(String(r.result).split(',')[1] || ''); r.onerror = reject; r.readAsDataURL(blob) })
-        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone: 'US', code: rideCode, name: rideName, filename, subfolder: 'Performance', contentBase64: b64 }) })
+        await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone: DIALECT, code: rideCode, name: rideName, filename, subfolder: 'Performance', contentBase64: b64 }) })
       } catch { /* non-fatal */ }
       const head = cols.find((c) => c.better === 'lower')!
       const lines = [
-        `🏁 *GZ28US · ${title} RECEIPT:*`,
+        `🏁 *GZ28${DIALECT} · ${title} RECEIPT:*`,
         sheetTitle() ? `*${sheetTitle()}*` : null,
-        best ? `BEST: *${head.fmt(headline(mode, best))} s*${mode !== 'ROLL' ? (() => { const v = mode === 'QUARTER' ? best.v402m_kmh : best.v201m_kmh; return v != null ? ` @ ${f1(mph(n(v)))} mph` : '' })() : ''}${best.run_date ? ` (${fmtDate(best.run_date)})` : ''}` : null,
+        best ? `BEST: *${head.fmt(headline(mode, best))} s*${mode !== 'ROLL' ? (() => { const v = mode === 'QUARTER' ? best.v402m_kmh : best.v201m_kmh; return v != null ? ` @ ${f1(spd(n(v)))} ${SPD.toLowerCase()}` : '' })() : ''}${best.run_date ? ` (${fmtDate(best.run_date)})` : ''}` : null,
         reference && latest && reference !== latest
           ? `${head.label}: FROM ${head.fmt(head.get(reference))} TO *${head.fmt(head.get(latest))}* - GAIN: *${(() => { const g = gainOf(head, latest, reference); return g == null ? '—' : (g > 0 ? '+' : '') + head.fmt(g) + ' s' })()}*`
           : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
       if (!(await sendWa({ toGroupName: reportsGroup, body: lines, documentUrl: url, filename }))) return
-      if (sendToClient) await sendToClientChannel(lines, url, { documentUrl: url, filename }, `GZ28US ${title} RECEIPT`)
+      if (sendToClient) await sendToClientChannel(lines, url, { documentUrl: url, filename }, `GZ28${DIALECT} ${title} RECEIPT`)
     } catch (e) {
       alert('Could not generate/send the data: ' + String(e))
     } finally {
@@ -543,7 +553,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
         </div>
         <div className="min-w-[160px]">
           <label className="block mb-1 text-sm text-gray-400 font-bold">{placeLabel}</label>
-          <input value={form.track} onChange={(e) => setForm({ ...form, track: e.target.value })} className={inputClass} placeholder={mode === 'ROLL' ? 'e.g. Dragy DRG69' : 'e.g. Orlando Speed World'} />
+          <input value={form.track} onChange={(e) => setForm({ ...form, track: e.target.value })} className={inputClass} placeholder={mode === 'ROLL' ? 'e.g. Dragy DRG69' : DIALECT === 'US' ? 'e.g. Orlando Speed World' : 'e.g. Velopark'} />
         </div>
         {editingId ? (
           <div className="flex gap-2">
