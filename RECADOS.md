@@ -5,6 +5,33 @@ João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
 
+## 10/10 13h57 Orlando · da sessão Pastas dos Carros para App Development (e para quem renumera carro) — ⚠ QUOTE PROMOVIDA A CARRO NASCE SEM PASTA NO DROPBOX, E NENHUM CRON CONSERTA
+
+Varredura das pastas dos carros nos DOIS apps, Dropbox + 4 caixas de e-mail. **As caixas estão fechadas** (`GET /ca/api/rides/mail-folders?dryRun=1`:
+US 53/53 nas caixas 1 e 4, BR 188/188 nas caixas 2 e 3; zero `created`, `renamed`, `conflicts`, `misplaced`, `foreign`). O furo é só do lado do **Dropbox**.
+Achado partindo do US.047 «Juan's Durango HellCat», que existe desde 26/08 com duas invoices REALTIME e não tinha pasta. Já criei as duas que faltavam
+pela rota do app (`/api/ride-folder`, action `create`) — **o conserto da CAUSA é código e fica para vocês.** É INFORMAÇÃO, não ordem.
+
+- **A CAUSA, com arquivo e linha:** `app/api/rides/renumber/route.ts:200` (US) e `:214` (BR) só **movem** pasta que já existe —
+  `if (usFrom && usFrom !== usTarget)`. Quote nunca teve pasta no Dropbox, então na promoção `US.QT.017 → US.047` o `findFolderByCode`
+  devolve `null`, o `if` não entra e **nada cria a pasta**. Pior, `:206` (`const usPasta = usFrom ? usTarget : null`) deixa o passo **2e
+  (recibos das invoices)** fora também, pelo mesmo `null`.
+- **O erro foi ENGOLIDO em `:113`:** o plano imprime `sem pasta «US.QT.017» — nada a mover` com **`ok: true`**. A rota respondeu
+  «concluído» para um carro que terminou sem pasta. Ninguém viu porque nada levantou a mão.
+- **Vocês já consertaram ESTE mesmo furo do lado do e-mail e não do lado do Dropbox:** o passo **2h** (`:266`), do commit 5bcc3f3
+  (05/10 01h00), cita o caso com todas as letras — «quote promovida a carro (US.QT.017 → US.047) nunca teve pasta e ficava sem» — e
+  chama `ensureRideMailFolders`. Falta o gêmeo: depois do 2c/2d, se `usFrom`/`brFrom` for `null`, **criar** a pasta (`create_folder_v2`
+  + `ensureSubfolders`) em vez de seguir calado, e o plano dizer «a pasta NASCE» em vez de «nada a mover».
+- **E não há rede embaixo:** em `vercel.json` o único cron de carro é `/ca/api/rides/mail-folders` (`11 * * * *`), que só cuida de
+  e-mail. **Nenhum cron confere pasta de Dropbox.** O único gancho que cria é `app/rides/new/page.tsx:312-324` — `fetch` do
+  NAVEGADOR, depois do insert já commitado, cujo único aviso de falha é um `alert()` que o usuário fecha: sem log, sem retry, sem
+  ninguém atrás. Pedido: um cron gêmeo do mail-folders (varre a frota das duas zonas e cria o que falta, idempotente como o `create` já é).
+- **Consequência medida na caça de peças:** `lib/dropboxHunt.server.ts:142` exige código com letra (`^((?:US\.QT|[A-Za-z]{2,3})\.\d+)`).
+  Pasta de nome LEGADO («377 - HellDog MPVI2 455») não casa, `leCaminho` devolve `null` e **a caça não vê nada que esteja lá dentro** —
+  são 10 pastas do BR hoje. Carro sem pasta nenhuma, idem: a primeira força da caça fica cega.
+- **Nada de dinheiro foi tocado.** Os recibos do US.047 estão a zero no banco (`invoice-receipts` dryRun → `no-receipts` nas duas
+  invoices), então a pasta ausente não perdeu papel nenhum — só impedia os próximos de cair no lugar.
+
 ## 10/10 12h52 Orlando · da AutoBook GZ28US para a sessão do João (Bank Link / Data Checker) e App Development — ⚠ CASAR LINHA **PENDENTE** DO PLAID PERDE O CASAMENTO (achado antes de morder)
 
 Achado hoje ao processar o lote de dinheiro da Email Round 2, lendo `lib/plaid.server.ts` antes de clicar. **Nada foi casado e nada está quebrado** — é prevenção. Virou a regra **14.29** do LIVRO (FURO).
