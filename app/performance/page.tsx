@@ -20,6 +20,10 @@ type Scope = typeof SCOPES[number]
 // A zona do carro pelo código: BR.### e GM.### são do app BR; o resto (US, SC, WV, PO,
 // US.QT, SHP) é do app US.
 const zonaDoCodigo = (c: string): 'US' | 'BR' => (/^(BR|GM)\./i.test(c) ? 'BR' : 'US')
+// A PASSADA É DE QUEM A GRAVOU (Márcio, 10/10/2026: «if the pulls were recorded in the BR app, they're BR's!»). O filtro
+// US/BR olha a ORIGEM da passada (dyno_pulls.origin), não o código do carro — que nunca muda. Um carro pode aparecer nos
+// dois filtros, com a melhor passada que cada casa fez nele; em ALL vale a melhor de todas.
+const originOf = (o: string | null | undefined): 'US' | 'BR' => (String(o || '').toUpperCase() === 'BR' ? 'BR' : 'US')
 
 // ── O DIALETO DA CASA É O DO APP DO US ───────────────────────────────────────
 // A tela de dyno do ride US fala UMA língua: potência corrigida STD, torque em lb·ft,
@@ -205,24 +209,19 @@ export default function PerformancePage() {
       // A melhor passada do carro é a de maior BHP — hp de MOTOR, ordem do Márcio. É o
       // número que a página do carro estampa na coluna BHP, e é o que o mercado compara.
       // whp premiaria quem tem menos perda na transmissão, não quem tem mais motor.
-      const best = new Map<string, Entry>()
+      const all: Entry[] = []
       const withPulls = new Set<string>()
       for (const p of pulls) {
         const code = String(p.ride_code)
         withPulls.add(code)
         if (p.bhp == null) continue
-        const cur = best.get(code)
-        if (cur && (cur.pull.bhp ?? 0) >= p.bhp) continue
-        best.set(code, { code, name: names.get(code) || '', rideId: usIds.get(code) || null, pull: p })
+        all.push({ code, name: names.get(code) || '', rideId: usIds.get(code) || null, pull: p })
       }
       // O carro que tem passada e mesmo assim não deu bhp fica de fora da tabela — mas
       // não do conhecimento da página: o rodapé conta quantos são.
-      setUnranked([...withPulls].filter((c) => !best.has(c)).sort())
-
-      // Empate desempata pelo código, para a ordem não depender do que o Postgres
-      // devolveu primeiro — placar tem de sair igual em toda visita.
-      setEntries([...best.values()].sort((a, b) =>
-        ((b.pull.bhp ?? 0) - (a.pull.bhp ?? 0)) || a.code.localeCompare(b.code)))
+      const ranked = new Set(all.map((e) => e.code))
+      setUnranked([...withPulls].filter((c) => !ranked.has(c)).sort())
+      setEntries(all)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
       setEntries([])
@@ -233,8 +232,20 @@ export default function PerformancePage() {
 
   useEffect(() => { load() }, [])
 
-  const shown = entries.filter((e) => scope === 'ALL' || zonaDoCodigo(e.code) === scope)
-  const countFor = (s: Scope) => entries.filter((e) => s === 'ALL' || zonaDoCodigo(e.code) === s).length
+  // A melhor passada de cada carro DENTRO do filtro: maior BHP (hp de motor). Empate desempata pelo código, para a ordem
+  // não depender do que o Postgres devolveu primeiro — placar tem de sair igual em toda visita.
+  const pick = (sc: Scope) => {
+    const m = new Map<string, Entry>()
+    for (const e of entries) {
+      if (sc !== 'ALL' && originOf(e.pull.origin) !== sc) continue
+      const cur = m.get(e.code)
+      if (cur && (cur.pull.bhp ?? 0) >= (e.pull.bhp ?? 0)) continue
+      m.set(e.code, e)
+    }
+    return [...m.values()].sort((a, b) => ((b.pull.bhp ?? 0) - (a.pull.bhp ?? 0)) || a.code.localeCompare(b.code))
+  }
+  const shown = pick(scope)
+  const countFor = (s: Scope) => pick(s).length
   const settled = !loading && !err
   // ── O QUE ESTA PÁGINA PODE E NÃO PODE AFIRMAR SOBRE CORREÇÃO ─────────────────
   // No dialeto do US não existe coluna de fator pra virar traço, nem metade "sem
