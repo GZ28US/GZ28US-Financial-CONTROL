@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel, buildFolderName } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
+import TrackSection from '@/components/TrackSection'
 
 // DYNO primeiro e por padrão (ordem do usuário, 17/ago/2026): dentro de um pack é a
 // página principal — é ela que diz onde o carro está e quanto falta pra meta.
@@ -2013,10 +2014,8 @@ export default function RidePerformancePage() {
       ) : tab === 'BUILD SHEET' ? (
         <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
       ) : (
-        <div className="bg-gray-900 border border-gray-800 rounded-3xl p-8">
-          <h2 className="text-2xl font-bold mb-2">{tab}</h2>
-          <p className="text-xl text-gray-400">This section is under construction.</p>
-        </div>
+        // 1/4 MILE · 1/8 MILE · 100-200 (Márcio, 10/10/2026): «same standards of the dyno page» — components/TrackSection.
+        <TrackSection key={tab} mode={tab === '1/4 MILE' ? 'QUARTER' : tab === '1/8 MILE' ? 'EIGHTH' : 'ROLL'} rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} packName={buildName} reportsGroup={REPORTS_GROUP} />
       )}
     </main>
   )
