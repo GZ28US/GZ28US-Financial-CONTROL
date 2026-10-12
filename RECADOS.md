@@ -5,6 +5,29 @@ João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
 
+## 12/10 12h55 Orlando · da AutoBook GZ28BR para TODAS as sessões — ⚠ O `scripts/roda-sql.mjs` ESTÁ CEGO: o token de management do Supabase CADUCOU
+
+Medido agora, ao abrir a sessão: `node scripts/roda-sql.mjs --projeto br --pergunta "select …"` responde **HTTP 401 «Invalid access
+token»**. O arquivo `memory/supabase-mgmt-token.txt` (`sbp_…`) expirou, e os dois caminhos de reserva do próprio script não existem
+nesta máquina: não há `memory/<us|br>-db-url.txt` e o pacote `pg` não está instalado. **Vale para os DOIS projetos** — o token é o mesmo.
+
+- **O que ainda funciona:** LEITURA pela REST com a chave de serviço (`memory/us-service-key.txt` / `br-service-key.txt`, ver a nota
+  `full-db-access`) — que é de todo jeito o caminho de CONFERIR, porque «resposta de quem executou não é prova». Foi assim que medi o
+  que está abaixo. A chave continua lida de dentro do script, nunca em argv.
+- **O que NÃO funciona:** rodar migration, qualquer DDL, e o próprio `--pergunta`. Quem tiver `MIGRATION_*.sql` na fila está parado até
+  o Márcio gerar um token pessoal novo no dashboard do Supabase e atualizar o txt. **Não contornem raspando o token do Chrome** — era
+  exatamente o caminho frágil que o `roda-sql.mjs` nasceu (11/set) para substituir.
+- **De passagem, dinheiro do BR (é da minha pauta, já estou com ele — é só para ninguém mexer):** a BR.526.1 (WildKat) tem o imposto
+  da DHL de **R$ 3.110,43 lançado DUAS vezes**. A boa é «DHL Express» (CHARGE, PIX, PAID FROM GZ28BR, order 2545473, WB 5762329974,
+  `last_event` completo); a duplicata é «DLOCAL BRASIL / Imposto peça WildKat» (nature MONEY, sem pagador, sem método, sem order).
+  Nasceram 33 segundos uma da outra em 10/10 e `data_fixes` não tem linha para nenhuma das duas — a sessão daquele dia apagou a
+  duplicata do FRETE (`br526-frete-duplicado`) e não viu esta. **Nada foi apagado** (lei: nunca apagar despesa sem perguntar ao Márcio
+  o quê e COMO). Atenção se alguém propuser conserto: o comprovante do PIX só está anexado na DUPLICATA.
+- **E a Hapvida voltou a ser conta REAL em 13/set** (`MIGRATION_hapvida_volta_a_ser_conta.sql`, fala dele: «este e HPVida tem que ser
+  processados no app à partir de agora também, são contas reais»), desfazendo o «apague sempre» de 11/set. **Quem arquiva e-mail:
+  boleto da Hapvida não vai mais para o lixo.** Conferido hoje: nem Hapvida nem Porto Seguro existem em nenhuma das 5 tabelas de gasto
+  do BR — o único custo fixo de saúde é «Plano de saúde — Marli Emiko Koutaka» (R$ 2.193,21, dia 20), que é o custo CLT dela.
+
 ## 10/10 13h57 Orlando · da sessão Pastas dos Carros para App Development (e para quem renumera carro) — ⚠ QUOTE PROMOVIDA A CARRO NASCE SEM PASTA NO DROPBOX, E NENHUM CRON CONSERTA
 
 Varredura das pastas dos carros nos DOIS apps, Dropbox + 4 caixas de e-mail. **As caixas estão fechadas** (`GET /ca/api/rides/mail-folders?dryRun=1`:
