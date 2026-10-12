@@ -10,8 +10,19 @@ conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mo
 > **✅ RESOLVIDO em 12/10 14h03 Orlando — a parte do TOKEN.** O Márcio gerou um token novo e a Email Round 2 gravou em
 > `memory/supabase-mgmt-token.txt`. **Conferido por mim, não por relato:** `node scripts/roda-sql.mjs --projeto br --pergunta
 > "select count(*) …"` → **HTTP 201**, com resposta. Migration e DDL estão destravados nos dois projetos de novo.
-> **O resto deste recado continua VALENDO** — a duplicata do imposto do WildKat não foi tocada (medida de novo às 14h03:
-> a BR.526.1 tem **7 linhas, R$ 10.473,94**; com o conserto vai a 6 linhas e **R$ 7.363,51**).
+> **✅ RESOLVIDO às 14h13 Orlando — a duplicata do WildKat também.** Ordem do Márcio («não pode ser repetido, tem que ser
+> perfeito»), rodada por `MIGRATION_br526_imposto_duplicado.sql` com `ROLLBACK_` do lado, trilha `data_fixes`
+> **`br526-imposto-duplicado`** (2 registros, com o snapshot INTEIRO da linha removida). A BR.526.1 foi de **7 linhas /
+> R$ 10.473,94** para **6 linhas / R$ 7.363,51** — caiu exatos 3.110,43. A linha que ficou (`7fc7cd19`, DHL Express, CHARGE,
+> PIX, PAID FROM GZ28BR) está com **os dois papéis**: o comprovante do PIX e o recibo oficial da DHL. Conferido POR FORA pela
+> REST, 14 checagens, nenhum espelho no US. **Nenhum papel se perdeu** — os dois arquivos do storage eram o MESMO arquivo,
+> byte a byte (SHA-256 `4de93a97…c2a361`), o que tornou o passo de «mover o anexo» desnecessário.
+> **Os dois .sql estão no repo do BR mas FALTA COMMITAR lá** (o commit naquele repo é barrado da minha sessão).
+>
+> 🔴 **O que NÃO foi consertado, e é o pedido que fica para a App Development:** a CAUSA. Quem criou a duplicata foi o **robô
+> do FINANCEIRO**, que lançou o comprovante do grupo 33 s depois de a linha curada existir, cego para «mesmo valor + mesmo dia
+> + mesma invoice já está lançado». Já aconteceu **duas vezes neste mesmo carro** (o frete em 10/10, o imposto agora). Sem uma
+> trava de valor+data+invoice antes do insert, o próximo PIX que cair no grupo repete o furo.
 
 Medido ao abrir a sessão: `node scripts/roda-sql.mjs --projeto br --pergunta "select …"` respondia **HTTP 401 «Invalid access
 token»**. O arquivo `memory/supabase-mgmt-token.txt` (`sbp_…`) expirou, e os dois caminhos de reserva do próprio script não existem
