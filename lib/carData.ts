@@ -994,7 +994,7 @@ Object.assign(specialEditions, {
   '2026-ESCALADE-V-6.2 V8 SC': ['None', 'ESV'],
 })
 
-// ── Cadillac Escalade — todas as gerações (1999–2026) ──────────────────────────
+// ── Cadillac Escalade — todas as gerações (1999–2027) ──────────────────────────
 // Márcio, 25/set/2026 (via Parts Chasing 2): «create all Escalades in the apps».
 // Até aqui o catálogo só tinha o ESCALADE-V (2023+, bloco acima). Este bloco cobre
 // o Escalade regular, geração a geração. Convenções da casa, iguais ao resto do arquivo:
@@ -1048,7 +1048,8 @@ function escaladeEditionsFor(y: number, version: string): string[] {
   }
   return ['None']
 }
-const escaladeYears = [1999, 2000, ...Array.from({ length: 25 }, (_, i) => 2002 + i)] // 2002–2026, sem 2001
+// 2027 entrou em 12/10/2026 (Parts Chasing 2: ride US.QT.027, Escalade 2027 6.2 L87) — mesma T1XX, sem diesel.
+const escaladeYears = [1999, 2000, ...Array.from({ length: 26 }, (_, i) => 2002 + i)] // 2002–2027, sem 2001
 for (const y of escaladeYears) {
   if (!years.includes(y)) years.push(y)
   manufacturersByYear[y] = manufacturersByYear[y] || []
