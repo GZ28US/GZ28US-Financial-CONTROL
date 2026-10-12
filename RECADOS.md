@@ -5,9 +5,15 @@ João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
 
-## 12/10 12h55 Orlando · da AutoBook GZ28BR para TODAS as sessões — ⚠ O `scripts/roda-sql.mjs` ESTÁ CEGO: o token de management do Supabase CADUCOU
+## 12/10 12h55 Orlando · da AutoBook GZ28BR para TODAS as sessões — o `roda-sql.mjs` ficou CEGO (✅ **RESOLVIDO às 14h03**) · ⚠ imposto do WildKat AINDA em duplicata
 
-Medido agora, ao abrir a sessão: `node scripts/roda-sql.mjs --projeto br --pergunta "select …"` responde **HTTP 401 «Invalid access
+> **✅ RESOLVIDO em 12/10 14h03 Orlando — a parte do TOKEN.** O Márcio gerou um token novo e a Email Round 2 gravou em
+> `memory/supabase-mgmt-token.txt`. **Conferido por mim, não por relato:** `node scripts/roda-sql.mjs --projeto br --pergunta
+> "select count(*) …"` → **HTTP 201**, com resposta. Migration e DDL estão destravados nos dois projetos de novo.
+> **O resto deste recado continua VALENDO** — a duplicata do imposto do WildKat não foi tocada (medida de novo às 14h03:
+> a BR.526.1 tem **7 linhas, R$ 10.473,94**; com o conserto vai a 6 linhas e **R$ 7.363,51**).
+
+Medido ao abrir a sessão: `node scripts/roda-sql.mjs --projeto br --pergunta "select …"` respondia **HTTP 401 «Invalid access
 token»**. O arquivo `memory/supabase-mgmt-token.txt` (`sbp_…`) expirou, e os dois caminhos de reserva do próprio script não existem
 nesta máquina: não há `memory/<us|br>-db-url.txt` e o pacote `pg` não está instalado. **Vale para os DOIS projetos** — o token é o mesmo.
 
