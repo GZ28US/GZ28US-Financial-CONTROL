@@ -41,6 +41,7 @@ type DynoPull = {
   whp: number | null; wnm: number | null; loss_pct: number | null
   correction_factor: number | null; bhp: number | null; bnm: number | null
   pull_date: string | null; dyno: string | null; origin: string | null
+  build_no?: number | null
   document_url: string | null
   // `foreign` NÃO vem do banco: é o carimbo que toLocalDialect põe na passada que ELE
   // converteu. É o único selo do dialeto do US que atravessa pra cá, e é um selo de
@@ -156,7 +157,7 @@ export default function PerformancePage() {
       // número, e a única saída pra quem quiser conferir uma linha sem fator declarado.
       const { data: raw, error } = await supabase
         .from('dyno_pulls')
-        .select('id, ride_code, pack, whp, wnm, loss_pct, correction_factor, bhp, bnm, pull_date, dyno, origin, document_url')
+        .select('id, ride_code, build_no, pack, whp, wnm, loss_pct, correction_factor, bhp, bnm, pull_date, dyno, origin, document_url')
       if (error) throw new Error(error.message)
       setTotalPulls((raw || []).length)
 
@@ -389,7 +390,8 @@ export default function PerformancePage() {
                     return (
                       <tr
                         key={e.code}
-                        onClick={() => { if (e.rideId) window.location.href = `${BASE_PATH}/rides/${e.rideId}` }}
+                        // Direto à PERFORMANCE do carro, no build da melhor passada (Márcio, 12/10/2026).
+                        onClick={() => { if (e.rideId) window.location.href = `${BASE_PATH}/rides/${e.rideId}/performance/${e.pull.build_no || 1}` }}
                         className={`border-b border-gray-800 text-sm ${podium(i)} ${clickable ? 'cursor-pointer hover:bg-gray-800/60' : ''}`}
                       >
                         <td className={`py-3 pr-4 text-2xl font-bold ${posColor(i)}`}>{i + 1}</td>
