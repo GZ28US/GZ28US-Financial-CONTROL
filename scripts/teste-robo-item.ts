@@ -2,6 +2,7 @@
 // Roda: npx tsx scripts/teste-robo-item.ts  — falha com exit 1 se algum caso quebrar.
 import fs from 'fs'
 import { parseMoney, orderNumbersIn, itemDoEmail, classify } from '../lib/autoBookMail.server'
+import { linhaNomeada } from '../lib/mailToItem.server'
 
 let falhas = 0
 const ok = (nome: string, cond: boolean, visto: unknown) => { console.log(`${cond ? 'OK  ' : 'FAIL'} ${nome} → ${JSON.stringify(visto)}`); if (!cond) falhas++ }
@@ -38,6 +39,28 @@ ok('HHP desconto: total pago, não subtotal', parseMoney('Subtotal $1,444.75 Dis
 ok('Mopar cabeçalho não é valor', parseMoney('Part Number Part Name Price Quantity Total 68434939AC Valve 1 Amount Charged/Authorized $801.43')?.amount === 801.43, parseMoney('Part Number Part Name Price Quantity Total 68434939AC Valve 1 Amount Charged/Authorized $801.43'))
 ok('Temu zero forte', parseMoney('Order total $0.00')?.amount === 0, parseMoney('Order total $0.00'))
 ok('forte colado ganha do longe', parseMoney('Order total $50.00 ... Order total includes taxes $99.00')?.amount === 50, parseMoney('Order total $50.00 ... Order total includes taxes $99.00'))
+
+// ── ENVIO PARCIAL (13/10/2026): HHP #386933, a 1ª caixa levou só as 2 Cometic ─────────────────────────────────────
+// O e-mail real da HHP («Order Has Been Updated (#386933)», status Partially shipped) e as 10 linhas reais do pedido.
+const hhpCaixa1 = 'The status of your order #386933 has changed to Partially shipped . Products to be shipped Cart Items SKU Qty Cometic C15292 4.150&quot; Bore Right Hand MLX Head Gasket for 15-26 SRT Hellcat, Trackhawk &amp; TRX 6.2L HEMI C15292-052 1 Cometic C15293 4.150&quot; Bore Left Hand MLX Head Gasket for 15-26 SRT Hellcat, Trackhawk &amp; TRX 6.2L HEMI C15293-052 1 Tracking information 1Z4XR0770301699514 (UPS® - Free Shipping)'
+const hhpLinhas = [
+  { nome: 'Cometic C15292 4.150" MLX head gasket .052", right — Typhoon', pn: 'C15292-052', caixa1: true },
+  { nome: 'Cometic C15293 4.150" MLX head gasket .052", left — Typhoon', pn: 'C15293-052', caixa1: true },
+  { nome: 'COMP Cams 201-332-17 Stage 2 Turbo HRT 229/237 camshaft (636', pn: 'cca201-332-17 + HHPSPRINGKIT2', caixa1: false },
+  { nome: 'COMP Cams 5761CPG phaser limiter, Hemi VVT (HHP #386933, lista', pn: 'cca5761CPG', caixa1: false },
+  { nome: 'HHP Racing 5/16" .083" wall pushrods (16) (HHP #386933, lista', pn: 'HHP640', caixa1: false },
+  { nome: 'HHP Racing crankshaft pin (pinning kit) (HHP #386933, lista', pn: 'PIN', caixa1: false },
+  { nome: 'Mishimoto 180° racing thermostat + gasket, Hemi (HHP #386933', pn: 'MMTS-JED-06L', caixa1: false },
+  { nome: 'MOPAR 05038784AD heavy duty non-MDS lifter set (16) (HHP #38', pn: '05038784AD', caixa1: false },
+  { nome: 'MOPAR 68262328AA lower engine gasket kit 6.2L Hellcat (HHP #', pn: '68262328AA', caixa1: false },
+  { nome: 'MOPAR exhaust manifold gasket set (L+R) Hemi (HHP #386933, l', pn: '05038098AA / 05038099AA', caixa1: false },
+]
+const alfa = hhpCaixa1.toUpperCase().replace(/[^A-Z0-9]/g, '')
+const nomeadas = hhpLinhas.filter(l => linhaNomeada(l, alfa))
+ok('HHP caixa 1: só as 2 Cometic', nomeadas.length === 2 && nomeadas.every(l => l.caixa1), nomeadas.map(l => l.pn))
+// A carta do PayPal («on its way») não nomeia item nenhum — nenhuma linha pode se achar nomeada nela.
+const paypalAlfa = 'YOUR HIGH HORSE PERFORMANCE, INC. ORDER IS ON ITS WAY CARRIER: UPS TRACKING NUMBER: 1Z1777V54254687752 TRANSACTION ID 1TX24019121442911 TOTAL US$2,321.56 USD'.replace(/[^A-Z0-9]/g, '')
+ok('PayPal on its way: nenhuma linha nomeada', hhpLinhas.filter(l => linhaNomeada(l, paypalAlfa)).length === 0, hhpLinhas.filter(l => linhaNomeada(l, paypalAlfa)).map(l => l.pn))
 
 console.log(falhas ? `\n${falhas} FALHA(S)` : '\nTODOS OK')
 process.exit(falhas ? 1 : 0)

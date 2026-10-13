@@ -138,7 +138,33 @@ export const PEDIDO_NOVO = [
   /\b[Oo]rder\s*(?:[Nn]umber|#|[Nn]o\.?)?\s*[:#]?\s*#?([A-Z]{1,3}\d{4,12})\b(?!-\d)/g, // Aeromotive A13706
 ]
 
-type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null; valor: number }
+type Linha = { tabela: ItemTable; id: string; order_number: string; tracking_number: string | null; carrier: string | null; delivered_at: string | null; cancel_status: string | null; valor: number; nome: string; pn: string }
+
+// ── QUAL LINHA ESTÁ NESTA CAIXA? (13/10/2026) ─────────────────────────────────────────────────────────────────────────
+// Pedido com várias linhas pode sair em várias caixas. O caso: HHP #386933 (Typhoon, 10 linhas) — a 1ª caixa levou só as
+// 2 juntas Cometic (UPS 1Z4XR0770301699514) e este robô carimbou o rastreio dela nas 10 linhas. O e-mail de embarque da
+// HHP NOMEIA o que foi na caixa; a linha está «nesta caixa» quando o e-mail traz o PART NUMBER dela, ou o código de modelo
+// do nome dela («C15292», «05038784AD»). Comparação sem pontuação, peça com 5+ caracteres e ao menos um dígito.
+const NOME_COLS: Record<ItemTable, string> = {
+  invoice_expenses: 'item, part_number', inputs: 'description', inventory: 'description', assets: 'description',
+  assets_expenses: 'description', staff_expenses: 'description',
+}
+const soAlfa = (s: string) => String(s || '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+function codigosDaLinha(l: { nome: string; pn: string }): string[] {
+  const out = new Set<string>()
+  const add = (t: string) => { const n = soAlfa(t); if (n.length >= 5 && /\d/.test(n)) out.add(n) }
+  for (const t of String(l.pn || '').split(/[\s\/+,;]+/)) {
+    add(t)
+    // prefixo de catálogo da loja («cca201-332-17» da HHP para o COMP 201-332-17)
+    const sem = t.replace(/^[A-Za-z]{2,4}(?=\d)/, '')
+    if (sem !== t) add(sem)
+  }
+  for (const t of String(l.nome || '').split(/[\s,()]+/)) if (/\d/.test(t) && /[A-Za-z]|-/.test(t)) add(t)
+  return [...out]
+}
+export const linhaNomeada = (l: { nome: string; pn: string }, textoAlfa: string) => codigosDaLinha(l).some(c => textoAlfa.includes(c))
+// O e-mail avisa que é PARCIAL e não diz o que foi: não se adivinha a caixa.
+const PARCIAL = /\b(partial(ly)? shipped|partial shipment|remaining items?|rest of (your|the) order|will ship separately|shipped separately|envio parcial|restante do pedido)\b/i
 
 // O VALOR DA LINHA (14/set/2026): desde a FIN 0.17.0 o carimbo REFUNDED tira a linha do dinheiro (lib/estorno.ts) quando o estorno
 // não foi lançado em linha negativa. O robô passou a conferir QUANTO o vendedor devolveu antes de carimbar — ver valorDoEstorno.
@@ -195,7 +221,7 @@ async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>>
   const porPedido = new Map<string, Linha[]>()
   for (const tabela of ITEM_TABLES) {
     let q = db.from(tabela)
-      .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up, ' + VALOR_COLS[tabela])
+      .select('id, order_number, tracking_number, carrier, delivered_at, cancel_status, picked_up, ' + VALOR_COLS[tabela] + ', ' + NOME_COLS[tabela])
       .not('order_number', 'is', null)
     // staff_expenses: folha (WEEKLY/Zelle/mensal) nunca sai do banco — mesmo gate dos
     // três consumidores (03/set/2026). O order_number acima já basta, mas o
@@ -207,7 +233,7 @@ async function carregarLinhas(db: SupabaseClient): Promise<Map<string, Linha[]>>
       const pedido = String(r.order_number || '').trim()
       if (pedido.length < MIN_PEDIDO) continue
       const arr = porPedido.get(pedido) || []
-      arr.push({ tabela, id: r.id, order_number: pedido, tracking_number: r.tracking_number ?? null, carrier: r.carrier ?? null, delivered_at: r.delivered_at ?? null, cancel_status: r.cancel_status ?? null, valor: valorDaLinha(tabela, r) })
+      arr.push({ tabela, id: r.id, order_number: pedido, tracking_number: r.tracking_number ?? null, carrier: r.carrier ?? null, delivered_at: r.delivered_at ?? null, cancel_status: r.cancel_status ?? null, valor: valorDaLinha(tabela, r), nome: String(r.item ?? r.description ?? ''), pn: String(r.part_number ?? '') })
       porPedido.set(pedido, arr)
     }
   }
@@ -296,7 +322,37 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
             out.duvidas.push(`${pedido} — o vendedor diz que estornou ${devolvido == null ? '(valor não lido no e-mail)' : 'US$ ' + devolvido.toFixed(2)} de um pedido de US$ ${total.toFixed(2)}: NÃO carimbei REFUNDED — lance a linha negativa do que voltou (lei 8.10) — "${msg.subject.slice(0, 50)}"`)
           }
         }
-        for (const linha of (dicionario.get(pedido) || [])) {
+        // ── QUAIS LINHAS ESTA CARTA MOVE? (13/10/2026 — envio parcial) ─────────────────────────────────────────────────
+        const todas = dicionario.get(pedido) || []
+        const abertas = todas.filter(l => !l.cancel_status && !l.delivered_at)
+        const textoAlfa = soAlfa(texto)
+        const nomeadas = abertas.filter(l => linhaNomeada(l, textoAlfa))
+        const outroRastreio = abertas.some(l => l.tracking_number && !numeros.includes(l.tracking_number))
+        let alvo: Set<string> | null = null   // null = todas as linhas abertas (pedido de uma caixa só)
+        let nota = ''
+        if (abertas.length > 1 && numeros.length === 1) {
+          if (nomeadas.length) { alvo = new Set(nomeadas.map(l => l.id)); if (nomeadas.length < abertas.length) nota = ` [envio parcial: ${nomeadas.length} de ${abertas.length} linhas, pelos itens nomeados no e-mail]` }
+          else if (outroRastreio) { alvo = new Set(abertas.filter(l => !l.tracking_number).map(l => l.id)); nota = ' [2º rastreio do pedido: só nas linhas que ainda não tinham rastreio]' }
+          else if (PARCIAL.test(texto)) {
+            alvo = new Set()
+            out.duvidas.push(`${pedido} — o e-mail fala em envio PARCIAL (${numeros[0]}) sem dizer quais itens; não carimbei nenhuma das ${abertas.length} linhas — "${msg.subject.slice(0, 50)}"`)
+          }
+        }
+        // ENTREGA de pedido em várias caixas: a carta com rastreio entrega as linhas DAQUELE rastreio; sem rastreio e
+        // com caixas diferentes no pedido, não dá para saber qual chegou.
+        let alvoEntrega: Set<string> | null = null
+        if (entregou && abertas.length > 1) {
+          const doRastreio = abertas.filter(l => l.tracking_number && numeros.includes(l.tracking_number))
+          const rastreiosDoPedido = new Set(abertas.map(l => l.tracking_number).filter(Boolean))
+          if (doRastreio.length) alvoEntrega = new Set(doRastreio.map(l => l.id))
+          else if (nomeadas.length) alvoEntrega = new Set(nomeadas.map(l => l.id))
+          else if (rastreiosDoPedido.size > 1) {
+            alvoEntrega = new Set()
+            out.duvidas.push(`${pedido} — entregue, mas o pedido está em ${rastreiosDoPedido.size} caixas e o e-mail não diz qual; não carimbei entrega — "${msg.subject.slice(0, 50)}"`)
+          }
+        }
+
+        for (const linha of todas) {
           const onde = `${linha.tabela}:${pedido}`
 
           // ── 3. ESTORNO — passa por cima de tudo, então vem primeiro ───────
@@ -310,7 +366,7 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
           if (linha.cancel_status || linha.delivered_at) continue
 
           // ── 1. RASTREIO ──────────────────────────────────────────────────
-          if (numeros.length) {
+          if (numeros.length && (!alvo || alvo.has(linha.id))) {
             if (linha.tracking_number) {
               if (!numeros.includes(linha.tracking_number)) out.duvidas.push(`${onde} já tem rastreio ${linha.tracking_number} e o e-mail traz ${numeros.join(', ')} — não sobrescrevi`)
             } else if (numeros.length > 1) {
@@ -322,12 +378,12 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
               if (error) { out.duvidas.push(`${onde} — falhou ao gravar rastreio: ${error.message}`); continue }
               linha.tracking_number = numeros[0]
               const logado = await logFix(db, linha.tabela, linha.id, 'tracking_number', null, numeros[0])
-              out.rastreios.push(`${onde} ← ${numeros[0]}${transportadora ? ' (' + transportadora + ')' : ''}${logado ? '' : ' [sem rastro em data_fixes]'}`)
+              out.rastreios.push(`${onde} ← ${numeros[0]}${transportadora ? ' (' + transportadora + ')' : ''}${nota}${logado ? '' : ' [sem rastro em data_fixes]'}`)
             }
           }
 
           // ── 2. ENTREGA ───────────────────────────────────────────────────
-          if (entregou) {
+          if (entregou && (!alvoEntrega || alvoEntrega.has(linha.id))) {
             const quando = msg.received || new Date().toISOString()
             const { error } = await db.from(linha.tabela).update({ delivered_at: quando }).eq('id', linha.id)
             if (error) { out.duvidas.push(`${onde} — falhou ao gravar entrega: ${error.message}`); continue }
