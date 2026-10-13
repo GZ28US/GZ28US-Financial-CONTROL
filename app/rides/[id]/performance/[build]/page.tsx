@@ -80,6 +80,16 @@ function isBoneStock(p: { pack: string | null }) { return isBaselineName(p.pack)
 // Estrito: só a BoneStock de verdade pode ser emprestada a OUTROS carros.
 function isTrueBoneStock(p: { pack: string | null }) { return (p.pack || '').trim().toLowerCase() === 'bonestock' }
 
+// ── A BASELINE DO CARRO É UMA SÓ (Márcio, 12/10/2026: «the info should be precisely the same at both pages») ──────────
+// DYNO e BUILD SHEET liam o banco cada um do seu jeito e, num carro com DUAS BoneStock (SublimeHell: 15/08 @ 13% e 20/08
+// @ 13,5%), cada aba pegava uma — baseline, perda e meta diferentes na mesma tela. Regra única, aqui e só aqui:
+// entre as baselines do carro (qualquer build), a MAIS RECENTE que tenha perda gravada; sem nenhuma com perda, a mais
+// recente. Quem chama passa as linhas ordenadas por created_at DESC.
+function pickCarBaseline(rowsNewestFirst: DynoPull[]): DynoPull | null {
+  const bsAll = rowsNewestFirst.filter(isBoneStock)
+  return bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
+}
+
 // BONESTOCK VIVA (user law 21/aug/2026): an imported baseline is a POINTER to the origin
 // car — the figures are read THERE, now. Changed at the origin → changed everywhere
 // (dyno table, loss label, BuildSheet FROM/TARGET, PDF). Only ORIGINALS can be a
@@ -340,7 +350,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     // A BoneStock do carro: define a perda E aparece em TODO pack (ordem do usuário,
     // 17/ago/2026). Preferindo a que tem perda gravada, se houver mais de uma.
     const bsAll = liveWide.filter(isBoneStock)
-    const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
+    const bsCar = pickCarBaseline(liveWide)
     setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
     // O rótulo diz de QUAL baseline a perda veio — "from Stock" quando a base é a Stock.
     // De outro carro? O rótulo diz de qual: "US.042 - SublimeHell BoneStock" (ordem 21/ago/2026).
@@ -1406,11 +1416,10 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // A perda vem da baseline do CARRO (qualquer build); o "melhor" é o mesmo conjunto que a
   // aba DYNO mostra: as puxadas DESTE build mais a baseline emprestada quando ele não tem.
   async function loadDynoTarget() {
-    const { data } = await supabase.from('dyno_pulls').select('*').eq('ride_code', rideCode)
+    const { data } = await supabase.from('dyno_pulls').select('*').eq('ride_code', rideCode).order('created_at', { ascending: false })
     const rows = (await resolveLiveBaselines((data || []) as DynoPull[])).map(toLocalDialect)
     const mine = rows.filter((p) => p.build_no === buildNo)
-    const bsAll = rows.filter(isBoneStock)
-    const bsCar = bsAll.find((p) => p.loss_pct != null) ?? bsAll[0] ?? null
+    const bsCar = pickCarBaseline(rows)
     const shown = mine.some(isBoneStock) || !bsCar ? mine : [bsCar, ...mine]
     setDyno({
       loss: bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
