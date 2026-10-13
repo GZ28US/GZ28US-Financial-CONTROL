@@ -6,6 +6,7 @@ import { streamDb } from '@/lib/stream.server'
 import { ROOTS, sanitize, dbxAccessToken, dbx, findFolderByCode, ensureSubfolders, pathExists, recodeTree, recodeName } from '@/lib/dropboxRides.server'
 import { renameRideMailFolders, ensureRideMailFolders } from '@/lib/rideMailFolders.server'
 import { parseRideCode, checkRideCode, scaleOf } from '@/lib/rideCodes'
+import { renumeraCarroBR } from '@/lib/renumberBR.server'
 
 // RENUMERAR / RENOMEAR UM CARRO — UM CAMINHO SÓ (27/set/2026).
 // Pedido da AutoBook GZ28US, aprovado pelo Márcio («everything»): a tela Edit Ride, a
@@ -45,6 +46,8 @@ export async function POST(req: NextRequest) {
   const temDropbox = !!(process.env.DROPBOX_REFRESH_TOKEN && process.env.DROPBOX_APP_KEY)
 
   const b = await req.json().catch(() => ({}))
+  // CARRO DO BR (BR.### do banco do BR) — blocos legado 001–360 / app BR.401+ (Márcio 13/10/2026). Ver lib/renumberBR.server.
+  if (b?.zone === 'BR') return renumeraCarroBR(us, br, b)
   const rideId = String(b?.rideId || '').trim()
   const dryRun = !!b?.dryRun
   if (!rideId) return NextResponse.json({ ok: false, error: 'rideId obrigatório.' }, { status: 400 })
@@ -158,7 +161,8 @@ export async function POST(req: NextRequest) {
         feitas.push(`${inv.invoice_code} → ${novo}`)
       }
       passos.push({ passo: 'us: invoices', ok: true, detalhe: feitas })
-      for (const t of ['dyno_pulls', 'ride_build_sheets', 'ride_builds']) {
+      // track_runs (13/10/2026): as passadas de 1/4, 1/8 e 100-200 também guardam o código do carro.
+      for (const t of ['dyno_pulls', 'ride_build_sheets', 'ride_builds', 'track_runs']) {
         const { data, error } = await us.from(t).update({ ride_code: newCode }).eq('ride_code', oldCode).select('id')
         if (error) return para(`us: ${t}`, error.message)
         passos.push({ passo: `us: ${t}`, ok: true, detalhe: `${(data || []).length} linha(s)` })
