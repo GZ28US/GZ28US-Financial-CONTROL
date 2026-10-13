@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
-import { lancar } from '@/lib/autoBookMail.server'
+import { lancar, classificaItem } from '@/lib/autoBookMail.server'
 import { cacaNaPasta, respostaUnica } from '@/lib/dropboxHunt.server'
 import { papeisOrfaos } from '@/lib/papelOrfao.server'
 import { tabelaAtual } from '@/lib/tableRenames'
@@ -11,6 +11,12 @@ import { tabelaAtual } from '@/lib/tableRenames'
 // GET  → o que o robô não soube resolver (status DOUBT), do mais novo pro mais
 //        velho, com o que ele leu do e-mail e os destinos que ele MEDIU no banco.
 //        É esta lista que vale como "a rodada", não a resposta do cron.
+// MONITORIA (13/10/2026, Márcio: «libera, mas monitoramos aqui, pra ir calibrando ele caso erre»):
+//   GET ?status=BOOKED_AUTO → o que o robô lançou SOZINHO pelo tipo do item (extracted.auto = {table,id,classe,motivo}).
+//   POST {id, action: CONFIRM}            → estava certo; com learn, vira regra (vendor e/ou match_item).
+//   POST {id, action: MOVE, target}       → estava errado: lança no destino certo e REMOVE a linha automática
+//                                           (a linha removida fica inteira em data_fixes, para voltar se preciso).
+//   POST {id, action: IGNORE}             → não era para lançar: remove a linha automática (idem data_fixes).
 // POST → a resposta. Uma resposta faz DUAS coisas, e a segunda é a que importa:
 //        1) resolve ESTE e-mail (lança a linha, ou marca como ignorado);
 //        2) com `learn`, vira REGRA em auto_book_mail_rules — e o mesmo caso
@@ -62,12 +68,26 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // ── ?classifica=<item>&vendor=<loja> — O QUE O ROBÔ DECIDIRIA (13/10/2026) ──
+  // Somente LEITURA: chama o mesmo classificador do lançamento automático e diz o destino que sairia — sem lançar
+  // nada. Serve para calibrar («monitoramos aqui, pra ir calibrando ele caso erre») antes de o caso real chegar.
+  if (p.get('classifica')) {
+    const item = String(p.get('classifica') || '')
+    const palpite = await classificaItem(item, String(p.get('vendor') || ''), String(p.get('assunto') || ''))
+    const destino = !palpite ? 'FILA (classificador indisponível)'
+      : !palpite.forte ? 'FILA (classificação fraca)'
+      : palpite.classe === 'OFICINA_FERRAMENTA' ? 'assets'
+      : palpite.classe === 'OFICINA_CONSUMIVEL' ? 'inputs / CONSUMPTION'
+      : 'FILA'
+    return NextResponse.json({ ok: true, item, palpite, destino })
+  }
+
   const status = p.get('status') || 'DOUBT'
   let q = db.from('auto_book_mail').select('*').order('received_at', { ascending: false }).limit(Math.min(200, parseInt(p.get('limit') || '50') || 50))
   if (status !== 'ALL') q = q.eq('status', status)
   const { data, error } = await q
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-  const { data: rules } = await db.from('auto_book_mail_rules').select('id,label,action,match_from,match_subject,match_vendor,hits,last_hit_at,active').order('hits', { ascending: false })
+  const { data: rules } = await db.from('auto_book_mail_rules').select('id,label,action,match_from,match_subject,match_vendor,match_item,hits,last_hit_at,active').order('hits', { ascending: false })
   // `cands` é JSON com NOME DE TABELA dentro (`[{table,ref,…}]`), gravado quando a
   // pergunta nasceu — e a migration da onda 2 só reescreve a coluna de TEXTO
   // booked_table. Medido na noite de 11/set/2026: 6 das 20 linhas da fila têm 'expenses' aí
@@ -94,11 +114,64 @@ export async function POST(req: NextRequest) {
 
   const id = String(body.id || '')
   const action = String(body.action || '').toUpperCase()
-  if (!id || !['BOOK', 'IGNORE'].includes(action)) return NextResponse.json({ error: 'informe id e action=BOOK|IGNORE (ou rule)' }, { status: 400 })
+  if (!id || !['BOOK', 'IGNORE', 'CONFIRM', 'MOVE'].includes(action)) return NextResponse.json({ error: 'informe id e action=BOOK|IGNORE|CONFIRM|MOVE (ou rule)' }, { status: 400 })
 
   const { data: row, error: e0 } = await db.from('auto_book_mail').select('*').eq('id', id).single()
   if (e0 || !row) return NextResponse.json({ error: e0?.message || 'linha não encontrada' }, { status: 404 })
+
+  // ── A REVISÃO DO QUE O ROBÔ LANÇOU SOZINHO (13/10/2026) ───────────────────
+  if (row.status === 'BOOKED_AUTO') {
+    if (!['CONFIRM', 'MOVE', 'IGNORE'].includes(action)) return NextResponse.json({ error: 'lançamento automático: action=CONFIRM|MOVE|IGNORE' }, { status: 400 })
+    const autoTable = tabelaAtual(String(row.booked_table || ''))
+    const autoId = String(row.booked_id || '')
+    let moved: { table: string; id: string } | null = null
+    if (action === 'MOVE') {
+      const target = (body.target || {}) as Record<string, unknown>
+      if (!target.table) return NextResponse.json({ error: 'MOVE precisa de target.table' }, { status: 400 })
+      const auto = (row.extracted as Record<string, unknown> | null)?.auto as Record<string, unknown> | undefined
+      const r = await lancar(db, target, {
+        vendor: String(row.vendor || ''), order: row.order_number || null, amount: Number(body.amount ?? row.amount),
+        date: String(row.received_at || '').slice(0, 10),
+        desc: String(body.desc || `${auto?.item || row.vendor} — ${row.vendor} pedido ${row.order_number || ''}`).slice(0, 240),
+        pago: true,
+      })
+      if ('erro' in r) return NextResponse.json({ error: r.erro }, { status: 500 })
+      moved = r
+    }
+    if (action === 'MOVE' || action === 'IGNORE') {
+      // Só remove a linha que o PRÓPRIO robô criou, e a guarda inteira antes.
+      const { data: velha } = await db.from(autoTable).select('*').eq('id', autoId).maybeSingle()
+      if (velha) {
+        await db.from('data_fixes').insert({ check_key: 'autobook-item-auto-undo', table_name: autoTable, row_id: autoId, field: 'delete', old_value: JSON.stringify(velha), new_value: moved ? `movida para ${moved.table}:${moved.id}` : 'ignorada', label: `Correção do lançamento automático ${id} (${action})` })
+        const { error: eDel } = await db.from(autoTable).delete().eq('id', autoId)
+        if (eDel) return NextResponse.json({ error: eDel.message }, { status: 500 })
+      }
+    }
+    await db.from('auto_book_mail').update({
+      status: action === 'CONFIRM' ? 'BOOKED' : action === 'MOVE' ? 'BOOKED' : 'IGNORED',
+      answer: body as Record<string, unknown>, answered_at: new Date().toISOString(),
+      booked_table: action === 'CONFIRM' ? row.booked_table : moved?.table || null,
+      booked_id: action === 'CONFIRM' ? row.booked_id : moved?.id || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', id)
+    let regra = null
+    if (body.learn) {
+      const tgt = action === 'MOVE' ? (body.target as Record<string, unknown>) : action === 'CONFIRM' ? { table: autoTable, ...(autoTable === 'inputs' ? { category: 'CONSUMPTION' } : {}), paid_from: 'GZ28US' } : null
+      const { data } = await db.from('auto_book_mail_rules').insert({
+        label: String(body.label || `${row.vendor}${body.match_item ? ' · ' + body.match_item : ''} — ${action === 'IGNORE' ? 'ignore' : 'book'}`),
+        match_vendor: body.any_vendor ? null : row.vendor,
+        match_item: body.match_item ? String(body.match_item).toLowerCase() : null,
+        action: action === 'IGNORE' ? 'IGNORE' : 'BOOK',
+        target: tgt,
+        note: `nascida da revisão do lançamento automático ${id} (${row.subject || ''})`.slice(0, 400),
+      }).select('*').single()
+      regra = data
+    }
+    return NextResponse.json({ ok: true, status: action === 'IGNORE' ? 'IGNORED' : 'BOOKED', moved, regra })
+  }
+
   if (row.status !== 'DOUBT') return NextResponse.json({ error: `esta linha já está ${row.status}` }, { status: 409 })
+  if (action === 'CONFIRM' || action === 'MOVE') return NextResponse.json({ error: 'dúvida: action=BOOK|IGNORE' }, { status: 400 })
 
   let booked: { table: string; id: string } | null = null
   if (action === 'BOOK') {
@@ -132,7 +205,8 @@ export async function POST(req: NextRequest) {
   if (body.learn) {
     const { data } = await db.from('auto_book_mail_rules').insert({
       label: String(body.label || `${row.vendor} — ${action.toLowerCase()}`),
-      match_vendor: row.vendor,
+      match_vendor: body.any_vendor ? null : row.vendor,
+      match_item: body.match_item ? String(body.match_item).toLowerCase() : null,
       match_from: body.match_from ?? null,
       match_subject: body.match_subject ?? null,
       action,

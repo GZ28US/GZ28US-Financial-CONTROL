@@ -34,6 +34,10 @@
 // ── O QUE ELE NUNCA FAZ ────────────────────────────────────────────────────
 //   • NUNCA escolhe carro sozinho sem regra escrita por gente. "Em que carro
 //     entra é decisão de gente, e chutar isso é pior que não fazer."
+//     A EXCEÇÃO, e só ela (13/10/2026, Márcio: «libera, mas monitoramos aqui, pra ir calibrando ele caso erre»):
+//     sem regra, o robô pode mandar sozinho FERRAMENTA/EQUIPAMENTO DA OFICINA para assets e CONSUMÍVEL DA OFICINA
+//     para inputs/CONSUMPTION, pelo tipo do item lido no e-mail. Carro, pessoal, viagem e classificação fraca
+//     continuam na fila. Todo lançamento assim nasce BOOKED_AUTO, com o porquê, e é corrigível — ver autoDestino.
 //   • NUNCA lança valor que ele leu com pouca confiança — total sem rótulo
 //     forte ("Order total", "Total paid") vira pergunta, não linha.
 //   • NUNCA lança 0,00 (o PO de $0.00 do Temu não gera linha nenhuma).
@@ -60,7 +64,7 @@ import { tabelaAtual } from './tableRenames'
 import { hiddenPayers } from './payerRule'
 
 export type AbKind = 'PURCHASE' | 'REFUND' | 'CHARGE'
-export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
+export type AbRule = { id: string; label: string | null; match_from: string | null; match_subject: string | null; match_vendor: string | null; match_item?: string | null; action: 'BOOK' | 'IGNORE' | 'ASK'; target: Record<string, unknown> | null; hits: number }
 // `n` é UM CONTADOR: quantas compras anteriores deste fornecedor foram parar
 // neste destino. `via` diz de onde o candidato veio, porque as duas origens
 // medem coisas diferentes e não se comparam:
@@ -84,6 +88,8 @@ export type AutoBookMailResult = {
   jaTemLinha: string[]
   ignorados: string[]
   lancados: string[]
+  // Lançados pelo TIPO DO ITEM, sem regra humana (13/10/2026) — a lista que a AutoBook revisa todo round.
+  auto: string[]
   semRecibo: string[]
   perguntas: string[]
   duplicadas: string[]
@@ -764,13 +770,15 @@ async function temLinhaPorPerto(db: SupabaseClient, dir: SupplierEntry[], vendor
 }
 
 // ── REGRA ──────────────────────────────────────────────────────────────────
-export function ruleFor(msg: MailMsg, vendor: string, rules: AbRule[]): AbRule | null {
-  const from = msg.fromAddr.toLowerCase(), subj = msg.subject.toLowerCase(), ven = vendor.toLowerCase()
+export function ruleFor(msg: MailMsg, vendor: string, rules: AbRule[], itemNome?: string | null): AbRule | null {
+  const from = msg.fromAddr.toLowerCase(), subj = msg.subject.toLowerCase(), ven = vendor.toLowerCase(), itm = String(itemNome || '').toLowerCase()
   for (const r of rules) {
     const cond = [
       r.match_from ? from.includes(r.match_from.toLowerCase()) : null,
       r.match_subject ? subj.includes(r.match_subject.toLowerCase()) : null,
       r.match_vendor ? ven === r.match_vendor.toLowerCase() : null,
+      // PALAVRA DO ITEM (13/10/2026): é assim que a correção de um lançamento automático vira regra.
+      r.match_item ? (!!itm && itm.includes(r.match_item.toLowerCase())) : null,
     ].filter(x => x !== null)
     if (cond.length && cond.every(Boolean)) return r
   }
@@ -783,7 +791,8 @@ export function ruleFor(msg: MailMsg, vendor: string, rules: AbRule[]): AbRule |
 export async function lancar(
   db: SupabaseClient,
   target: Record<string, unknown>,
-  dados: { vendor: string; order: string | null; amount: number; date: string; desc: string },
+  // `pago`: o e-mail é a CONFIRMAÇÃO de uma compra já paga no cartão — grava payment_date e o meio (13/10/2026).
+  dados: { vendor: string; order: string | null; amount: number; date: string; desc: string; pago?: boolean; metodo?: string | null },
 ): Promise<{ table: string; id: string } | { erro: string }> {
   // O ALVO CHEGA DE DENTRO DE UM JSON GRAVADO NO BANCO, e com NOME DE TABELA nele:
   // ou de `auto_book_mail.cands[].table` (a sugestão que a pessoa clicou ao responder
@@ -815,16 +824,72 @@ export async function lancar(
   // PAGADOR ESCONDIDO (onda 10, 14/set/2026): a linha nasce com o campo escondido da régua da
   // tabela (lib/payerRule) — PAID TO GZ28US nas despesas; PAID FROM e PAID TO GZ28US em SUPPLIES.
   // Vem ANTES do alvo: se a regra ou a resposta humana trouxer pagador, é ela que vale.
-  if (t === 'invoice_expenses' || t === 'staff_expenses' || t === 'inputs') Object.assign(base, hiddenPayers(t, null, false))
+  if (t === 'invoice_expenses' || t === 'staff_expenses' || t === 'inputs' || t === 'assets') Object.assign(base, hiddenPayers(t, null, !!dados.pago))
   for (const [k, v] of Object.entries(target)) if (k !== 'table') base[k] = v
   if (t === 'invoice_expenses') Object.assign(base, { item: dados.desc, price: dados.amount, quantity: 1, expense_date: dados.date })
   else if (t === 'staff_expenses') Object.assign(base, { description: dados.desc, amount: dados.amount, expense_date: dados.date, type: base.type || 'SINGLE' })
   else if (t === 'inputs') Object.assign(base, { description: dados.desc, unit_price: dados.amount, quantity: 1, purchase_date: dados.date })
+  // ATIVO DA OFICINA (13/10/2026) — mesmas colunas da linha que a AutoBook lançou à mão para o Walmart 2000153-81883855.
+  else if (t === 'assets') Object.assign(base, { description: dados.desc, unit_price: dados.amount, quantity: 1, purchase_date: dados.date, nature: base.nature || 'PART' })
   else return { erro: `tabela "${t}" nao e destino de compra` }
+  if (dados.pago) {
+    if (t === 'invoice_expenses' || t === 'staff_expenses' || t === 'inputs' || t === 'assets') base.payment_date = base.payment_date || dados.date
+    if (dados.metodo && !base.payment_method) base.payment_method = dados.metodo
+  }
   const { data, error } = await db.from(t).insert(base).select('id').single()
   if (error) return { erro: error.message }
   return { table: t, id: String((data as { id: string }).id) }
 }
+
+// ── O DESTINO PELO TIPO DO ITEM (Márcio, 13/10/2026: «libera, mas monitoramos aqui, pra ir calibrando ele caso erre») ──
+// Sem regra escrita, o robô pode decidir SÓ entre dois destinos da casa, e só com classificação FORTE:
+//   OFICINA_FERRAMENTA → assets (ferramenta, equipamento, eletrônico, mobília, máquina da oficina)
+//   OFICINA_CONSUMIVEL → inputs, categoria CONSUMPTION (abrasivo, fita, broca/macho, químico, EPI, limpeza)
+// Todo o resto fica na fila: PECA_DE_CARRO (destino de carro é decisão de gente), PESSOAL (comida, viagem, roupa),
+// OUTRO, e qualquer classificação de confiança BAIXA. Código de carro no e-mail (US.015, BR.289…) = fila, sem perguntar
+// ao modelo. Quem classifica é o modelo; quem decide o que fazer com a classe é este código.
+export type ClasseItem = 'OFICINA_FERRAMENTA' | 'OFICINA_CONSUMIVEL' | 'PECA_DE_CARRO' | 'PESSOAL' | 'OUTRO'
+export async function classificaItem(item: string, vendor: string, subject: string): Promise<{ classe: ClasseItem; forte: boolean; motivo: string } | null> {
+  const key = process.env.ANTHROPIC_API_KEY
+  if (!key) return null
+  const prompt = `You classify ONE purchase of an automotive performance shop (GZ28 V8 SpeedShop, Orlando — it builds and tunes cars for clients). Decide where this purchase belongs, using ONLY the item name, the store and the e-mail subject below. Return ONLY one raw JSON object: {"classe": "...", "confianca": "ALTA" | "BAIXA", "motivo": "one short sentence in Portuguese"}.
+classe is exactly one of:
+- "OFICINA_FERRAMENTA": a durable tool or piece of equipment for the SHOP itself — hand/power tools, diagnostic gear, electronics, cables/adapters/video gear, furniture, lifts, compressors, computers.
+- "OFICINA_CONSUMIVEL": a consumable used up by the SHOP — abrasives, sandpaper, tape, drill bits/taps, rags, cleaners, degreasers, chemicals, sealant, gloves and other PPE, zip ties, small hardware bought loose for the shop.
+- "PECA_DE_CARRO": a part or fluid for a CAR (engine, suspension, brakes, exhaust, wheels, tires, oil/coolant for a car, sensors, ECU, body parts) — even if no car is named.
+- "PESSOAL": food, drinks, travel, clothing, personal or household items.
+- "OUTRO": anything else, or you cannot tell from the name.
+confianca is "ALTA" only when the name leaves no reasonable doubt; a cut-off or vague name, or an item that could be a car part OR a shop tool, is "BAIXA".
+Store: ${vendor}
+E-mail subject: ${subject}
+Item: ${item}`
+  try {
+    const r = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+      body: JSON.stringify({ model: 'claude-sonnet-4-5', max_tokens: 300, messages: [{ role: 'user', content: prompt }] }),
+    })
+    if (!r.ok) return null
+    const j = await r.json()
+    const txt = String(j.content?.map((c: { text?: string }) => c.text || '').join('') || '')
+    const a = txt.indexOf('{'), b = txt.lastIndexOf('}')
+    if (a < 0 || b <= a) return null
+    const p = JSON.parse(txt.slice(a, b + 1))
+    const classes: ClasseItem[] = ['OFICINA_FERRAMENTA', 'OFICINA_CONSUMIVEL', 'PECA_DE_CARRO', 'PESSOAL', 'OUTRO']
+    const classe = classes.includes(p.classe) ? (p.classe as ClasseItem) : 'OUTRO'
+    return { classe, forte: String(p.confianca || '').toUpperCase() === 'ALTA', motivo: String(p.motivo || '').slice(0, 240) }
+  } catch { return null }
+}
+
+// O cartão do e-mail («Ending in 9336», «ending in 1234», «final 1234») vira o meio de pagamento da linha.
+export function cartaoDoEmail(texto: string, vendor: string): string | null {
+  const m = semEntidades(texto).match(/\b(?:ending in|ends in|final(?:\s+do\s+cart[aã]o)?)\s*[:#]?\s*(\d{4})\b/i)
+  return m ? `${vendor} — cartão ••${m[1]}` : null
+}
+// Caixa da GZ28US? Só nas caixas da casa americana o robô lança sozinho — pagador e fonte GZ28US.
+export const caixaDoUS = (account: string | null | undefined) => /gz28us/i.test(String(account || ''))
+// Código de carro escrito no e-mail = é coisa de carro, fila.
+export const temCodigoDeCarro = (texto: string) => /\b(US|BR|SC|WV|PO|GM)\.\d{3}\b/.test(String(texto || ''))
 
 const keyOf = (slot: number, m: MailMsg) => `${slot}|${m.received}|${m.fromAddr}|${m.subject.slice(0, 90)}`
 
@@ -974,7 +1039,7 @@ async function fechaRodada(db: SupabaseClient, id: string | null, r: AutoBookMai
 }
 
 export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = 'cron'): Promise<AutoBookMailResult> {
-  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], semRecibo: [], perguntas: [], duplicadas: [], duvidasApp: [], arquivados: [], semPasta: [], achadosNoApp: [], papelSemLinha: [], erros: [] }
+  const out: AutoBookMailResult = { janela: '', caixas: [], lidos: 0, comDinheiro: 0, jaTemLinha: [], ignorados: [], lancados: [], auto: [], semRecibo: [], perguntas: [], duplicadas: [], duvidasApp: [], arquivados: [], semPasta: [], achadosNoApp: [], papelSemLinha: [], erros: [] }
   const rodada = await abreRodada(db, horas, trigger)
   const desde = new Date(Date.now() - horas * 3600e3).toISOString()
   out.janela = `desde ${desde}`
@@ -1099,7 +1164,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           continue
         }
 
-        const regra = ruleFor(msg, vendor, rules)
+        const regra = ruleFor(msg, vendor, rules, item?.nome)
         if (regra?.action === 'IGNORE') {
           out.ignorados.push(`${vendor} — ${msg.subject.slice(0, 50)} (regra "${regra.label || regra.id.slice(0, 8)}")`)
           await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
@@ -1109,7 +1174,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
 
         // REGRA DE LANÇAMENTO — só com valor de rótulo FORTE e pedido na mão.
         if (regra?.action === 'BOOK' && regra.target && it.strong && it.amount && it.order) {
-          const r = await lancar(db, regra.target as Record<string, unknown>, { vendor, order: it.order, amount: it.amount, date: data, desc })
+          const r = await lancar(db, regra.target as Record<string, unknown>, { vendor, order: it.order, amount: it.amount, date: data, desc, pago: c.kind === 'PURCHASE', metodo: cartaoDoEmail(msg.text, vendor) })
           if ('erro' in r) { out.erros.push(`${vendor} ${it.order}: ${r.erro}`) }
           else {
             await db.from('auto_book_mail_rules').update({ hits: (regra.hits || 0) + 1, last_hit_at: new Date().toISOString() }).eq('id', regra.id)
@@ -1200,6 +1265,45 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
         const daPasta = pasta.length ? await candidatosDaPasta(db, pasta) : []
         const unica = respostaUnica(pasta)
 
+        // ── O DESTINO PELO TIPO DO ITEM (13/10/2026) — ver classificaItem. Só quando NADA humano respondeu antes
+        // (nenhuma regra, nenhuma pasta de invoice com o papel desta compra) e a compra está inteira: item, pedido,
+        // valor FORTE, caixa da GZ28US, sem código de carro no e-mail.
+        let palpite: Awaited<ReturnType<typeof classificaItem>> = null
+        if (!regra && item && c.kind === 'PURCHASE' && it.strong && it.amount && it.amount > 0 && it.order
+            && caixaDoUS(auth.account) && !daPasta.length && !unica && !temCodigoDeCarro(texto)) {
+          palpite = await classificaItem(`${item.nome}${item.cortado ? '…' : ''}`, vendor, msg.subject)
+          const alvo = palpite?.forte
+            ? palpite.classe === 'OFICINA_FERRAMENTA' ? { table: 'assets', paid_from: 'GZ28US' }
+            : palpite.classe === 'OFICINA_CONSUMIVEL' ? { table: 'inputs', category: 'CONSUMPTION', paid_from: 'GZ28US' }
+            : null : null
+          if (palpite && alvo) {
+            const descAuto = `${item.nome}${item.cortado ? '…' : ''} — ${vendor} pedido ${it.order}`
+            const r = await lancar(db, alvo, { vendor, order: it.order, amount: it.amount, date: data, desc: descAuto, pago: true, metodo: cartaoDoEmail(msg.text, vendor) })
+            if ('erro' in r) out.erros.push(`auto ${vendor} ${it.order}: ${r.erro}`)
+            else {
+              const auto = { table: r.table, id: r.id, classe: palpite.classe, motivo: palpite.motivo, item: item.nome, item_cortado: item.cortado }
+              await db.from('auto_book_mail').insert({
+                message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
+                from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
+                currency: it.currency, amount: it.amount, status: 'BOOKED_AUTO', booked_table: r.table, booked_id: r.id,
+                answered_at: new Date().toISOString(),
+                question: `LANCADA PELO TIPO DO ITEM (${palpite.classe}) — revisar: ${palpite.motivo} · falta a printable invoice (PDF do vendedor) no receipt_url e na pasta Purchases`.slice(0, 2000),
+                extracted: { label: it.label, strong: it.strong, orders: c.orders, auto, trecho: msg.text.slice(0, 900) },
+              })
+              await db.from('data_fixes').insert({
+                check_key: 'autobook-item-auto', table_name: r.table, row_id: r.id, field: 'insert', old_value: null,
+                new_value: JSON.stringify({ vendor, order: it.order, amount: it.amount, desc: descAuto, classe: palpite.classe }),
+                label: `Robô do e-mail lançou pelo tipo do item (${palpite.classe}): ${palpite.motivo} · Márcio 13/10/2026 «libera, mas monitoramos aqui»`.slice(0, 400),
+              })
+              naFila.add(chave)
+              out.auto.push(`${vendor} ${it.order} ${it.currency} ${it.amount} «${item.nome}» → ${r.table}:${r.id.slice(0, 8)} (${palpite.classe})`)
+              out.semRecibo.push(`${r.table}:${r.id.slice(0, 8)} — ${vendor} ${it.order}`)
+              if (caixa.podeArquivar && caixa.token) await arquiva(caixa.token, caixa, msg, vendor, out)
+              continue
+            }
+          }
+        }
+
         // A PERGUNTA. Uma só, com tudo que já foi lido e os destinos medidos.
         // A pasta na frente do histórico: resposta dada por gente vale mais que
         // estatística de fornecedor.
@@ -1220,7 +1324,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
             : 'procurei nas pastas de invoice do Dropbox (Rides US e BR, por numero de pedido e por fornecedor): nenhum arquivo',
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
-        const oQue = item ? ` — item «${item.nome}${item.cortado ? '…' : ''}»${item.cortado ? ' (nome cortado pela loja no e-mail)' : ''}` : ''
+        const oQue = item ? ` — item «${item.nome}${item.cortado ? '…' : ''}»${item.cortado ? ' (nome cortado pela loja no e-mail)' : ''}${palpite ? ` — o robô acha ${palpite.classe}${palpite.forte ? '' : ' (com dúvida)'}: ${palpite.motivo}` : ''}` : ''
         const question = c.kind === 'REFUND'
           ? `Estorno de ${vendor}${it.order ? ' (pedido ' + it.order + ')' : ''}${valor}${oQue}: qual linha ele abate?`
           : `${c.kind === 'CHARGE' ? 'Cobranca' : 'Compra'} de ${vendor}${it.order ? ' — pedido ' + it.order : ''}${valor}${oQue}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
@@ -1228,7 +1332,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
           from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
           currency: it.currency, amount: it.amount, question, cands,
-          extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, item: item?.nome ?? null, item_cortado: item?.cortado ?? null, trecho: msg.text.slice(0, 900) },
+          extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, item: item?.nome ?? null, item_cortado: item?.cortado ?? null, palpite, trecho: msg.text.slice(0, 900) },
         }).select('id').single()
         if (error) { out.erros.push(`fila ${vendor}: ${error.message}`); continue }
         naFila.add(chave)
