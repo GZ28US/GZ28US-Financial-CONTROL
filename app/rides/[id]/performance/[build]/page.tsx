@@ -111,8 +111,8 @@ async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
 
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
 // this WhatsApp group ONLY — never the default group.
-// Márcio, 10/10/2026: «change from GZ28US - Tcal to GZ28 & Ghost Performance».
-const REPORTS_GROUP = 'GZ28 & Ghost Performance'
+// 10/10/2026 foi para «GZ28 & Ghost Performance»; 12/10/2026 Márcio: «return the dyno reports to the original group».
+const REPORTS_GROUP = 'GZ28US - Tcal'
 
 function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideName: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
