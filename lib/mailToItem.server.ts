@@ -88,7 +88,11 @@ export const PEDIDO_NOVO = [
   // `id` entra na lista de palavras (09/set/2026): o PayPal escreve "Order ID
   // 384734" em texto puro, sem "number" e sem "#", e a compra da HHP de US$
   // 1.290,93 ficou "sem numero de pedido" com o número à vista no corpo.
-  /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*#?(\d{6,7})\b/gi,               // HHP / HP Tuners / PayPal
+  // WALMART (13/10/2026): «Order number: #2000153-81883855». A regra de 6-7 dígitos logo abaixo parava no hífen e
+  // gravava «2000153» — meio pedido, que não casa com nada. Esta vem antes, e a de baixo não pega número seguido de
+  // «-dígito» (é o começo de um pedido maior, não um pedido).
+  /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*#?(\d{7}-\d{8})\b/gi,                // Walmart
+  /\border\s*(?:id|number|#|no\.?)?\s*[:#]?\s*#?(\d{6,7})\b(?!-\d)/gi,          // HHP / HP Tuners / PayPal
   // O NÚMERO ENTRE PARÊNTESES, depois de uma palavra qualquer. A própria HHP
   // manda "Your High Horse Performance, Inc. Order Confirmation (#384734)" — a
   // palavra "Confirmation" entra no meio e derruba a regra de cima, que exige o

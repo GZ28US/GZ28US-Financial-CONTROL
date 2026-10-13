@@ -110,6 +110,24 @@ const FORTE = /(order total|grand total|total paid|amount paid|amount charged|yo
 const ROTULO = /(order total|grand total|total paid|amount paid|amount charged(?:\s*\/\s*authori[sz]ed)?|you paid|total charged|payment total|order amount|total do pedido|valor total|valor pago|total pago|subtotal|total)\s*[:\-—]?\s*(R\$|US\$|\$|USD|BRL)?\s*([0-9](?:[0-9.,]{0,12}[0-9])?)(?![0-9A-Za-z])/gi
 const COBRANCA = /\b(payment (of|received|sent)|we charged|charged to your|your card (was )?charged|invoice paid|fatura paga|pagamento (recebido|efetuado|aprovado)|compra aprovada)\b/i
 
+// ── ENTIDADE HTML NÃO É TEXTO (13/10/2026) ───────────────────────────────────
+// O corpo do Walmart chega com &nbsp; &#8202; &zwnj; espalhados entre o rótulo e o valor («Order total &#8202;
+// Includes all fees… $38.44»). Lidos como texto, eles separam o que é junto. Viram espaço antes de qualquer leitura.
+export function semEntidades(t: string): string {
+  return String(t || '')
+    .replace(/&(nbsp|zwnj|zwj|thinsp|ensp|emsp|#8202|#8203|#8204|#8205|#160|#xa0|#x200[a-d]);/gi, ' ')
+    .replace(/&amp;/gi, '&').replace(/&quot;/gi, '"').replace(/&#39;|&apos;/gi, "'").replace(/&lt;/gi, '<').replace(/&gt;/gi, '>')
+    .replace(/&copy;/gi, '©')
+    .replace(/[\u200a-\u200d\u00a0]/g, ' ')
+    .replace(/\s+/g, ' ')
+}
+
+// ── TOTAL FORTE COM FRASE NO MEIO (13/10/2026) ───────────────────────────────
+// Walmart: «Order total Includes all fees, taxes and discounts $38.44». O ROTULO exige o número colado no rótulo e
+// o pedido 2000153-81883855 virou «sem valor legível». Só para rótulo FORTE, e só quando a frase do meio é feita de
+// palavras (sem dígito) e termina num SÍMBOLO de moeda — «Total 68434939» de cabeçalho continua fora.
+const FORTE_LONGE = /(order total|grand total|total paid|amount paid|you paid|total charged|payment total|order amount|total do pedido|valor total|valor pago|total pago)\s*[:\-—]?\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ ,'’]{0,60}?)\s*(R\$|US\$|\$)\s*([0-9](?:[0-9.,]{0,12}[0-9])?)(?![0-9A-Za-z])/gi
+
 // "1,234.56" e "1.234,56" chegam do mesmo parser: o ÚLTIMO separador manda.
 export function parseNumber(raw: string): number | null {
   const s = String(raw).replace(/\s/g, '')
@@ -134,7 +152,8 @@ export function parseNumber(raw: string): number | null {
 // nascia como dúvida de "rótulo fraco" mesmo tendo valor exato no e-mail.
 const BLOCO_FECHAMENTO = /(order|payment|purchase)\s+summary|resumo (do pedido|da compra)/i
 
-export function parseMoney(texto: string): { amount: number; currency: string; strong: boolean; label: string } | null {
+export function parseMoney(bruto: string): { amount: number; currency: string; strong: boolean; label: string } | null {
+  const texto = semEntidades(bruto)
   let best: { amount: number; currency: string; strong: boolean; label: string } | null = null
   for (const m of texto.matchAll(ROTULO)) {
     const label = m[1], sym = m[2] || '', n = parseNumber(m[3] || '')
@@ -161,7 +180,39 @@ export function parseMoney(texto: string): { amount: number; currency: string; s
     const degrauBest = !best ? -1 : best.strong ? 2 : /^sub\s*total$/i.test(best.label.trim()) ? 0 : 1
     if (!best || degrau > degrauBest || (degrau === degrauBest && n > best.amount)) best = { amount: n, currency, strong, label }
   }
+  // Rótulo forte com frase no meio só entra quando nenhum forte colado foi achado — o colado é a leitura mais segura.
+  if (!best?.strong) {
+    for (const m of texto.matchAll(FORTE_LONGE)) {
+      const n = parseNumber(m[4] || '')
+      if (n == null || !(n > 0)) continue
+      best = { amount: n, currency: /R\$/.test(m[3]) ? 'BRL' : 'USD', strong: true, label: m[1] }
+      break
+    }
+  }
   return best
+}
+
+// ── O ITEM DA COMPRA (Márcio, 13/10/2026, via AutoBook GZ28US: «isso tem que ser tarefa automática do robô») ──────
+// O robô lia fornecedor, pedido e valor, e a pergunta «o que é?» sobrava para gente — no pedido Walmart
+// 2000153-81883855 o item estava NO PRÓPRIO E-MAIL, no topo: «We're on it! Lemorele Wireless HDMI... 👍». Lê o nome
+// onde a loja escreve, sem chutar:
+//   • Walmart — o cabeçalho «We're on it! <item>» da confirmação;
+//   • Amazon — o assunto «Ordered: "<item>..."», «Shipped: "<item>"», «Delivered: "<item>"».
+// Nome cortado pela loja («...») volta como está, marcado `cortado` — o e-mail não traz o resto (o link «See item»
+// não chega no texto) e inventar o fim do nome é pior que deixá-lo curto.
+export function itemDoEmail(msg: { subject: string; text: string }): { nome: string; cortado: boolean } | null {
+  const limpa = (s: string) => s.replace(/\s+/g, ' ').trim()
+  const fim = (s: string) => {
+    const cortado = /(\.\.\.|…)\s*$/.test(s)
+    const nome = limpa(s.replace(/(\.\.\.|…)\s*$/, ''))
+    return nome.length >= 3 ? { nome: nome.slice(0, 160), cortado } : null
+  }
+  const corpo = semEntidades(msg.text).slice(0, 1500)
+  const wm = corpo.match(/We[’']re on it!\s+(.{3,180}?)\s*(?:👍|Order date:|Order number:|$)/i)
+  if (wm) { const r = fim(wm[1]); if (r) return r }
+  const az = String(msg.subject || '').match(/^\s*(?:Ordered|Shipped|Delivered|Out for delivery)\s*:\s*["“]?(.{3,180}?)["”]?\s*(?:and \d+ more items?)?\s*$/i)
+  if (az) { const r = fim(az[1]); if (r) return r }
+  return null
 }
 
 // ── FORNECEDOR: vem do domínio de quem mandou, não de adivinhação no texto ──
@@ -273,7 +324,8 @@ export function vendorOf(msg: MailMsg): string {
   return base ? base.charAt(0).toUpperCase() + base.slice(1) : (msg.from || msg.fromAddr).slice(0, 40)
 }
 
-export function orderNumbersIn(texto: string): string[] {
+export function orderNumbersIn(bruto: string): string[] {
+  const texto = semEntidades(bruto)
   const out = new Set<string>()
   for (const re of PEDIDO_NOVO) for (const m of texto.matchAll(re)) out.add(m[1])
   return [...out]
@@ -290,9 +342,10 @@ export function orderNumbersIn(texto: string): string[] {
 export function totaisPorPedido(texto: string): Record<string, { amount: number; currency: string }> {
   const out: Record<string, { amount: number; currency: string }> = {}
   for (const pedido of orderNumbersIn(texto)) {
-    const at = texto.indexOf(pedido)
+    const limpo = semEntidades(texto)
+    const at = limpo.indexOf(pedido)
     if (at < 0) continue
-    const janela = texto.slice(at + pedido.length, at + pedido.length + 600)
+    const janela = limpo.slice(at + pedido.length, at + pedido.length + 600)
     const m = parseMoney(janela)
     if (m?.strong) out[pedido] = { amount: m.amount, currency: m.currency }
   }
@@ -1036,7 +1089,9 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
           continue
         }
 
-        const desc = `${vendor}${it.order ? ' — pedido ' + it.order : ''} — ${msg.subject.slice(0, 90)}`
+        // O ITEM DÁ NOME À LINHA quando o e-mail o traz (13/10/2026); sem item, fica o rótulo antigo.
+        const item = itemDoEmail(msg)
+        const desc = item ? `${item.nome}${item.cortado ? '…' : ''}` : `${vendor}${it.order ? ' — pedido ' + it.order : ''} — ${msg.subject.slice(0, 90)}`
         // 0,00 não gera linha (PO de $0.00 do Temu).
         if (it.amount === 0) {
           out.ignorados.push(`${vendor} ${it.order || ''} — total 0,00`)
@@ -1061,7 +1116,7 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
             await db.from('auto_book_mail').insert({
               message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
               from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
-              currency: it.currency, amount: it.amount, extracted: { label: it.label, orders: c.orders, regra: regra.label },
+              currency: it.currency, amount: it.amount, extracted: { label: it.label, orders: c.orders, regra: regra.label, item: item?.nome ?? null },
               status: 'BOOKED', booked_table: r.table, booked_id: r.id, answered_at: new Date().toISOString(),
               question: 'LANCADA POR REGRA — falta a printable invoice (PDF do vendedor) no receipt_url e na pasta Purchases',
             })
@@ -1165,14 +1220,15 @@ export async function runAutoBookMail(db: SupabaseClient, horas = 3, trigger = '
             : 'procurei nas pastas de invoice do Dropbox (Rides US e BR, por numero de pedido e por fornecedor): nenhum arquivo',
         ].filter(Boolean)
         const valor = it.amount != null ? ` — ${it.currency} ${it.amount}` : ''
+        const oQue = item ? ` — item «${item.nome}${item.cortado ? '…' : ''}»${item.cortado ? ' (nome cortado pela loja no e-mail)' : ''}` : ''
         const question = c.kind === 'REFUND'
-          ? `Estorno de ${vendor}${it.order ? ' (pedido ' + it.order + ')' : ''}${valor}: qual linha ele abate?`
-          : `${c.kind === 'CHARGE' ? 'Cobranca' : 'Compra'} de ${vendor}${it.order ? ' — pedido ' + it.order : ''}${valor}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
+          ? `Estorno de ${vendor}${it.order ? ' (pedido ' + it.order + ')' : ''}${valor}${oQue}: qual linha ele abate?`
+          : `${c.kind === 'CHARGE' ? 'Cobranca' : 'Compra'} de ${vendor}${it.order ? ' — pedido ' + it.order : ''}${valor}${oQue}: entra em qual invoice/carro?${falta.length ? ' (' + falta.join('; ') + ')' : ''}`
         const { data: nova, error } = await db.from('auto_book_mail').insert({
           message_key: chave, slot: caixa.slot, account: auth.account, received_at: msg.received,
           from_addr: msg.fromAddr, subject: msg.subject, kind: c.kind, vendor, order_number: it.order,
           currency: it.currency, amount: it.amount, question, cands,
-          extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, trecho: msg.text.slice(0, 900) },
+          extracted: { label: it.label, strong: it.strong, orders: c.orders, totais, item: item?.nome ?? null, item_cortado: item?.cortado ?? null, trecho: msg.text.slice(0, 900) },
         }).select('id').single()
         if (error) { out.erros.push(`fila ${vendor}: ${error.message}`); continue }
         naFila.add(chave)
