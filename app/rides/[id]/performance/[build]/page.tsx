@@ -119,6 +119,37 @@ async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
 }
 
 
+// ── A PERDA DOS CARROS IGUAIS É A DO BONESTOCK DE REFERÊNCIA (Márcio, 13/10/2026) ───────────────────────────────────
+// «uma vez definido o bonestock de referência, que no caso é o do Lucifer agora, define-se a perda pra todos os carros
+// iguais» · «todos devem usar a mesma perda do Lucifer». O carro que IMPORTA a BoneStock lê o número dela ao vivo
+// (resolveLiveBaselines), mas o BHP de cada puxada é gravado — então a perda é EMPURRADA para as puxadas:
+//   • quando o carro troca de referência (IMPORT BoneStock) → as puxadas dele;
+//   • quando a BoneStock de referência muda (EDIT, ou nova BoneStock escaneada no carro de origem) → as puxadas dele E de
+//     todo carro que a importa (imported_from = este código), e a cópia importada acompanha.
+// Só puxadas do dialeto US (as do BR guardam roda crua + fator SAE — o app BR faz a conta delas).
+async function empurraPerda(codes: string[], loss: number): Promise<void> {
+  if (!codes.length || !Number.isFinite(loss) || loss <= 0 || loss >= 100) return
+  const { data } = await supabase.from('dyno_pulls').select('id, pack, whp, wnm, origin, imported_from').in('ride_code', codes)
+  for (const r of (data || []) as DynoPull[]) {
+    if (r.origin === 'BR' || r.imported_from || isBoneStock(r)) continue
+    await supabase.from('dyno_pulls').update({
+      loss_pct: loss,
+      bhp: applyLoss(r.whp != null ? String(r.whp) : '', String(loss)),
+      bnm: applyLoss(r.wnm != null ? String(r.wnm) : '', String(loss)),
+    }).eq('id', r.id)
+  }
+}
+async function propagaReferencia(sourceCode: string): Promise<void> {
+  const { data: src } = await supabase.from('dyno_pulls').select('*').eq('ride_code', sourceCode).is('imported_from', null).order('created_at', { ascending: false })
+  const ref = ((src || []) as DynoPull[]).filter(isTrueBoneStock).find((r) => r.loss_pct != null)
+  if (!ref || ref.loss_pct == null) return
+  const { data: imps } = await supabase.from('dyno_pulls').select('id, ride_code').eq('imported_from', sourceCode)
+  const filhos = [...new Set(((imps || []) as DynoPull[]).map((r) => String(r.ride_code)))]
+  // a cópia importada acompanha (quem lê o banco direto — o placar — vê o mesmo número)
+  if (filhos.length) await supabase.from('dyno_pulls').update({ whp: ref.whp, wnm: ref.wnm, loss_pct: ref.loss_pct, bhp: ref.bhp, bnm: ref.bnm }).eq('imported_from', sourceCode)
+  await empurraPerda([sourceCode, ...filhos], Number(ref.loss_pct))
+}
+
 // Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
 // this WhatsApp group ONLY — never the default group.
 // 10/10/2026 foi para «GZ28 & Ghost Performance»; 12/10/2026 Márcio: «return the dyno reports to the original group».
@@ -422,6 +453,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
         imported_from: s.ride_code || null,
       }])
       if (error) { alert(error.message); return }
+      // A perda deste carro passa a ser a da referência (13/10/2026).
+      if (s.loss_pct != null) await empurraPerda([rideCode], Number(s.loss_pct))
       setShowImport(false)
       await load()
     } finally {
@@ -567,6 +600,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       // pull. Mas se a puxada que acabou de entrar JÁ É a BoneStock (escaneada), não se cria
       // outra por cima: seriam duas linhas de fábrica no mesmo build.
       if (!isBoneStock({ pack: vals.pack.trim() }) && !pulls.some(isBoneStock)) { await createBoneStock(effLoss) }
+      // Nova BoneStock DESTE carro → se ele é referência de outros, a perda nova vale para todos (13/10/2026).
+      if (isTrueBoneStock({ pack: vals.pack.trim() })) await propagaReferencia(rideCode)
 
       // Volta com o PACK do build já preenchido: a próxima puxada é do mesmo pacote.
       setForm({ pack: packName || '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
@@ -630,6 +665,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       dyno: editForm.dyno || null,
     }).eq('id', id)
     if (error) { alert(error.message); return }
+    // BoneStock de referência mudou → a perda dela vale para este carro e para todo carro que a importa (13/10/2026).
+    if (isTrueBoneStock({ pack: editForm.pack.trim() })) await propagaReferencia(rideCode)
     setEditingId(null)
     load()
   }
