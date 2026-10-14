@@ -129,9 +129,14 @@ async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
 // Só puxadas do dialeto US (as do BR guardam roda crua + fator SAE — o app BR faz a conta delas).
 async function empurraPerda(codes: string[], loss: number): Promise<void> {
   if (!codes.length || !Number.isFinite(loss) || loss <= 0 || loss >= 100) return
-  const { data } = await supabase.from('dyno_pulls').select('id, pack, whp, wnm, origin, imported_from').in('ride_code', codes)
+  const [{ data }, { data: proprias }] = await Promise.all([
+    supabase.from('dyno_pulls').select('id, ride_code, build_no, pack, whp, wnm, origin, imported_from').in('ride_code', codes),
+    // BUILD COM PERDA PRÓPRIA (13/10/2026 — SublimeHell build 2, rodas de Hellcat WideBody, 17%): a referência não a sobrescreve.
+    supabase.from('ride_builds').select('ride_code, build_no').in('ride_code', codes).not('loss_pct', 'is', null),
+  ])
+  const fora = new Set(((proprias || []) as { ride_code: string; build_no: number }[]).map((b) => `${b.ride_code}|${b.build_no}`))
   for (const r of (data || []) as DynoPull[]) {
-    if (r.origin === 'BR' || r.imported_from || isBoneStock(r)) continue
+    if (r.origin === 'BR' || r.imported_from || isBoneStock(r) || fora.has(`${r.ride_code}|${r.build_no}`)) continue
     await supabase.from('dyno_pulls').update({
       loss_pct: loss,
       bhp: applyLoss(r.whp != null ? String(r.whp) : '', String(loss)),
@@ -382,10 +387,14 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     // 17/ago/2026). Preferindo a que tem perda gravada, se houver mais de uma.
     const bsAll = liveWide.filter(isBoneStock)
     const bsCar = pickCarBaseline(liveWide)
-    setCarLoss(bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null)
+    // PERDA PRÓPRIA DO BUILD (13/10/2026): quando o build tem a sua (ride_builds.loss_pct — SublimeHell build 2, rodas de
+    // Hellcat WideBody, 17%), é ELA que vale nas puxadas, no scan e na meta deste build; o BoneStock fica com a dele.
+    const { data: bRow } = await supabase.from('ride_builds').select('loss_pct, loss_note').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle()
+    const perdaBuild = bRow?.loss_pct != null ? Number(bRow.loss_pct) : null
+    setCarLoss(perdaBuild ?? (bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : null))
     // O rótulo diz de QUAL baseline a perda veio — "from Stock" quando a base é a Stock.
     // De outro carro? O rótulo diz de qual: "US.042 - SublimeHell BoneStock" (ordem 21/ago/2026).
-    setCarLossFrom(bsCar?.linked ? `${bsCar.linked}${bsCar.linkedName ? ` - ${bsCar.linkedName}` : ''} ${bsCar.pack || 'BoneStock'}` : (bsCar?.pack || 'BoneStock'))
+    setCarLossFrom(perdaBuild != null ? `this build — ${bRow?.loss_note || 'own loss'}` : bsCar?.linked ? `${bsCar.linked}${bsCar.linkedName ? ` - ${bsCar.linkedName}` : ''} ${bsCar.pack || 'BoneStock'}` : (bsCar?.pack || 'BoneStock'))
     setCarHasBone(bsAll.length > 0)
     // Build sem BoneStock própria mostra a do carro EMPRESTADA, fixada no topo —
     // read-only (sem EDIT/REMOVE): a dona é o build de origem.
@@ -1458,8 +1467,10 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const mine = rows.filter((p) => p.build_no === buildNo)
     const bsCar = pickCarBaseline(rows)
     const shown = mine.some(isBoneStock) || !bsCar ? mine : [bsCar, ...mine]
+    // Perda própria do build manda (13/10/2026) — a mesma regra da aba DYNO.
+    const { data: bRow } = await supabase.from('ride_builds').select('loss_pct').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle()
     setDyno({
-      loss: bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
+      loss: bRow?.loss_pct != null ? Number(bRow.loss_pct) : bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
       // Só puxada DE VERDADE conta como "best pull" — a linha de base é o ponto de partida,
       // não uma puxada do pacote (senão FROM e NOW saem iguais num carro que nunca rodou).
       best: shown.reduce((m, p) => (isBoneStock(p) ? m : Math.max(m, Number(p.whp) || 0)), 0),
