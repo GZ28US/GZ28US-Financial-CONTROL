@@ -79,7 +79,11 @@ function toLocalDialect(p: DynoPull): DynoPull {
   if (p.origin !== 'BR') return p
   const r2 = (x: number) => Math.round(x * 100) / 100
   const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
-  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
+  // CORREÇÃO POR ORIGEM (Márcio, 14/10/2026): «todos os carros medidos no BR devem usar correção SAE mesmo, os medidos no US
+  // STD, e assim devem aparecer nas tabelas de dyno do app, em todas.» Cada passada aparece na régua de ONDE FOI MEDIDA:
+  // a do BR em SAE (o fator da própria folha, sem × 1,04), a do US em STD. Substitui o «Padrão STD» de 28/ago/2026.
+  void SAE_TO_STD
+  const cf = (p.correction_factor ?? 1)
   const whp = p.whp != null ? r2(p.whp * cf) : null
   const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
   return {
@@ -385,7 +389,7 @@ export default function PerformancePage() {
                     // número, e nunca imprime 1.000 como se fosse fator declarado.
                     const cfOff = p.correction_factor == null
                     const whyCf = cfOff && p.origin === 'BR'
-                      ? 'No correction factor on this BR sheet — the conversion to STD assumed an SAE sheet (+4%). That is an assumption, not a reading.'
+                      ? 'No correction factor on this BR sheet — shown as recorded (BR pulls are shown in SAE).'
                       : 'No correction factor on file for this sheet — the figures are printed exactly as recorded. Whether the sheet already came out corrected is not known here. Open DOC to read it.'
                     return (
                       <tr
@@ -406,7 +410,7 @@ export default function PerformancePage() {
                             célula só confundem qual dos dois fala do número. */}
                         <td className="py-3 pr-4 text-gray-300">
                           {p.pack || '—'}
-                          {p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Recorded in the BR app — converted to STD / lb·ft">🇧🇷 BR</span> : null}
+                          {p.foreign ? <span className="ml-2 text-xs font-normal text-green-400" title="Measured in BR — shown in SAE, torque in lb·ft">🇧🇷 BR</span> : null}
                         </td>
                         <td className="py-3 pr-4">{num(p.whp, 'whp')}</td>
                         <td className="py-3 pr-4">{num(p.wnm, 'lb·ft')}</td>
@@ -437,7 +441,7 @@ export default function PerformancePage() {
                   que ela de fato faz: ordena pelo BHP, o mesmo número que a tabela do
                   carro estampa. Quem corrigiu o quê, os avisos abaixo dizem. */}
               <p className="text-xs text-gray-500 mt-4">
-                Ranked by ENGINE hp (BHP), in this app&apos;s dialect: corrected STD, torque in lb·ft. Baselines are excluded.
+                Ranked by ENGINE hp (BHP): pulls measured in the US in STD, pulls measured in BR in SAE (🇧🇷), torque in lb·ft. Baselines are excluded.
               </p>
               {/* A FRASE "O MESMO NÚMERO DA PÁGINA DO CARRO" SÓ VALE PRA CASA. Ela era
                   redonda demais: dos 15 carros, 9 são BR e não têm página de ride NESTE

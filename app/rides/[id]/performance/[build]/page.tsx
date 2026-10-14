@@ -62,7 +62,11 @@ function toLocalDialect(p: DynoPull): DynoPull {
   if (p.origin !== 'BR') return p
   const r2 = (x: number) => Math.round(x * 100) / 100
   const denom = p.loss_pct != null && p.loss_pct < 100 ? 1 - p.loss_pct / 100 : null
-  const cf = (p.correction_factor ?? 1) * SAE_TO_STD
+  // CORREÇÃO POR ORIGEM (Márcio, 14/10/2026): «todos os carros medidos no BR devem usar correção SAE mesmo, os medidos no US
+  // STD, e assim devem aparecer nas tabelas de dyno do app, em todas.» Cada passada aparece na régua de ONDE FOI MEDIDA:
+  // a do BR em SAE (o fator da própria folha, sem × 1,04), a do US em STD. Substitui o «Padrão STD» de 28/ago/2026.
+  void SAE_TO_STD
+  const cf = (p.correction_factor ?? 1)
   const whp = p.whp != null ? r2(p.whp * cf) : null
   const wnm = p.wnm != null ? r2(p.wnm * cf * KGFM_TO_LBFT) : null
   return {
