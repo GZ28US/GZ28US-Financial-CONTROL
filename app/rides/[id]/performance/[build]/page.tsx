@@ -226,6 +226,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
   const scanInputRef = useRef<HTMLInputElement>(null)
+  const scannedCf = useRef<string>('')
   const [client, setClient] = useState<{ name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null; instagram: string | null; facebook: string | null } | null>(null)
   const [sendingId, setSendingId] = useState<string | null>(null)
   // After a pull is saved, ask whether to report it on WhatsApp (and optionally to the client).
@@ -278,6 +279,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       const data = await res.json()
       if (!res.ok || data.error) { alert(data.error || 'Scan failed.'); return }
       const m = String(data.date || '').match(/^(\d{4})-(\d{2})-(\d{2})$/)
+      scannedCf.current = String(data.correction_factor || '')
 
       // BONESTOCK É 100% PELO SCAN (só neste caso; packs normais seguem o fluxo manual).
       // A perda não se chuta, se DEDUZ: o BoneStock É o carro de fábrica, então o bhp da
@@ -571,7 +573,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   // Grava a puxada a partir de valores EXPLÍCITOS — não do estado do formulário. É o que
   // permite o SCAN do BoneStock gravar sozinho: logo depois de um setState os valores novos
   // ainda não estão em `form`, então quem escaneou passa o que leu direto para cá.
-  type PullVals = { pack: string; whp: string; wnm: string; loss: string; dmonth: string; dday: string; dyear: string; dyno: string }
+  // `cf` (14/10/2026): o fator de correção STD lido da folha no scan — o app do BR precisa dele para o «sem correção».
+  type PullVals = { pack: string; whp: string; wnm: string; loss: string; dmonth: string; dday: string; dyear: string; dyno: string; cf?: string }
   async function savePull(vals: PullVals, file: File | null) {
     setSaving(true)
     try {
@@ -606,6 +609,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
         pull_date: pullDate,
         dyno: vals.dyno || null,
         document_url: documentUrl,
+        correction_factor: vals.cf ? parseFloat(vals.cf) : (scannedCf.current ? parseFloat(scannedCf.current) : null),
       }]).select().single()
       if (error) { alert(error.message); return }
 
@@ -619,6 +623,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       // Volta com o PACK do build já preenchido: a próxima puxada é do mesmo pacote.
       setForm({ pack: packName || '', whp: '', wnm: '', loss: '', dmonth: '', dday: '', dyear: '', dyno: 'GZ28US DynoJet' })
       setScannedFile(null)
+      scannedCf.current = ''
       load()
       // Ask whether to report it (instead of auto-sending).
       setReportToClient(false)

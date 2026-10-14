@@ -32,6 +32,8 @@ export async function POST(req: NextRequest) {
   "power_unit": "the unit the POWER axis/legend is printed in: exactly one of \\"hp\\" or \\"cv\\"",
   "torque": "peak torque (the 'Max Torque' value) as printed, as a number string like 1137.52",
   "torque_unit": "the unit the TORQUE axis/legend is printed in: exactly one of \\"lb-ft\\", \\"N·m\\" or \\"kgf·m\\"",
+  "correction": "the correction factor printed on the sheet (e.g. 'CF: STD 1.05', 'STD:1,03', 'Correção 1,09', 'Fator SAE 1.100') as a number string like 1.05, else empty string",
+  "correction_standard": "which standard that printed factor belongs to — exactly one of \"STD\", \"SAE\", \"DIN\", \"EEC\", \"JIS\". American Dynojet sheets usually print 'CF: STD'. Empty string if the sheet does not say",
   "date": "the test date in YYYY-MM-DD format, or empty string if not found",
   "dyno": "the dyno operator. If a GZ28 or GZ28US logo/name appears, return 'GZ28US DynoJet'. If a DynoSolutions logo/name appears, return 'DynoSolutions DynoJet'. Otherwise empty string."
 }
@@ -110,6 +112,15 @@ Rules:
       ? r2(torqueUnit === 'N·m' ? torqueRaw * LBFT_PER_NM : torqueUnit === 'kgf·m' ? torqueRaw * LBFT_PER_KGFM : torqueRaw)
       : null
 
+    // ---- FATOR DE CORREÇÃO (14/10/2026) ----
+    // O US grava a potência JÁ CORRIGIDA (STD) — e agora também o fator, para o app do BR conseguir mostrar o «sem
+    // correção» (corrigido ÷ fator). Fator em STD; folha que imprime SAE é convertida (× 1,04). Fora de 0,9–1,2 = lixo.
+    const cfPrinted = num(parsed.correction)
+    const cfStandard = String(parsed.correction_standard || '').trim().toUpperCase()
+    const cfStd = cfPrinted != null && cfPrinted >= 0.9 && cfPrinted <= 1.2
+      ? Math.round((cfStandard === 'SAE' ? cfPrinted * 1.04 : cfPrinted) * 10000) / 10000
+      : null
+
     const allowedDynos = ['GZ28US DynoJet', 'DynoSolutions DynoJet']
     const dyno = allowedDynos.includes(String(parsed.dyno || '').trim()) ? String(parsed.dyno).trim() : ''
 
@@ -122,6 +133,9 @@ Rules:
       unit_note: unitNote,
       date: typeof parsed.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(parsed.date) ? parsed.date : '',
       dyno,
+      correction_factor: cfStd != null ? String(cfStd) : '',   // STD
+      correction_printed: cfPrinted != null ? String(cfPrinted) : '',
+      correction_standard: cfStandard,
     })
 
   } catch (err) {
