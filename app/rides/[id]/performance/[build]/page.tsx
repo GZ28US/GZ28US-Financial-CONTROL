@@ -2028,7 +2028,7 @@ export default function RidePerformancePage() {
   // BoneStock tune filename prefix: "[manufacturer] [year] [brand] [model] [version] [transmission]".
   const tuneBase = ride ? [ride.manufacturer, ride.year, ride.brand, ride.model, ride.version, ride.transmission].filter(Boolean).join(' ') : ''
   // Known drivetrain loss: Challenger/Charger Hellcat or Redeye WIDEBODY (NOT the
-  // SuperStock) dyno at ~18.5% crank→wheel loss — pre-filled, still editable.
+  // SuperStock) dyno at ~17% crank→wheel loss — pre-filled, still editable.
   const defaultLoss = (() => {
     if (!ride) return ''
     const txt = [ride.brand, ride.model, ride.version, ride.special_edition].filter(Boolean).join(' ').toLowerCase()
@@ -2036,7 +2036,8 @@ export default function RidePerformancePage() {
     const isHellcatOrRedeye = /(hellcat|red\s*eye)/.test(txt)
     const isWidebody = /(wide\s*body)/.test(txt)
     const isSuperStock = /(super\s*stock)/.test(txt)
-    return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '18.5' : ''
+    // HELLCAT WIDEBODY = 17% (Márcio, 13/10/2026: «todos os HellCats com 20" WideBody» — a perda das rodas 20" do WideBody).
+    return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '17' : ''
   })()
 
   return (
