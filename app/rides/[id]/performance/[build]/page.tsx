@@ -130,21 +130,24 @@ async function resolveLiveBaselines(list: DynoPull[]): Promise<DynoPull[]> {
 //   • quando o carro troca de referência (IMPORT BoneStock) → as puxadas dele;
 //   • quando a BoneStock de referência muda (EDIT, ou nova BoneStock escaneada no carro de origem) → as puxadas dele E de
 //     todo carro que a importa (imported_from = este código), e a cópia importada acompanha.
-// Só puxadas do dialeto US (as do BR guardam roda crua + fator SAE — o app BR faz a conta delas).
+// Dialeto de cada passada: US = roda já corrigida; BR = roda crua × fator SAE (14/10/2026).
 async function empurraPerda(codes: string[], loss: number): Promise<void> {
   if (!codes.length || !Number.isFinite(loss) || loss <= 0 || loss >= 100) return
   const [{ data }, { data: proprias }] = await Promise.all([
-    supabase.from('dyno_pulls').select('id, ride_code, build_no, pack, whp, wnm, origin, imported_from').in('ride_code', codes),
+    supabase.from('dyno_pulls').select('id, ride_code, build_no, pack, whp, wnm, origin, imported_from, correction_factor').in('ride_code', codes),
     // BUILD COM PERDA PRÓPRIA (13/10/2026 — SublimeHell build 2, rodas de Hellcat WideBody, 17%): a referência não a sobrescreve.
     supabase.from('ride_builds').select('ride_code, build_no').in('ride_code', codes).not('loss_pct', 'is', null),
   ])
   const fora = new Set(((proprias || []) as { ride_code: string; build_no: number }[]).map((b) => `${b.ride_code}|${b.build_no}`))
   for (const r of (data || []) as DynoPull[]) {
-    if (r.origin === 'BR' || r.imported_from || isBoneStock(r) || fora.has(`${r.ride_code}|${r.build_no}`)) continue
+    if (r.imported_from || isBoneStock(r) || fora.has(`${r.ride_code}|${r.build_no}`)) continue
+    // Passada do BR (14/10/2026 — DeMango BR.556 é D170): roda CRUA × fator SAE ÷ (1 − perda); sem fator, só a perda.
+    const cfBR = r.origin === 'BR' ? Number(r.correction_factor || 0) : 1
+    if (r.origin === 'BR' && !(cfBR > 0)) { await supabase.from('dyno_pulls').update({ loss_pct: loss }).eq('id', r.id); continue }
     await supabase.from('dyno_pulls').update({
       loss_pct: loss,
-      bhp: applyLoss(r.whp != null ? String(r.whp) : '', String(loss)),
-      bnm: applyLoss(r.wnm != null ? String(r.wnm) : '', String(loss)),
+      bhp: applyLoss(r.whp != null ? String(Number(r.whp) * cfBR) : '', String(loss)),
+      bnm: applyLoss(r.wnm != null ? String(Number(r.wnm) * cfBR) : '', String(loss)),
     }).eq('id', r.id)
   }
 }
@@ -155,7 +158,7 @@ async function propagaReferencia(sourceCode: string): Promise<void> {
   const { data: imps } = await supabase.from('dyno_pulls').select('id, ride_code').eq('imported_from', sourceCode)
   const filhos = [...new Set(((imps || []) as DynoPull[]).map((r) => String(r.ride_code)))]
   // a cópia importada acompanha (quem lê o banco direto — o placar — vê o mesmo número)
-  if (filhos.length) await supabase.from('dyno_pulls').update({ whp: ref.whp, wnm: ref.wnm, loss_pct: ref.loss_pct, bhp: ref.bhp, bnm: ref.bnm }).eq('imported_from', sourceCode)
+  if (filhos.length) await supabase.from('dyno_pulls').update({ whp: ref.whp, wnm: ref.wnm, loss_pct: ref.loss_pct, bhp: ref.bhp, bnm: ref.bnm, correction_factor: ref.correction_factor ?? null }).eq('imported_from', sourceCode)
   await empurraPerda([sourceCode, ...filhos], Number(ref.loss_pct))
 }
 
