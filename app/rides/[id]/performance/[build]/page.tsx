@@ -2041,6 +2041,8 @@ export default function RidePerformancePage() {
     const isWidebody = /(wide\s*body)/.test(txt)
     const isSuperStock = /(super\s*stock)/.test(txt)
     // HELLCAT WIDEBODY = 17% (Márcio, 13/10/2026: «todos os HellCats com 20" WideBody» — a perda das rodas 20" do WideBody).
+    // DURANGO = 20% (Márcio, 14/10/2026: «A Durango tem que ser 20% de perda»).
+    if (/durango/.test(txt)) return '20'
     return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '17' : ''
   })()
 
