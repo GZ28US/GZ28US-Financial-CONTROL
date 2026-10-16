@@ -3,6 +3,7 @@ import { previewUnmatchDeletes, type UnmatchVictim } from '@/lib/bankReconcile.s
 import { pedeConfirmacao, mesmaLista, chavesDe } from '@/lib/bankUndoGate.server'
 import { bankDb } from '@/lib/plaid.server'
 import { requireUser } from '@/lib/auth.server'
+import { receiptHints } from '@/lib/receiptHunt.server'
 import { num, setKeyOf, candidatePool, rank, isFee, nameHit, buildPlan, applyPlan, planSummary, newLines, writeMatch, writeUnmatch, writeStatus, logMatchEvent, fetchAll, loadDbAliases, loadRules, itemTwinKeys, acquireRun, finishRun, learnFromMatch, AUTO_BOOK_FLOOR, classify, natureFromKlass, bucketInvoiceId, createBucketRow, bucketReach, seedDefaultRules, supplierNameFor, signedDays, MARKER_BUCKET, MARKER_ASSIGNED, MARKER_ADOPTED, ENGINE_BUCKET, BUCKET_ORIGIN, INPUT_CATEGORIES, ATTRIB_REPORT_DAYS, ADOPT_WINDOW_DAYS, RULE_AGE_DAYS, stmtMerchant, doubtColumnMissing, expensesRows, expenseLinkColumnMissing, probeExpenseLink , adoptScheduled, MIXED_GROUP, MIXED_TABLES, MIXED_IN_TABLES, mixable, mixedNet, mixedFromPool, mixedMembers, pointerKeys, fetchBankLines, mixedLinesWith, memberAmounts, type Backfill, type Pool, type Cand } from '@/lib/bankReconcile.server'
 import { lineState, askCount, isMoneyLine } from '@/lib/bankLineState.server'
 import { supplierDirectoryFrom } from '@/lib/supplierMatch'
@@ -461,6 +462,8 @@ export async function GET(req: NextRequest) {
     // ESTADO DA LINHA (BL 1.5.0 · DC 1.50.0): uma frase por linha, do mesmo plano do cron — PERGUNTA, FORNECEDOR ou ESPERANDO.
     const itemOfNow = new Map<string, any>(planNow.items.map((it: any) => [String(it.line.id), it]))
     const todayNow = todayNY()
+    // RECIBO DO GRUPO (16/10/2026): a foto que o time postou para esta linha e por que o robô não lançou sozinho.
+    const hintOf = await receiptHints(db, lines.map((l: any) => String(l.id)))
     const enriched = lines.map((l: any) => {
       const candidates = rank(l, pool)
       const doubt = planNow.doubts[String(l.id)] || null, near = nearOf.get(String(l.id)) || null
@@ -469,6 +472,7 @@ export async function GET(req: NextRequest) {
         source: String(l.plaid_id || '').startsWith('stmt:') ? 'STATEMENT' : 'PLAID', fee: isFee(l), money: isMoneyLine(l), candidates,
         queued: l.match_status === 'QUEUED', doubt, near,
         state: lineState(l, candidates, doubt, itemOfNow.get(String(l.id)) || null, near, todayNow),
+        receipt: hintOf.get(String(l.id)) || null,
       }
     })
     // A CONFERIR: o que o motor casou e o Márcio ainda não viu. Sem a migration

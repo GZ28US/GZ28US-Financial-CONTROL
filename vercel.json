@@ -45,6 +45,10 @@
       "schedule": "0 * * * *"
     },
     {
+      "path": "/ca/api/cron/receipt-hunt",
+      "schedule": "17 * * * *"
+    },
+    {
       "path": "/ca/api/cron/invoice-receipts",
       "schedule": "23 */2 * * *"
     },
