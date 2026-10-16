@@ -173,6 +173,9 @@ export function datesMatch(scan: Pick<Scan, 'receipt_date' | 'sent_at'>, line: a
   return diffDays(scan.receipt_date, ld) <= 0 && diffDays(scan.receipt_date, ld) >= -5
 }
 
+// Só a data do recibo contra a linha (sem a régua do post no grupo) — para achar linha que alguém já casou.
+const receiptDayFits = (rd: string, line: any) => line.authorized_date ? Math.abs(diffDays(rd, String(line.authorized_date).slice(0, 10))) <= 1 : diffDays(rd, String(line.date).slice(0, 10)) <= 0 && diffDays(rd, String(line.date).slice(0, 10)) >= -5
+
 // O mesmo recibo postado duas vezes (duas fotos, dois grupos) é UMA compra.
 const receiptKey = (s: Scan) => [norm(s.store), s.receipt_date, s.receipt_time || '', cents(s.charged), cents(s.cash_refund)].join('|')
 
@@ -298,7 +301,7 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
     if (!ls.length && s.receipt_date) {
       const { data: done } = await db.from('bank_transactions').select('id, date, amount, name, merchant, matched_table, matched_note, authorized_date:raw->>authorized_date')
         .eq('match_status', 'MATCHED').eq('amount', num(s.charged)).gte('date', s.receipt_date).lte('date', new Date(Date.parse(s.receipt_date + 'T12:00:00Z') + 8 * 864e5).toISOString().slice(0, 10))
-      const already = (done || []).filter((l: any) => datesMatch(s, l) && storeMatches(s.store, l))
+      const already = (done || []).filter((l: any) => receiptDayFits(s.receipt_date!, l) && storeMatches(s.store, l))
       if (already.length) { await setScan(s.message_id, { status: 'TWIN', bank_id: String(already[0].id), reason: ('a linha da Regions já está casada (' + String(already[0].matched_note || already[0].matched_table || '') + ')').slice(0, 300) }); continue }
     }
     if (!ls.length) {
@@ -368,31 +371,46 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
     }
   }
 
-  // DEVOLUÇÃO EM DINHEIRO: não passa na Regions. Volta no MESMO destino da compra que o robô lançou na mesma loja (±3 dias).
+  // DEVOLUÇÃO EM DINHEIRO: não passa na Regions. Volta no MESMO destino da compra da mesma loja — lançada pelo robô (BOOKED)
+  // ou casada na mão (TWIN: o ponteiro da linha da Regions diz onde mora). Compra do MESMO dia ganha; ±3 dias se for a única.
   const cashOnes = live.filter(x => x.cash_refund && x.cash_refund > 0)
   if (cashOnes.length) {
-    const { data: booked } = await db.from('wa_receipt_scans').select('*').eq('status', 'BOOKED').gte('sent_at', HUNT_FLOOR)
+    const { data: prior } = await db.from('wa_receipt_scans').select('*').in('status', ['BOOKED', 'TWIN']).gte('sent_at', HUNT_FLOOR)
     for (const s of cashOnes) {
       if (Date.now() > deadline - 10_000) break
-      const origin = (booked || []).filter((b: any) => b.message_id !== s.message_id && storeWords(b.store).some(w => w.length >= 4 && storeWords(s.store).includes(w)) && b.receipt_date && s.receipt_date && Math.abs(diffDays(b.receipt_date, s.receipt_date)) <= 3)
+      const refund = num(s.cash_refund)
+      const sameStore = (prior || []).filter((o: any) => o.message_id !== s.message_id && storeWords(o.store).some(w => w.length >= 4 && storeWords(s.store).includes(w)) && o.receipt_date && s.receipt_date && Math.abs(diffDays(o.receipt_date, s.receipt_date)) <= 3)
+      const sameDay = sameStore.filter((o: any) => o.receipt_date === s.receipt_date)
+      const origin = sameDay.length === 1 ? sameDay : sameStore
+      const age = diffDays(dayNY(new Date()), s.receipt_date || dayNY(s.sent_at))
       if (origin.length !== 1) {
-        const age = diffDays(dayNY(new Date()), s.receipt_date || dayNY(s.sent_at))
-        if (age > 2 && s.status !== 'ASK') await ask(s, null, origin.length ? `devolução em dinheiro de ${num(s.cash_refund).toFixed(2)}: ${origin.length} compras da mesma loja — de qual?` : `devolução em dinheiro de ${num(s.cash_refund).toFixed(2)} na ${s.store || 'loja ?'}: a compra original não foi lançada pelo robô — lance o crédito (CASH, gaveta) na mão`)
+        if (age > 2 && s.status !== 'ASK') await ask(s, null, origin.length ? `devolução em dinheiro de ${refund.toFixed(2)}: ${origin.length} compras da mesma loja — de qual?` : `devolução em dinheiro de ${refund.toFixed(2)} na ${s.store || 'loja ?'}: a compra original não está no app pelo recibo do grupo — lance o crédito (CASH, gaveta) na mão`)
         continue
       }
       const o = origin[0]
       try {
+        // Onde a compra mora: o que o robô lançou, ou o registro que a linha da Regions aponta.
+        let table: string | null = o.booked_table, id: string | null = o.booked_id
+        if (o.status === 'TWIN' && o.bank_id) { const { data: bl } = await db.from('bank_transactions').select('matched_table, matched_id').eq('id', o.bank_id).maybeSingle(); table = bl?.matched_table || null; id = bl?.matched_id || null }
         let dest: Dest | null = null
-        if (o.booked_table === 'invoice_expenses') { const { data: r } = await db.from('invoice_expenses').select('invoice_id').eq('id', o.booked_id).maybeSingle(); if (r) dest = { table: 'invoice_expenses', invoice_id: r.invoice_id, invoice_code: '', ride: '' } }
-        else if (o.booked_table === 'inputs') dest = { table: 'inputs', category: 'CONSUMPTION' }
-        else if (o.booked_table === 'assets') dest = { table: 'assets' }
-        if (!dest) { await ask(s, null, 'devolução em dinheiro: a compra original sumiu do app'); continue }
-        if (dry) { sum.notes.push(`DRY CASH −${num(s.cash_refund)} ${s.store} → ${dest.table}`); sum.cash++; continue }
-        const row = rowFor(dest, s, -num(s.cash_refund), { cash: true, supplier: String(s.store || o.store || '').slice(0, 120), date: s.receipt_date || dayNY(s.sent_at) })
+        if (table === 'invoice_expenses' && id) { const { data: r } = await db.from('invoice_expenses').select('invoice_id').eq('id', id).maybeSingle(); if (r) dest = { table: 'invoice_expenses', invoice_id: r.invoice_id, invoice_code: '', ride: '' } }
+        else if (table === 'inputs' && id) { const { data: r } = await db.from('inputs').select('category').eq('id', id).maybeSingle(); if (r) dest = { table: 'inputs', category: (r.category || 'CONSUMPTION') as 'CONSUMPTION' } }
+        else if (table === 'assets' && id) dest = { table: 'assets' }
+        if (!dest) { if (s.status !== 'ASK') await ask(s, null, `devolução em dinheiro de ${refund.toFixed(2)}: a compra da ${o.store || 'loja'} está casada em «${table || '?'}», que não é carro, supplies nem ativo — lance na mão`); continue }
+        // NUNCA DUPLICA: crédito do mesmo valor já lançado (pela AutoBook, na mão) no mesmo destino, ±5 dias.
+        const lo = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') - 5 * 864e5).toISOString().slice(0, 10)
+        const hi = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') + 5 * 864e5).toISOString().slice(0, 10)
+        const twinQ = dest.table === 'invoice_expenses'
+          ? db.from('invoice_expenses').select('id').eq('invoice_id', dest.invoice_id).eq('price', -refund).gte('expense_date', lo).lte('expense_date', hi)
+          : (db.from(dest.table) as any).select('id').eq('unit_price', -refund).gte('purchase_date', lo).lte('purchase_date', hi)
+        const { data: twin } = await twinQ
+        if (twin && twin.length) { await setScan(s.message_id, { status: 'TWIN', booked_table: dest.table, booked_id: String(twin[0].id), reason: 'o crédito em dinheiro já está lançado no app' }); continue }
+        if (dry) { sum.notes.push(`DRY CASH −${refund} ${s.store} → ${dest.table} (compra ${String(o.message_id).slice(-12)})`); sum.cash++; continue }
+        const row = rowFor(dest, s, -refund, { cash: true, supplier: String(s.store || o.store || '').slice(0, 120), date: s.receipt_date || dayNY(s.sent_at) })
         const { data: created, error } = await (db.from(dest.table) as any).insert(row).select('id').single()
         if (error || !created) throw new Error(dest.table + ': ' + (error?.message || 'insert falhou'))
         await setScan(s.message_id, { status: 'CASH_BOOKED', booked_table: dest.table, booked_id: String(created.id), reason: 'crédito em CASH (gaveta) da compra ' + String(o.message_id).slice(-12) })
-        await db.from('data_fixes').insert({ check_key: 'receipt-hunt', table_name: dest.table, row_id: String(created.id), field: 'insert', old_value: null, new_value: String(-num(s.cash_refund)), label: ('DEVOLUÇÃO EM DINHEIRO · ' + (s.store || '') + ' · «' + String(s.caption || '').slice(0, 60) + '»').slice(0, 200) }).then(() => undefined, () => undefined)
+        await db.from('data_fixes').insert({ check_key: 'receipt-hunt', table_name: dest.table, row_id: String(created.id), field: 'insert', old_value: null, new_value: String(-refund), label: ('DEVOLUÇÃO EM DINHEIRO · ' + (s.store || '') + ' · «' + String(s.caption || '').slice(0, 60) + '»').slice(0, 200) }).then(() => undefined, () => undefined)
         sum.cash++
       } catch (e) { sum.errors.push('devolução ' + (s.store || '?') + ': ' + String((e as Error)?.message || e).slice(0, 160)) }
     }
