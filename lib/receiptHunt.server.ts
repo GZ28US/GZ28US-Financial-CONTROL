@@ -392,11 +392,17 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
       if (!capInv) { if (s.status !== 'ASK') await ask(s, null, `devolução em dinheiro de ${refund.toFixed(2)}: ${byCaption[0].project_name} não tem invoice aberta`); continue }
       try {
         const dest: Dest = { table: 'invoice_expenses', invoice_id: capInv.id, invoice_code: capInv.invoice_code, ride: String(byCaption[0].project_name || '') }
-        // NUNCA DUPLICA: crédito do mesmo valor já lançado (pela AutoBook, na mão) no mesmo destino, ±5 dias.
+        // NUNCA DUPLICA: crédito do mesmo valor já lançado (pela AutoBook, na mão) em QUALQUER mesa de gasto, ±5 dias — em 16/10
+        // as duas devoluções da Harbor Freight já estavam em assets, não na invoice do carro.
         const lo = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') - 5 * 864e5).toISOString().slice(0, 10)
         const hi = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') + 5 * 864e5).toISOString().slice(0, 10)
-        const { data: twin } = await db.from('invoice_expenses').select('id').eq('invoice_id', dest.invoice_id).eq('price', -refund).gte('expense_date', lo).lte('expense_date', hi)
-        if (twin && twin.length) { await setScan(s.message_id, { status: 'TWIN', booked_table: dest.table, booked_id: String(twin[0].id), reason: 'o crédito em dinheiro já está lançado no app' }); continue }
+        const [ie, ip, as] = await Promise.all([
+          db.from('invoice_expenses').select('id').eq('price', -refund).gte('expense_date', lo).lte('expense_date', hi).limit(1),
+          db.from('inputs').select('id').eq('unit_price', -refund).gte('purchase_date', lo).lte('purchase_date', hi).limit(1),
+          db.from('assets').select('id').eq('unit_price', -refund).gte('purchase_date', lo).lte('purchase_date', hi).limit(1),
+        ])
+        const twin = [['invoice_expenses', ie.data], ['inputs', ip.data], ['assets', as.data]].find(([, d]) => Array.isArray(d) && d.length) as [string, any[]] | undefined
+        if (twin) { await setScan(s.message_id, { status: 'TWIN', booked_table: twin[0], booked_id: String(twin[1][0].id), reason: 'o crédito em dinheiro já está lançado no app' }); continue }
         if (dry) { sum.notes.push(`DRY CASH −${refund} ${s.store} → ${dest.invoice_code} (${dest.ride})`); sum.cash++; continue }
         const row = rowFor(dest, s, -refund, { cash: true, supplier: String(s.store || '').slice(0, 120), date: s.receipt_date || dayNY(s.sent_at) })
         const { data: created, error } = await (db.from(dest.table) as any).insert(row).select('id').single()
