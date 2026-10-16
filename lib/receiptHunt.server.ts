@@ -60,7 +60,7 @@ const VISION_PROMPT = (today: string) => `You read ONE photo posted by the staff
  "date": "YYYY-MM-DD of the sale (today is ${today}; resolve a year-less date to the most recent past one)",
  "time": "HH:MM 24h or empty",
  "charged": number — the amount charged to a CARD on this receipt (the card tender line / total paid by card), positive; null if nothing was charged to a card,
- "cash_refund": number — money GIVEN BACK IN CASH to the customer on this receipt (a return or exchange paid back in cash), positive; null if none,
+ "cash_refund": number — the NET money GIVEN BACK IN CASH to the customer on this receipt, positive; for an EXCHANGE it is the returned value MINUS the new items bought on the same receipt (e.g. returned 69.99, new item 59.24 → 10.75); null if none,
  "card_refund": number — money refunded to a card, positive; null if none,
  "card_last4": "last 4 digits of the card printed on the receipt, or empty",
  "tender": "CARD" | "CASH" | "MIXED" | "UNKNOWN",
@@ -189,13 +189,26 @@ async function openInvoiceOf(db: any, rideId: string): Promise<{ id: string; inv
 
 // O carro da legenda: código (US.024), nome inteiro como palavra («WhiteSnake», «WorkTruck» sem o «GZ28US»), ou o MODELO
 // quando um só carro da casa tem aquele modelo («Viper» = WhiteSnake). Dois carros = nenhum (pergunta).
+function oneEdit(a: string, b: string): boolean {
+  if (a === b) return true
+  if (Math.abs(a.length - b.length) > 1) return false
+  let i = 0, j = 0, edits = 0
+  while (i < a.length && j < b.length) {
+    if (a[i] === b[j]) { i++; j++; continue }
+    if (++edits > 1) return false
+    if (a.length > b.length) i++; else if (b.length > a.length) j++; else { i++; j++ }
+  }
+  return edits + (a.length - i) + (b.length - j) <= 1
+}
 export function ridesInCaption(caption: string, rides: Ride[]): Ride[] {
   const cap = ' ' + norm(caption) + ' '
+  const capWords = norm(caption).split(' ')
   const hit = new Map<string, Ride>()
   for (const m of caption.matchAll(/\b((?:US|SC|WV|PO|GM)\.\d{3})\b/gi)) for (const r of rides) if (r.project_code.toUpperCase() === m[1].toUpperCase()) hit.set(r.id, r)
   for (const r of rides) {
     const variants = [norm(r.project_name), norm(String(r.project_name || '').replace(/^gz28us\s+/i, ''))].filter(v => v.length >= 4)
     if (variants.some(v => cap.includes(' ' + v + ' '))) hit.set(r.id, r)
+    else if (variants.some(v => !v.includes(' ') && v.length >= 7 && capWords.some(w => w.length >= 6 && oneEdit(w, v)))) hit.set(r.id, r)
   }
   if (!hit.size) {
     const byModel = new Map<string, Ride[]>()
@@ -282,6 +295,12 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
   for (const s of live.filter(x => !!x.charged)) {
     if (Date.now() > deadline - 15_000) { sum.notes.push('tempo esgotado — continua na próxima rodada'); break }
     const ls = lines.filter(l => fits(s, l))
+    if (!ls.length && s.receipt_date) {
+      const { data: done } = await db.from('bank_transactions').select('id, date, amount, name, merchant, matched_table, matched_note, authorized_date:raw->>authorized_date')
+        .eq('match_status', 'MATCHED').eq('amount', num(s.charged)).gte('date', s.receipt_date).lte('date', new Date(Date.parse(s.receipt_date + 'T12:00:00Z') + 8 * 864e5).toISOString().slice(0, 10))
+      const already = (done || []).filter((l: any) => datesMatch(s, l) && storeMatches(s.store, l))
+      if (already.length) { await setScan(s.message_id, { status: 'TWIN', bank_id: String(already[0].id), reason: ('a linha da Regions já está casada (' + String(already[0].matched_note || already[0].matched_table || '') + ')').slice(0, 300) }); continue }
+    }
     if (!ls.length) {
       // Recibo sem linha AINDA: a linha posta em poucos dias. Passada uma semana, a compra não passou na Regions (outro cartão?).
       const age = diffDays(dayNY(new Date()), s.receipt_date || dayNY(s.sent_at))
