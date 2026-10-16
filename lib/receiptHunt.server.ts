@@ -371,8 +371,9 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
     }
   }
 
-  // DEVOLUÇÃO EM DINHEIRO: não passa na Regions. Volta no MESMO destino da compra da mesma loja — lançada pelo robô (BOOKED)
-  // ou casada na mão (TWIN: o ponteiro da linha da Regions diz onde mora). Compra do MESMO dia ganha; ±3 dias se for a única.
+  // DEVOLUÇÃO EM DINHEIRO: não passa na Regions. Só lança sozinha quando a LEGENDA do recibo diz o carro (o destino é dela).
+  // Sem carro na legenda, a compra da mesma loja (robô ou casada na mão) é só DICA na pergunta: em 16/10 o reembolso de uma
+  // câmera caiu no destino de outra compra da Harbor Freight do mesmo dia — loja + dia não provam de qual compra é a devolução.
   const cashOnes = live.filter(x => x.cash_refund && x.cash_refund > 0)
   if (cashOnes.length) {
     const { data: prior } = await db.from('wa_receipt_scans').select('*').in('status', ['BOOKED', 'TWIN']).gte('sent_at', HUNT_FLOOR)
@@ -382,34 +383,25 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
       const sameStore = (prior || []).filter((o: any) => o.message_id !== s.message_id && storeWords(o.store).some(w => w.length >= 4 && storeWords(s.store).includes(w)) && o.receipt_date && s.receipt_date && Math.abs(diffDays(o.receipt_date, s.receipt_date)) <= 3)
       const sameDay = sameStore.filter((o: any) => o.receipt_date === s.receipt_date)
       const origin = sameDay.length === 1 ? sameDay : sameStore
-      const age = diffDays(dayNY(new Date()), s.receipt_date || dayNY(s.sent_at))
-      if (origin.length !== 1) {
-        if (age > 2 && s.status !== 'ASK') await ask(s, null, origin.length ? `devolução em dinheiro de ${refund.toFixed(2)}: ${origin.length} compras da mesma loja — de qual?` : `devolução em dinheiro de ${refund.toFixed(2)} na ${s.store || 'loja ?'}: a compra original não está no app pelo recibo do grupo — lance o crédito (CASH, gaveta) na mão`)
+      const byCaption = s.caption ? ridesInCaption(String(s.caption), rides) : []
+      if (byCaption.length !== 1) {
+        if (s.status !== 'ASK') await ask(s, null, `devolução em dinheiro de ${refund.toFixed(2)} na ${s.store || 'loja ?'} sem carro na legenda — lance o crédito (CASH, gaveta) no destino da compra devolvida${origin.length === 1 ? ' (provável: «' + String(origin[0].caption || origin[0].store || '').slice(0, 60) + '» de ' + origin[0].receipt_date + ')' : ''}`)
         continue
       }
-      const o = origin[0]
+      const capInv = await openInvoiceOf(db, byCaption[0].id)
+      if (!capInv) { if (s.status !== 'ASK') await ask(s, null, `devolução em dinheiro de ${refund.toFixed(2)}: ${byCaption[0].project_name} não tem invoice aberta`); continue }
       try {
-        // Onde a compra mora: o que o robô lançou, ou o registro que a linha da Regions aponta.
-        let table: string | null = o.booked_table, id: string | null = o.booked_id
-        if (o.status === 'TWIN' && o.bank_id) { const { data: bl } = await db.from('bank_transactions').select('matched_table, matched_id').eq('id', o.bank_id).maybeSingle(); table = bl?.matched_table || null; id = bl?.matched_id || null }
-        let dest: Dest | null = null
-        if (table === 'invoice_expenses' && id) { const { data: r } = await db.from('invoice_expenses').select('invoice_id').eq('id', id).maybeSingle(); if (r) dest = { table: 'invoice_expenses', invoice_id: r.invoice_id, invoice_code: '', ride: '' } }
-        else if (table === 'inputs' && id) { const { data: r } = await db.from('inputs').select('category').eq('id', id).maybeSingle(); if (r) dest = { table: 'inputs', category: (r.category || 'CONSUMPTION') as 'CONSUMPTION' } }
-        else if (table === 'assets' && id) dest = { table: 'assets' }
-        if (!dest) { if (s.status !== 'ASK') await ask(s, null, `devolução em dinheiro de ${refund.toFixed(2)}: a compra da ${o.store || 'loja'} está casada em «${table || '?'}», que não é carro, supplies nem ativo — lance na mão`); continue }
+        const dest: Dest = { table: 'invoice_expenses', invoice_id: capInv.id, invoice_code: capInv.invoice_code, ride: String(byCaption[0].project_name || '') }
         // NUNCA DUPLICA: crédito do mesmo valor já lançado (pela AutoBook, na mão) no mesmo destino, ±5 dias.
         const lo = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') - 5 * 864e5).toISOString().slice(0, 10)
         const hi = new Date(Date.parse((s.receipt_date || dayNY(s.sent_at)) + 'T12:00:00Z') + 5 * 864e5).toISOString().slice(0, 10)
-        const twinQ = dest.table === 'invoice_expenses'
-          ? db.from('invoice_expenses').select('id').eq('invoice_id', dest.invoice_id).eq('price', -refund).gte('expense_date', lo).lte('expense_date', hi)
-          : (db.from(dest.table) as any).select('id').eq('unit_price', -refund).gte('purchase_date', lo).lte('purchase_date', hi)
-        const { data: twin } = await twinQ
+        const { data: twin } = await db.from('invoice_expenses').select('id').eq('invoice_id', dest.invoice_id).eq('price', -refund).gte('expense_date', lo).lte('expense_date', hi)
         if (twin && twin.length) { await setScan(s.message_id, { status: 'TWIN', booked_table: dest.table, booked_id: String(twin[0].id), reason: 'o crédito em dinheiro já está lançado no app' }); continue }
-        if (dry) { sum.notes.push(`DRY CASH −${refund} ${s.store} → ${dest.table} (compra ${String(o.message_id).slice(-12)})`); sum.cash++; continue }
-        const row = rowFor(dest, s, -refund, { cash: true, supplier: String(s.store || o.store || '').slice(0, 120), date: s.receipt_date || dayNY(s.sent_at) })
+        if (dry) { sum.notes.push(`DRY CASH −${refund} ${s.store} → ${dest.invoice_code} (${dest.ride})`); sum.cash++; continue }
+        const row = rowFor(dest, s, -refund, { cash: true, supplier: String(s.store || '').slice(0, 120), date: s.receipt_date || dayNY(s.sent_at) })
         const { data: created, error } = await (db.from(dest.table) as any).insert(row).select('id').single()
         if (error || !created) throw new Error(dest.table + ': ' + (error?.message || 'insert falhou'))
-        await setScan(s.message_id, { status: 'CASH_BOOKED', booked_table: dest.table, booked_id: String(created.id), reason: 'crédito em CASH (gaveta) da compra ' + String(o.message_id).slice(-12) })
+        await setScan(s.message_id, { status: 'CASH_BOOKED', booked_table: dest.table, booked_id: String(created.id), reason: 'crédito em CASH (gaveta) no carro da legenda ' + dest.invoice_code })
         await db.from('data_fixes').insert({ check_key: 'receipt-hunt', table_name: dest.table, row_id: String(created.id), field: 'insert', old_value: null, new_value: String(-refund), label: ('DEVOLUÇÃO EM DINHEIRO · ' + (s.store || '') + ' · «' + String(s.caption || '').slice(0, 60) + '»').slice(0, 200) }).then(() => undefined, () => undefined)
         sum.cash++
       } catch (e) { sum.errors.push('devolução ' + (s.store || '?') + ': ' + String((e as Error)?.message || e).slice(0, 160)) }
