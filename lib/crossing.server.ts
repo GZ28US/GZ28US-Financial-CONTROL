@@ -449,6 +449,9 @@ export type Op =
   | { tipo: 'vincular_linha'; banco: Banco; tabela: string; id: string; mirror_src: string; elo: { campo: string; valor: string } | null; direcao: Direcao; rotulo: string }
   // guarda: o carimbo só pega se a linha ainda tem estes valores (o valor que o câmbio usou) — atômico.
   | { tipo: 'carimbo'; banco: Banco; tabela: string; id: string; campo: string; valor: number; regra: string; direcao: Direcao; rotulo: string; guarda: Record<string, string | number | null>; confere: Conferencia[] }
+  // REAJUSTE DO IMPOSTO DA NF (17/10/2026): o espelho que o MOTOR escreveu, sem baixa própria no BR, recebe o valor novo da
+  // linha do US — `de` é a guarda (a linha tem de estar como o plano leu), `para` o que entra. Só linha de imposto de NF.
+  | { tipo: 'reajustar'; banco: Banco; tabela: string; id: string; de: Record<string, string | number | null>; para: Record<string, string | number | null>; direcao: Direcao; rotulo: string }
   // confere: as linhas de origem (e o que mais a conta usou) relidas antes da primeira escrita da chave.
   | { tipo: 'criar_linha'; banco: Banco; tabela: string; mirror_src: string; campos: Row; usd: number; brl: number | null; direcao: Direcao; papel: 'despesa' | 'item' | 'renda'; rotulo: string; confere: Conferencia[] }
   | { tipo: 'pendente_criar'; banco: Banco; tabela: string; mirror_src: string; campos: Row; rotulo: string }
@@ -557,12 +560,12 @@ class Montador {
       else if (o.papel === 'item') { n.itens_usd = r2(n.itens_usd + o.usd); n.itens_brl = r2(n.itens_brl + (o.brl || 0)) }
     }
     if (o.tipo === 'vincular_linha') n.linhas_vincular++
-    if (o.tipo === 'carimbo') n.carimbos++
+    if (o.tipo === 'carimbo' || o.tipo === 'reajustar') n.carimbos++
     if (o.tipo === 'espelho_apagar') n.renda_sai_usd = r2(n.renda_sai_usd + o.de)
   }
   fechar(): ChavePlano {
     const c = this.c
-    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'espelho_apagar', 'criar_linha', 'anexar_comprovante', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
+    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'reajustar', 'espelho_apagar', 'criar_linha', 'anexar_comprovante', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
     const PAPEL = { despesa: 0, item: 1, renda: 2 } as const
     c.ops.sort((a, b) => ORDEM.indexOf(a.tipo) - ORDEM.indexOf(b.tipo) || (a.tipo === 'criar_linha' && b.tipo === 'criar_linha' ? PAPEL[a.papel] - PAPEL[b.papel] : 0))
     if (c.conflitos.length) { c.status = 'conflito'; c.ops = [] }
@@ -1480,15 +1483,43 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     cpTxt.pares.forEach(x => parteDe.set(x.s.f, x.t))
     const sobraP = cpTxt.restoT
     // A escrita pela metade, do lado das 085.N (ver planejarUS): despesa que o motor gravou sem a parte.
-    const faltaParte: { f: Fonte3; e: Row }[] = []
+    const faltaParte: { f: Fonte3; e: Row; reaj?: boolean }[] = []
     for (const p of pares) {
-      const Rv = usdBR(p.e, taxaInv), pt = parteDe.get(p.f)
-      const ok = perto(Rv, p.f.usd)
+      let Rv = usdBR(p.e, taxaInv)
+      const pt = parteDe.get(p.f)
+      let ok = perto(Rv, p.f.usd)
+      // IMPOSTO DA NF (Márcio, 17/10/2026: «é primordial que o US pague ao BR absolutamente cada centavo de imposto nos valores
+      // que estão registrados nas NFs… todos os valores de impostos devem ser uma row na expense da invoice, como paid from
+      // GZ28BR»). A linha de imposto de NF que o MOTOR escreveu (mirror_src) e que o BR ainda não baixou por conta própria
+      // (sem payment_date, ou só a data que o motor carimbou = o dia do US) é REAJUSTADA ao valor da nota: US$, R$ gravado,
+      // vencimento — despesa e item. Exceção à lei de 14/set («o gravado prevalece»), só para imposto de NF; o resto segue travado.
+      const ehImpostoNF = p.f.tabela === 'invoice_expenses' && /^NF-?e\s*\d+/i.test(String(p.f.order || '')) && /simples\s+nacional/i.test(String(p.f.supplier || ''))
+      const brlDiverge = p.f.brl != null && !perto(brlBR(p.e), p.f.brl, 0.05)
+      let reajustado = false
+      if (ehImpostoNF && p.como === 'mirror_src' && p.f.brl != null && (!ok || brlDiverge)) {
+        const pagoBR = ymd(p.e.payment_date)
+        if (pagoBR && pagoBR !== p.f.dia) m.conflito(`imposto da ${p.f.order}: a despesa do BR já tem baixa própria (${pagoBR}) — reajuste à mão, no app do BR`)
+        else {
+          const q = p.f.q || 1, due = ymd(p.f.linha.br_due_date)
+          const paraE: Record<string, string | number | null> = { price: r2(p.f.brl / q), amount_usd: r2(p.f.usd / q), tax: 0, extra: 0, ...(due ? { due_date: due, payment_date: null } : {}) }
+          const deE: Record<string, string | number | null> = { price: p.e.price ?? null, amount_usd: p.e.amount_usd ?? null, tax: p.e.tax ?? null, extra: p.e.extra ?? null, payment_date: p.e.payment_date ?? null }
+          m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_expenses', id: p.e.id, de: deE, para: paraE, direcao: 3, rotulo: `imposto ${p.f.order}: US$ ${r2(Rv ?? 0)} → ${p.f.usd} · R$ ${r2(brlBR(p.e))} → ${p.f.brl}` })
+          Object.assign(p.e, paraE)
+          if (pt && parseSrc(pt.mirror_src)) {
+            const paraP = { unit_price: r2(p.f.brl / q), unit_price_usd: r2(p.f.usd / q) }
+            m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_parts', id: pt.id, de: { unit_price: pt.unit_price ?? null, unit_price_usd: pt.unit_price_usd ?? null }, para: paraP, direcao: 3, rotulo: `item do imposto ${p.f.order}: US$ → ${p.f.usd} · R$ → ${p.f.brl}` })
+            Object.assign(pt, paraP)
+          }
+          Rv = usdBR(p.e, taxaInv); ok = perto(Rv, p.f.usd); reajustado = true
+        }
+      }
       m.c.pares.push({ direcao: 3, fonte_tabela: p.f.tabela, fonte_id: p.f.linha.id, alvo_tabela: 'invoice_expenses', alvo_id: p.e.id, alvo_invoice: bInv.get(p.e.invoice_id)?.invoice_code || '?', como: p.como, classe: ok ? 'ok' : 'divergente', usd_fonte: p.f.usd, usd_alvo: Rv == null ? null : r2(Rv), rotulo: p.f.item.slice(0, 80) })
       if (!ok) m.conflito(`valor divergente: ${p.f.item.slice(0, 40)} — US US$ ${p.f.usd} × BR US$ ${Rv == null ? 'sem amount_usd' : r2(Rv)}`)
       if (p.f.brl != null && !perto(brlBR(p.e), p.f.brl, 0.05)) m.aviso(`${p.f.item.slice(0, 40)}: R$ gravado no US ${p.f.brl} × R$ no BR ${r2(brlBR(p.e))} — os dois gravados, nada muda`)
       if (!pt) {
-        if (p.como === 'mirror_src' && ok) faltaParte.push({ f: p.f, e: p.e })
+        // reajustada nesta rodada: o item nasce com o valor novo, sem conferir a despesa (o banco ainda tem o velho até o reajuste,
+        // que vem antes na ordem; a guarda do próprio reajuste protege a linha).
+        if (p.como === 'mirror_src' && ok) faltaParte.push({ f: p.f, e: p.e, reaj: reajustado })
         else m.conflito(`a despesa ${limpa(p.e.item).slice(0, 40)} não tem item correspondente na ${bInv.get(p.e.invoice_id)?.invoice_code}`)
       }
       else if (!perto(num(pt.unit_price_usd) * (num(pt.quantity) || 1), p.f.usd) && !perto(linhaItem(pt), brlBR(p.e), 0.05)) m.conflito(`item divergente na ${bInv.get(p.e.invoice_id)?.invoice_code}: ${limpa(pt.description).slice(0, 40)} US$ ${r2(num(pt.unit_price_usd) * (num(pt.quantity) || 1))} / R$ ${r2(linhaItem(pt))} × despesa US$ ${p.f.usd} / R$ ${r2(brlBR(p.e))}`)
@@ -1515,7 +1546,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       const parte = { invoice_id: ALVO, description: x.f.item, unit_price: r2(lineBrl / x.f.q), unit_price_usd: r2(x.f.usd / x.f.q), quantity: x.f.q, payment_date: x.f.dia, position: ++posP, mirror_src: src }
       novasPartes.push(parte)
       m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_parts', mirror_src: src, direcao: 3, papel: 'item', usd: x.f.usd, brl: lineBrl, rotulo: `item ${x.f.item.slice(0, 50)} (a rodada anterior parou antes dele)`, campos: parte,
-        confere: [confere('US', x.f.tabela, x.f.linha, colsFonte3(x.f.tabela)), confere('BR', 'invoice_expenses', x.e, [...COLS.espelho])] })
+        confere: [confere('US', x.f.tabela, x.f.linha, colsFonte3(x.f.tabela)), ...(x.reaj ? [] : [confere('BR', 'invoice_expenses', x.e, [...COLS.espelho])])] })
     }
     for (const f of [...sobraF].sort((x, y) => x.dia.localeCompare(y.dia) || x.item.localeCompare(y.item))) {
       let price: number, tax: number, ext: number, regra: string
@@ -1707,6 +1738,7 @@ export function simular(foto: Foto, chaves: ChavePlano[]): Foto {
       else if (o.tipo === 'criar_linha' || o.tipo === 'pendente_criar') { const t = tab(o.banco, o.tabela); t.set([...t.get(), { ...o.campos, id: `novo:${o.mirror_src}`, invoice_id: alvoId }]) }
       else if (o.tipo === 'vincular_linha') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, mirror_src: o.mirror_src, ...(o.elo ? { [o.elo.campo]: o.elo.valor } : {}) } : r)) }
       else if (o.tipo === 'carimbo') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, [o.campo]: o.valor } : r)) }
+      else if (o.tipo === 'reajustar') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, ...o.para } : r)) }
       else if (o.tipo === 'pendente_atualizar') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, amount: o.para, mirror_src: o.mirror_src } : r)) }
       else if (o.tipo === 'pendente_apagar' || o.tipo === 'espelho_apagar') { const t = tab(o.banco, o.tabela); t.set(t.get().filter(r => r.id !== o.id)) }
     }
@@ -2083,6 +2115,15 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
           if (mudou) throw new ErroTravessia('conflict', `${o.tabela} ${o.id.slice(0, 8)} mudou antes do carimbo (${mudou[0]}: ${mudou[1] ?? 'vazio'} → ${(r as any)?.[mudou[0]] ?? 'vazio'}) — o câmbio não serve mais`)
           if (!perto(num((r as any)?.[o.campo]), o.valor, 0.005)) throw new ErroTravessia('conflict', `${o.tabela}.${o.campo} ${o.id.slice(0, 8)} já tem outro valor gravado — o gravado prevalece, o plano não serve mais`)
         } else { escritas++; await trilha(o.banco, o.tabela, o.id, o.campo, null, o.valor, `${o.rotulo} · ${o.regra}`) }
+      } else if (o.tipo === 'reajustar') {
+        // A GUARDA NO PRÓPRIO UPDATE, como no carimbo: a linha tem de estar como o plano leu; mudou = zero linhas = conflito.
+        let q: any = db.from(o.tabela).update(o.para).eq('id', o.id)
+        for (const [col, v] of Object.entries(o.de)) q = v == null ? q.is(col, null) : q.eq(col, v)
+        const { data, error } = await q.select('id')
+        if (error) throw falhaDe(`reajuste ${o.tabela} ${o.id}: ${error.message}`, error)
+        if (!data?.length) throw new ErroTravessia('conflict', `${o.tabela} ${o.id.slice(0, 8)} mudou antes do reajuste — o plano não serve mais`)
+        escritas++
+        for (const [col, v] of Object.entries(o.para)) if (!mesmoValor(o.de[col] ?? null, v)) await trilha(o.banco, o.tabela, o.id, col, o.de[col] ?? null, v, o.rotulo)
       } else if (o.tipo === 'criar_linha' || o.tipo === 'pendente_criar') {
         const { data: ja, error: eJa } = await db.from(o.tabela).select('id, invoice_id').eq('mirror_src', o.mirror_src).maybeSingle()
         if (eJa) throw new ErroTravessia('db', `conferir ${o.tabela} ${o.mirror_src}: ${eJa.message}`)
