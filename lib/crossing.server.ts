@@ -201,7 +201,10 @@ export function bancosDoServidor(): Bancos | { erro: string } {
 const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
   US: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_items', 'mirror_src'], ['invoice_incomes', 'mirror_src'], ['invoice_incomes', 'br_payment_id'], ['crossing_locks', 'mirror_key'],
     // fixed_cost_expenses.amount_brl (16/set/2026, MIGRATION_fixed_cost_amount_brl.sql): o R$ real do custo de marketing pago pelo BR.
-    ['fixed_cost_expenses', 'amount_brl']],
+    ['fixed_cost_expenses', 'amount_brl'],
+    // invoice_expenses.amount_brl + br_due_date (17/10/2026, MIGRATION_invoice_expenses_brl_due.sql): o R$ real da linha paga pelo BR
+    // (prevalece sobre a cotação) e o vencimento da despesa espelho que nasce A PAGAR no BR (o DAS do imposto da NF).
+    ['invoice_expenses', 'amount_brl'], ['invoice_expenses', 'br_due_date']],
   // expenses.amount_usd (14/set/2026): o US$ gravado da folha do BR paga pelo GZ28US — sem ela a folha do BR não atravessa.
   BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct'], ['expenses', 'amount_usd']],
 }
@@ -459,7 +462,7 @@ const confere = (banco: Banco, tabela: string, linha: Row, cols: string[]): Conf
 const COLS = {
   brDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'amount_usd', 'expense_date', 'payment_date', 'paid_from', 'source', 'us_markup_pct', 'cancel_status'],
   brPagamento: ['invoice_id', 'amount', 'amount_usd', 'paid_at', 'paid_to', 'payment_date'],
-  usDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
+  usDespesa: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status', 'amount_brl', 'br_due_date'],
   usRenda: ['invoice_id', 'amount', 'amount_brl', 'paid_at', 'paid_to', 'payment_date'],
   assets: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
   assets_expenses: ['amount', 'payment_date', 'paid_from', 'paid_to', 'source', 'cancel_status'],
@@ -1299,7 +1302,9 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     const dia = ymd(e.payment_date)
     if (!dia) { exclui('invoice_expenses', e, docUS(U), rot, usd, null, 'sem payment_date — ainda não é pagamento'); continue }
     const q = num(e.quantity) || 1
-    grupo(`US:invoice:${U.id}`, 'invoice', U.id).fontes.push({ tabela: 'invoice_expenses', linha: e, usd, brl: null, q, unitUsd: num(e.price), taxUsd: num(e.tax), extraUsd: num(e.extra), dia, item: rot, supplier: e.supplier || null, order: String(e.order_number || '').trim() || null, part: e.part_number || null })
+    // O R$ gravado na linha (amount_brl, 17/10/2026) prevalece, como na folha e no custo fixo.
+    const brlE = e.amount_brl == null || String(e.amount_brl) === '' ? null : r2(num(e.amount_brl))
+    grupo(`US:invoice:${U.id}`, 'invoice', U.id).fontes.push({ tabela: 'invoice_expenses', linha: e, usd, brl: brlE, q, unitUsd: num(e.price), taxUsd: num(e.tax), extraUsd: num(e.extra), dia, item: rot, supplier: e.supplier || null, order: String(e.order_number || '').trim() || null, part: e.part_number || null })
   }
   for (const p of foto.us.rendas) {
     if (empresa(p.paid_to) !== 'GZ28BR') continue
@@ -1507,7 +1512,8 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     }
     for (const f of [...sobraF].sort((x, y) => x.dia.localeCompare(y.dia) || x.item.localeCompare(y.item))) {
       let price: number, tax: number, ext: number, regra: string
-      if (f.brl != null) { price = r2(f.brl); tax = 0; ext = 0; regra = 'R$ gravado no US' }
+      // amount_brl é o TOTAL da linha: o unitário é ele ÷ quantidade (folha e custo fixo têm sempre quantidade 1).
+      if (f.brl != null) { price = r2(f.brl / f.q); tax = 0; ext = 0; regra = 'R$ gravado no US' }
       else {
         const rg = regraApp(cot, f.dia)
         if (!rg) { m.conflito(`sem cotação para ${f.dia} — ${f.item.slice(0, 40)} não tem R$`); continue }
@@ -1518,7 +1524,10 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       const src = srcDe(f)
       const conf3 = [confere('US', f.tabela, f.linha, colsFonte3(f.tabela))]
       m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_expenses', mirror_src: src, direcao: 3, papel: 'despesa', usd: lineUsd, brl: lineBrl, rotulo: `despesa ${f.item.slice(0, 50)} · ${regra}`, confere: conf3, campos: {
-        invoice_id: ALVO, item: f.item, supplier: f.supplier, price, amount_usd: r2(f.unitUsd), quantity: f.q, tax, extra: ext, payment_date: f.dia, expense_date: f.dia,
+        // DESPESA DO BR A PAGAR (17/10/2026): com br_due_date na linha do US (o DAS do imposto da NF), o espelho nasce SEM
+        // payment_date e com o vencimento — o US já pagou ao BR (o item abaixo entra na conta); o BR recolher ou não é outra conta.
+        invoice_id: ALVO, item: f.item, supplier: f.supplier, price, amount_usd: r2(f.unitUsd), quantity: f.q, tax, extra: ext,
+        ...(f.tabela === 'invoice_expenses' && ymd(f.linha.br_due_date) ? { payment_date: null, due_date: ymd(f.linha.br_due_date) } : { payment_date: f.dia }), expense_date: f.dia,
         source: 'GZ28BR', paid_from: 'GZ28BR', paid_to: 'GZ28BR', item_discount: 0, position: ++pos, order_number: f.order, part_number: f.part,
         us_expense_id: f.tabela === 'invoice_expenses' ? f.linha.id : null, mirror_src: src,
       } })
