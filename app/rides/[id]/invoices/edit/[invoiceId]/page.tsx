@@ -24,6 +24,7 @@ import { primeCarRegistry } from '@/lib/carRegistry'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { reservarReport } from '@/lib/reportMark'
 import { urlsDoRecibo, tiposDoRecibo, gravarRecibo, nomeDoArquivo, RECEIPT_KINDS, type ReceiptKind } from '@/lib/receiptKinds'
+import { US_CLIENT_GZ28BR } from '@/lib/crossingBalance'
 
 // mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
 // e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
@@ -397,6 +398,11 @@ export default function EditInvoicePage() {
   // Shopping invoice espelho no BR (cliente BR.085) desta invoice — lei 25/ago/2026:
   // toda despesa PAID FROM GZ28BR vira saída de caixa no app brasileiro.
   const [brInvoiceId, setBrInvoiceId] = useState<string | null>(null)
+  // 006.N (shopping invoice do GZ28BR, cliente US_CLIENT_GZ28BR): a renda dela pode ser um PEDAÇO DA REMESSA, e a troca do
+  // comprovante (lib/remittance.server.ts, 17/out/2026) só leva o arquivo tipado REGIONS_ENTRY — sem tipo, nunca atravessa.
+  const [isShoppingInvoice, setIsShoppingInvoice] = useState(false)
+  // O comprovante desta renda precisa de TIPO: renda que caiu no BR (BR_ENTRY) ou qualquer renda da 006.N (REGIONS_ENTRY).
+  const receiptTypeRequired = (paidTo: string) => paidTo === 'GZ28BR' || isShoppingInvoice
   // is_quote is the stored quote/invoice flag. A quote flips to an invoice on
   // SAVE once a valid HIRING DATE is present (handled in saveInvoice).
   const [isQuote, setIsQuote] = useState(false)
@@ -605,6 +611,7 @@ export default function EditInvoicePage() {
     // (next/router já inclui o basePath /ca — nunca prefixar BASE_PATH aqui.)
     if (data.origin === 'BUCKET') { router.replace('/adm/bank#a-atribuir'); return }
     setInvoiceCode(data.invoice_code || '')
+    setIsShoppingInvoice(data.client_id === US_CLIENT_GZ28BR)
     setBrInvoiceId((data as any).br_invoice_id || null)
     setIsQuote(!!data.is_quote)
     setHiringDate(data.hiring_date || '')
@@ -1205,8 +1212,8 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
-    if (valid.some(p => p.paid_to === 'GZ28BR' && p.receipt_url && !p.receipt_kind)) {
-      alert('PAID TO GZ28BR: choose the RECEIPT TYPE of the document (BR entry = the PIX/TED that landed in Brazil, provisional until the remittance reaches Regions).')
+    if (valid.some(p => receiptTypeRequired(p.paid_to) && p.receipt_url && !p.receipt_kind)) {
+      alert('Choose the RECEIPT TYPE of the document: BR entry = the PIX/TED that landed in Brazil (provisional until the remittance reaches Regions); Regions entry = the wire/Zelle that landed at Regions (on a 006.N, only this one crosses to the covered incomes).')
       return
     }
     const newRows: Payment[] = valid.map(p => {
@@ -2068,8 +2075,8 @@ export default function EditInvoicePage() {
     const payment = payments[editingPaymentIndex!]
     const urls = urlsDoRecibo(editingPayment.receipt_url)
     const kinds = kindsFor(urls, editingPayment.receipt_kinds)
-    if (editingPayment.paid_to === 'GZ28BR' && incomeUploads.some(u => urls.includes(u) && !kinds[u])) {
-      alert('PAID TO GZ28BR: choose the TYPE of each new receipt (BR entry = the PIX/TED that landed in Brazil, provisional until the remittance reaches Regions).')
+    if (receiptTypeRequired(editingPayment.paid_to) && incomeUploads.some(u => urls.includes(u) && !kinds[u])) {
+      alert('Choose the TYPE of each new receipt: BR entry = the PIX/TED that landed in Brazil (provisional until the remittance reaches Regions); Regions entry = the wire/Zelle that landed at Regions (on a 006.N, only this one crosses to the covered incomes).')
       return
     }
     // O comprovante só vai pro banco se mudou NESTA edição: o cron da remessa troca o BR_ENTRY pelo REGIONS_ENTRY sozinho,
@@ -3257,9 +3264,9 @@ export default function EditInvoicePage() {
                   )}
                   {p.receipt_url && (
                     <div>
-                      <label className={`block mb-1 text-sm ${p.paid_to === 'GZ28BR' && !p.receipt_kind ? 'text-amber-300 font-bold' : 'text-gray-400'}`}>RECEIPT TYPE{p.paid_to === 'GZ28BR' ? ' — required for GZ28BR' : ''}</label>
-                      <select value={p.receipt_kind || ''} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], receipt_kind: e.target.value as ReceiptKind | '' }; setScannedPayments(a) }} className={`${selectClass} w-full ${p.paid_to === 'GZ28BR' && !p.receipt_kind ? 'border-amber-500' : ''}`}>
-                        <option value="">{p.paid_to === 'GZ28BR' ? 'TYPE?' : '— no type —'}</option>
+                      <label className={`block mb-1 text-sm ${receiptTypeRequired(p.paid_to) && !p.receipt_kind ? 'text-amber-300 font-bold' : 'text-gray-400'}`}>RECEIPT TYPE{receiptTypeRequired(p.paid_to) ? ` — required ${isShoppingInvoice ? 'on a 006.N' : 'for GZ28BR'}` : ''}</label>
+                      <select value={p.receipt_kind || ''} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], receipt_kind: e.target.value as ReceiptKind | '' }; setScannedPayments(a) }} className={`${selectClass} w-full ${receiptTypeRequired(p.paid_to) && !p.receipt_kind ? 'border-amber-500' : ''}`}>
+                        <option value="">{receiptTypeRequired(p.paid_to) ? 'TYPE?' : '— no type —'}</option>
                         {RECEIPT_KINDS.map(k => <option key={k} value={k}>{RECEIPT_KIND_LABEL[k]}</option>)}
                       </select>
                     </div>
@@ -4455,7 +4462,7 @@ export default function EditInvoicePage() {
                               <div className="mt-2 space-y-1">
                                 {urlsDoRecibo(editingPayment.receipt_url).map((url, ui) => {
                                   const kind = editingPayment.receipt_kinds?.[url]
-                                  const ask = editingPayment.paid_to === 'GZ28BR' && incomeUploads.includes(url) && !kind
+                                  const ask = receiptTypeRequired(editingPayment.paid_to) && incomeUploads.includes(url) && !kind
                                   return (
                                     <div key={ui} className="flex items-center gap-2">
                                       <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={nomeDoArquivo(url)}>File {ui + 1}</a>
@@ -4471,6 +4478,7 @@ export default function EditInvoicePage() {
                               </div>
                             )}
                             {editingPayment.paid_to === 'GZ28BR' && <p className="mt-1 text-xs text-amber-300">PAID TO GZ28BR: tag the PIX/TED that landed in Brazil as BR entry — the app copies it to the BR mirror and swaps it for the Regions entry when the remittance arrives.</p>}
+                            {isShoppingInvoice && <p className="mt-1 text-xs text-amber-300">006.N: tag the wire/Zelle that landed at Regions as Regions entry — on a remittance piece only that file crosses to the covered incomes; untyped files never cross.</p>}
                           </div>
                           <div className="flex gap-3">
                             <button onClick={saveEditPayment} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
