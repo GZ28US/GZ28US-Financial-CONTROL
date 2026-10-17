@@ -226,6 +226,16 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   // Mas o QUE FALTA se mede de onde o carro ESTÁ: sem puxada, ele está na linha de base.
   const fromWhp = Math.max(bestWhp, baseWhp)
   const gapWhp = targetWhp != null ? targetWhp - fromWhp : null
+  // PASSADA DE DINAMÔMETRO DO BR, REGRA DO BR (Márcio, 17/10/2026: «if the pull is in a BR dyno, BR rules, if it was in an US
+  // dyno, US rules, it doesn't matter if the car is a BR ou US»). A conta é a mesma — roda corrigida contra meta corrigida ⇔
+  // roda crua contra meta ÷ fator —, mas o número que a CASA lê é o do dinamômetro do BR: SEM CORREÇÃO. dispCf = o fator da
+  // passada de onde o carro ESTÁ (1 quando é passada do US).
+  const fromPull = (() => {
+    const pick = (list: DynoPull[]) => list.reduce<DynoPull | null>((b, p) => ((Number(p.whp) || 0) > (Number(b?.whp) || 0) ? p : b), null)
+    return bestWhp >= baseWhp ? pick(pulls.filter((p) => !isBoneStock(p))) : pick(pulls.filter(isBoneStock))
+  })()
+  const dispCf = fromPull?.foreign && Number(fromPull.correction_factor) > 0 ? Number(fromPull.correction_factor) : 1
+  const rawTag = dispCf !== 1 ? ' raw · BR dyno' : ''
   const [scanning, setScanning] = useState(false)
   const [saving, setSaving] = useState(false)
   const [scannedFile, setScannedFile] = useState<File | null>(null)
@@ -699,7 +709,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   // LEI DA META (Márcio, 17/10/2026): «The CLIENT reports should use the final corrected engine power (BHP to US and CV to
   // BR) as target, everywhere. The internal targets all around should be whp … std for US.» A casa trabalha no número do
   // dinamômetro (WHP STD); o cliente só ouve o número FINAL — BHP no motor —, nunca WHP.
-  function targetLines(whpNow: number | null | undefined, audience: 'group' | 'client'): string[] {
+  // cf: o fator da passada quando ela é de dinamômetro do BR — a linha da casa sai em WHP SEM CORREÇÃO (regra do BR, 17/10/2026).
+  function targetLines(whpNow: number | null | undefined, audience: 'group' | 'client', cf = 1): string[] {
     if (targetBhp == null || targetWhp == null || whpNow == null) return []
     const diff = whpNow - targetWhp
     if (audience === 'client') {
@@ -707,10 +718,12 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       const bhpNow = whpNow / (1 - Number(lossInUse) / 100)
       return [`🎯 *TARGET REACHED:* ${targetBhp} BHP pack target — now *${bhpNow.toFixed(0)} BHP* (+${(bhpNow - targetBhp).toFixed(0)} BHP over)`]
     }
+    const tag = cf !== 1 ? ` raw (BR dyno, SAE ${cf})` : ''
     return diff >= 0
-      ? [`🎯 *TARGET MET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *+${diff.toFixed(1)} WHP over*`]
-      : [`🎯 *TARGET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *${(-diff).toFixed(1)} WHP to go*`]
+      ? [`🎯 *TARGET MET:* ${(targetWhp / cf).toFixed(1)} WHP${tag} (${targetBhp} BHP @ ${lossInUse}% loss) — *+${(diff / cf).toFixed(1)} WHP over*`]
+      : [`🎯 *TARGET:* ${(targetWhp / cf).toFixed(1)} WHP${tag} (${targetBhp} BHP @ ${lossInUse}% loss) — *${(-diff / cf).toFixed(1)} WHP to go*`]
   }
+  const cfOf = (p: DynoPull | null | undefined) => (p?.foreign && Number(p.correction_factor) > 0 ? Number(p.correction_factor) : 1)
   function pullReport(p: DynoPull, audience: 'group' | 'client' = 'group'): string {
     return [
       '🏁 *DYNO PULL*',
@@ -723,7 +736,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       p.bnm != null ? `*BTQ:* ${p.bnm.toFixed(2)} lb·ft` : null,
       p.pull_date ? `*Date:* ${fmtDate(p.pull_date)}` : null,
       p.dyno ? `*Dyno:* ${p.dyno}` : null,
-      ...(isBoneStock(p) ? [] : targetLines(p.whp, audience)),
+      ...(isBoneStock(p) ? [] : targetLines(p.whp, audience, cfOf(p))),
     ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
   }
 
@@ -976,7 +989,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       ].filter(Boolean) as string[]
       const footer = '\n\nSent by GZ28 Control App'
       // Group: target + to-go always. Client: target only once it is reached.
-      const caption = [...captionBase, ...targetLines(latest?.whp ?? null, 'group')].join('\n') + footer
+      const caption = [...captionBase, ...targetLines(latest?.whp ?? null, 'group', cfOf(latest))].join('\n') + footer
       const captionClient = [...captionBase, ...targetLines(latest?.whp ?? null, 'client')].join('\n') + footer
 
       const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
@@ -1113,9 +1126,9 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
             <div>
               <p className="text-xs font-bold text-fuchsia-300 tracking-wide">🎯 PACK TARGET · {packName}</p>
               <p className="text-3xl font-bold mt-1">
-                {targetWhp != null ? `${targetWhp.toFixed(1)} WHP` : '—'}
+                {targetWhp != null ? `${(targetWhp / dispCf).toFixed(1)} WHP${rawTag}` : '—'}
                 <span className="text-base font-normal text-gray-400 ml-3">
-                  = {targetBhp} BHP{Number.isFinite(lossInUse) ? ` @ ${lossInUse}% loss` : ''}
+                  = {targetBhp} BHP{Number.isFinite(lossInUse) ? ` @ ${lossInUse}% loss` : ''}{dispCf !== 1 ? ` · ÷ SAE ${dispCf}` : ''}
                 </span>
               </p>
             </div>
@@ -1124,19 +1137,19 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
                 <p className="text-amber-300 font-bold">Enter a LOSS % to see the WHP target</p>
               ) : gapWhp != null && gapWhp > 0 ? (
                 <>
-                  <p className="text-2xl font-bold text-amber-300">+{gapWhp.toFixed(1)} WHP to go</p>
+                  <p className="text-2xl font-bold text-amber-300">+{(gapWhp / dispCf).toFixed(1)} WHP{rawTag} to go</p>
                   <p className="text-sm text-gray-400">
                     {bestWhp > 0
-                      ? `best so far ${bestWhp.toFixed(1)} WHP · ${((gapWhp / bestWhp) * 100).toFixed(1)}% more`
+                      ? `best so far ${(bestWhp / dispCf).toFixed(1)} WHP${rawTag} · ${((gapWhp / bestWhp) * 100).toFixed(1)}% more`
                       : baseWhp > 0
-                        ? `no pulls yet — measured from the baseline, ${baseWhp.toFixed(1)} WHP`
+                        ? `no pulls yet — measured from the baseline, ${(baseWhp / dispCf).toFixed(1)} WHP${rawTag}`
                         : '— no pulls yet'}
                   </p>
                 </>
               ) : (
                 <>
                   <p className="text-2xl font-bold text-green-400">✅ TARGET MET</p>
-                  <p className="text-sm text-gray-400">best {bestWhp.toFixed(1)} WHP · {Math.abs(gapWhp || 0).toFixed(1)} WHP over</p>
+                  <p className="text-sm text-gray-400">best {(bestWhp / dispCf).toFixed(1)} WHP{rawTag} · {Math.abs((gapWhp || 0) / dispCf).toFixed(1)} WHP over</p>
                 </>
               )}
             </div>
@@ -1467,7 +1480,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // A META DO PACK na Build Sheet (ordem do usuário, 17/ago/2026): a sheet é o documento
   // do pacote, então ela declara o alvo. Os números saem EXATAMENTE da mesma conta da aba
   // DYNO — mesma perda, mesmo "melhor até agora" — pra as duas telas nunca discordarem.
-  const [dyno, setDyno] = useState<{ loss: number | null; best: number; baseWhp: number | null; baseBhp: number | null; baseName: string }>({ loss: null, best: 0, baseWhp: null, baseBhp: null, baseName: '' })
+  // cf (17/10/2026): o fator SAE quando o carro está numa passada de dinamômetro do BR — aí a régua da casa é a roda SEM
+  // CORREÇÃO (regra do BR) e best/baseWhp/meta chegam aqui já em roda crua. 1 = passada do US (STD).
+  const [dyno, setDyno] = useState<{ loss: number | null; best: number; baseWhp: number | null; baseBhp: number | null; baseName: string; cf: number }>({ loss: null, best: 0, baseWhp: null, baseBhp: null, baseName: '', cf: 1 })
 
   // BoneStock TUNE — picked here, uploaded to the car's Dropbox HB Tuning folder on SAVE.
   const [tuneFile, setTuneFile] = useState<File | null>(null)
@@ -1489,22 +1504,30 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const shown = mine.some(isBoneStock) || !bsCar ? mine : [bsCar, ...mine]
     // Perda própria do build manda (13/10/2026) — a mesma regra da aba DYNO.
     const { data: bRow } = await supabase.from('ride_builds').select('loss_pct').eq('ride_code', rideCode).eq('build_no', buildNo).maybeSingle()
+    // Só puxada DE VERDADE conta como "best pull" — a linha de base é o ponto de partida,
+    // não uma puxada do pacote (senão FROM e NOW saem iguais num carro que nunca rodou).
+    const bestPull = shown.filter((p) => !isBoneStock(p)).reduce<DynoPull | null>((b, p) => ((Number(p.whp) || 0) > (Number(b?.whp) || 0) ? p : b), null)
+    const bestC = Number(bestPull?.whp) || 0, baseC = bsCar?.whp != null ? Number(bsCar.whp) : null
+    // REGRA DO DINAMÔMETRO (17/10/2026): o carro está numa passada do BR → a casa lê roda SEM CORREÇÃO (÷ o fator da passada).
+    const fromP = bestC >= (baseC || 0) ? bestPull : bsCar
+    const cf = fromP?.foreign && Number(fromP.correction_factor) > 0 ? Number(fromP.correction_factor) : 1
     setDyno({
       loss: bRow?.loss_pct != null ? Number(bRow.loss_pct) : bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
-      // Só puxada DE VERDADE conta como "best pull" — a linha de base é o ponto de partida,
-      // não uma puxada do pacote (senão FROM e NOW saem iguais num carro que nunca rodou).
-      best: shown.reduce((m, p) => (isBoneStock(p) ? m : Math.max(m, Number(p.whp) || 0)), 0),
+      best: bestC / cf,
       // DE ONDE O CARRO SAIU: a linha de fábrica (BoneStock, Stock ou a prevista). Sem ela o
       // tuner não sabe quanto já ganhou — só quanto falta, que é meia história.
-      baseWhp: bsCar?.whp != null ? Number(bsCar.whp) : null,
+      baseWhp: baseC != null ? baseC / cf : null,
       baseBhp: bsCar?.bhp != null ? Number(bsCar.bhp) : null,
       baseName: bsCar?.pack || '',
+      cf,
     })
   }
 
   const tgtBhp = packTargetBhp(buildName)
   const tgtLoss = dyno.loss
-  const tgtWhp = tgtBhp != null && tgtLoss != null && tgtLoss > 0 && tgtLoss < 100 ? tgtBhp * (1 - tgtLoss / 100) : null
+  // A meta na roda vem na régua do dinamômetro de onde o carro está: STD (US) ou SEM CORREÇÃO (BR, ÷ fator) — dyno.cf.
+  const tgtWhp = tgtBhp != null && tgtLoss != null && tgtLoss > 0 && tgtLoss < 100 ? (tgtBhp * (1 - tgtLoss / 100)) / dyno.cf : null
+  const whpUnit = dyno.cf !== 1 ? 'WHP raw' : 'WHP'
   // O que falta se mede de onde o carro ESTÁ: sem puxada nenhuma, ele está na linha de base.
   const tgtGap = tgtWhp != null ? tgtWhp - Math.max(dyno.best, dyno.baseWhp || 0) : null
   // O que o carro JÁ ganhou sobre a linha de fábrica (só quando há puxada real acima dela).
@@ -1694,7 +1717,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const x = 8, w = pageW - 16, y = tableY, h = 30
       const met = tgtGap != null && tgtGap <= 0
       const forClient = audience === 'client'
-      const bhpNow = tgtLoss != null && dyno.best > 0 ? dyno.best / (1 - tgtLoss / 100) : null
+      const bhpNow = tgtLoss != null && dyno.best > 0 ? (dyno.best * dyno.cf) / (1 - tgtLoss / 100) : null
       doc.setFillColor(248, 248, 250); doc.setDrawColor(215, 215, 222); doc.setLineWidth(0.3)
       doc.roundedRect(x, y, w, h, 2, 2, 'FD')
       // faixa de cor na borda esquerda: verde quando a meta caiu, magenta enquanto falta
@@ -1706,7 +1729,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // O QUE FALTA, GRANDE, no canto superior direito da moldura — mesmo lugar e mesmo
       // peso que na tela: é o número que o tuner procura primeiro. Encolhe sozinho se o
       // texto crescer, pra nunca invadir o título à esquerda.
-      const headline = tgtGap == null ? '' : met ? 'TARGET MET' : forClient ? (bhpNow != null ? `+${Math.max(0, tgtBhp - bhpNow).toFixed(0)} BHP TO GO` : '') : `+${tgtGap.toFixed(1)} WHP TO GO`
+      const headline = tgtGap == null ? '' : met ? 'TARGET MET' : forClient ? (bhpNow != null ? `+${Math.max(0, tgtBhp - bhpNow).toFixed(0)} BHP TO GO` : '') : `+${tgtGap.toFixed(1)} ${whpUnit} TO GO`
       if (headline) {
         // Grande, mas com FOLGA: a 13pt a linha ocupa ~4,6mm e termina em y+7,5, enquanto o
         // rótulo da 3ª coluna só começa em y+11 — não se tocam mais (era 17pt em y+9,5).
@@ -1739,13 +1762,13 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           bhpNow != null && baseB != null ? `+${(bhpNow - baseB).toFixed(0)} BHP gained` : '', [25, 25, 30])
         stage(2, 'TARGET  ·  PACK', String(tgtBhp), 'BHP', 'engine power, corrected', '', met ? [22, 140, 60] : [160, 32, 160])
       } else {
-        stage(0, 'FROM  ·  BASELINE', dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—', 'WHP',
+        stage(0, 'FROM  ·  BASELINE', dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—', whpUnit,
           dyno.baseBhp != null ? `${Number(dyno.baseBhp).toFixed(0)} BHP` : 'no baseline yet',
           dyno.baseName || '', [120, 60, 170])
-        stage(1, 'NOW  ·  BEST PULL', dyno.best > 0 ? dyno.best.toFixed(1) : '—', 'WHP',
+        stage(1, 'NOW  ·  BEST PULL', dyno.best > 0 ? dyno.best.toFixed(1) : '—', whpUnit,
           bhpNow != null ? `${bhpNow.toFixed(0)} BHP` : 'no pulls yet',
-          gainWhp != null ? `+${gainWhp.toFixed(1)} WHP gained` : '', [25, 25, 30])
-        stage(2, 'TARGET  ·  PACK', tgtWhp != null ? tgtWhp.toFixed(1) : '—', 'WHP',
+          gainWhp != null ? `+${gainWhp.toFixed(1)} ${whpUnit} gained` : '', [25, 25, 30])
+        stage(2, 'TARGET  ·  PACK', tgtWhp != null ? tgtWhp.toFixed(1) : '—', whpUnit,
           `= ${tgtBhp} BHP${tgtLoss != null ? ` @ ${tgtLoss}% loss` : ''}`,
           '', // o que falta agora é a manchete no topo da moldura
           met ? [22, 140, 60] : [160, 32, 160])
@@ -1915,7 +1938,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
             <div className="flex items-center justify-between gap-4 flex-wrap mb-4">
               <p className="text-[11px] font-bold tracking-[0.2em] text-fuchsia-300">🎯 PACK TARGET · {buildName}</p>
               {tgtGap != null && (tgtGap > 0
-                ? <p className="text-2xl font-black text-amber-300 leading-none">+{tgtGap.toFixed(1)} <span className="text-base font-bold">WHP TO GO</span></p>
+                ? <p className="text-2xl font-black text-amber-300 leading-none">+{tgtGap.toFixed(1)} <span className="text-base font-bold">{whpUnit} TO GO</span></p>
                 : <p className="text-2xl font-black text-green-400 leading-none">✅ TARGET MET</p>)}
             </div>
 
@@ -1923,7 +1946,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
               {/* DE ONDE SAIU */}
               <div className="flex-1 min-w-[10rem]">
                 <p className="text-[10px] font-bold tracking-widest text-gray-500 mb-1">FROM · BASELINE</p>
-                <p className="text-3xl font-black leading-none text-purple-300">{dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—'}<span className="text-sm font-bold text-gray-500 ml-1">WHP</span></p>
+                <p className="text-3xl font-black leading-none text-purple-300">{dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—'}<span className="text-sm font-bold text-gray-500 ml-1">{whpUnit}</span></p>
                 <p className="text-sm text-gray-400 mt-1">
                   {dyno.baseBhp != null ? `${Number(dyno.baseBhp).toFixed(0)} BHP` : 'no baseline yet'}
                 </p>
@@ -1935,11 +1958,11 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
               {/* ONDE ESTÁ */}
               <div className="flex-1 min-w-[10rem]">
                 <p className="text-[10px] font-bold tracking-widest text-gray-500 mb-1">NOW · BEST PULL</p>
-                <p className="text-3xl font-black leading-none text-white">{dyno.best > 0 ? dyno.best.toFixed(1) : '—'}<span className="text-sm font-bold text-gray-500 ml-1">WHP</span></p>
+                <p className="text-3xl font-black leading-none text-white">{dyno.best > 0 ? dyno.best.toFixed(1) : '—'}<span className="text-sm font-bold text-gray-500 ml-1">{whpUnit}</span></p>
                 <p className="text-sm text-gray-400 mt-1">
-                  {tgtLoss != null && dyno.best > 0 ? `${(dyno.best / (1 - tgtLoss / 100)).toFixed(0)} BHP` : 'no pulls yet'}
+                  {tgtLoss != null && dyno.best > 0 ? `${((dyno.best * dyno.cf) / (1 - tgtLoss / 100)).toFixed(0)} BHP` : 'no pulls yet'}
                 </p>
-                {gainWhp != null && <p className="text-xs font-bold text-green-400 mt-1">▲ +{gainWhp.toFixed(1)} WHP gained</p>}
+                {gainWhp != null && <p className="text-xs font-bold text-green-400 mt-1">▲ +{gainWhp.toFixed(1)} {whpUnit} gained</p>}
               </div>
 
               <div className="self-center text-2xl text-gray-600 font-black">→</div>
@@ -1947,7 +1970,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
               {/* ONDE TEM QUE CHEGAR */}
               <div className="flex-1 min-w-[12rem]">
                 <p className="text-[10px] font-bold tracking-widest text-fuchsia-400 mb-1">TARGET · PACK</p>
-                <p className="text-3xl font-black leading-none text-fuchsia-200">{tgtWhp != null ? tgtWhp.toFixed(1) : '—'}<span className="text-sm font-bold text-fuchsia-400/70 ml-1">WHP</span></p>
+                <p className="text-3xl font-black leading-none text-fuchsia-200">{tgtWhp != null ? tgtWhp.toFixed(1) : '—'}<span className="text-sm font-bold text-fuchsia-400/70 ml-1">{whpUnit}</span></p>
                 <p className="text-sm text-gray-300 mt-1">
                   = <span className="font-bold text-white">{tgtBhp} BHP</span>
                   {tgtLoss != null ? <span className="text-gray-400"> @ {tgtLoss}% loss</span> : <span className="text-amber-300 font-bold"> — loss not set</span>}
