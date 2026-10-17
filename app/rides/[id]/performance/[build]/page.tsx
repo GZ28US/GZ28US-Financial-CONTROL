@@ -696,10 +696,17 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   // TARGET IN THE REPORTS (user order 21/aug/2026): the GZ28US group ALWAYS sees the
   // target and how much is still missing (or MET + the surplus); the CLIENT only hears
   // about the target once it is reached — then with the surplus.
+  // LEI DA META (Márcio, 17/10/2026): «The CLIENT reports should use the final corrected engine power (BHP to US and CV to
+  // BR) as target, everywhere. The internal targets all around should be whp … std for US.» A casa trabalha no número do
+  // dinamômetro (WHP STD); o cliente só ouve o número FINAL — BHP no motor —, nunca WHP.
   function targetLines(whpNow: number | null | undefined, audience: 'group' | 'client'): string[] {
     if (targetBhp == null || targetWhp == null || whpNow == null) return []
     const diff = whpNow - targetWhp
-    if (audience === 'client') return diff >= 0 ? [`🎯 *TARGET REACHED:* ${targetBhp} BHP pack target — *+${diff.toFixed(1)} WHP over*`] : []
+    if (audience === 'client') {
+      if (diff < 0 || lossInUse == null) return []
+      const bhpNow = whpNow / (1 - Number(lossInUse) / 100)
+      return [`🎯 *TARGET REACHED:* ${targetBhp} BHP pack target — now *${bhpNow.toFixed(0)} BHP* (+${(bhpNow - targetBhp).toFixed(0)} BHP over)`]
+    }
     return diff >= 0
       ? [`🎯 *TARGET MET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *+${diff.toFixed(1)} WHP over*`]
       : [`🎯 *TARGET:* ${targetWhp.toFixed(1)} WHP (${targetBhp} BHP @ ${lossInUse}% loss) — *${(-diff).toFixed(1)} WHP to go*`]
@@ -1652,7 +1659,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   }
 
   // Render the build sheet as a portrait A4 PDF (modded specs in bold).
-  async function buildSheetPdf(): Promise<Blob> {
+  // audience 'client' (LEI DA META, 17/10/2026): a moldura da meta sai em BHP — de onde saiu, onde está e a meta, no motor.
+  // A cópia da casa (grupo, Dropbox) segue em WHP STD, o número do dinamômetro.
+  async function buildSheetPdf(audience: 'shop' | 'client' = 'shop'): Promise<Blob> {
     const { jsPDF } = await import('jspdf')
     const autoTable = (await import('jspdf-autotable')).default
     const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
@@ -1684,6 +1693,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     if (tgtBhp != null) {
       const x = 8, w = pageW - 16, y = tableY, h = 30
       const met = tgtGap != null && tgtGap <= 0
+      const forClient = audience === 'client'
+      const bhpNow = tgtLoss != null && dyno.best > 0 ? dyno.best / (1 - tgtLoss / 100) : null
       doc.setFillColor(248, 248, 250); doc.setDrawColor(215, 215, 222); doc.setLineWidth(0.3)
       doc.roundedRect(x, y, w, h, 2, 2, 'FD')
       // faixa de cor na borda esquerda: verde quando a meta caiu, magenta enquanto falta
@@ -1695,7 +1706,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // O QUE FALTA, GRANDE, no canto superior direito da moldura — mesmo lugar e mesmo
       // peso que na tela: é o número que o tuner procura primeiro. Encolhe sozinho se o
       // texto crescer, pra nunca invadir o título à esquerda.
-      const headline = tgtGap == null ? '' : tgtGap > 0 ? `+${tgtGap.toFixed(1)} WHP TO GO` : 'TARGET MET'
+      const headline = tgtGap == null ? '' : met ? 'TARGET MET' : forClient ? (bhpNow != null ? `+${Math.max(0, tgtBhp - bhpNow).toFixed(0)} BHP TO GO` : '') : `+${tgtGap.toFixed(1)} WHP TO GO`
       if (headline) {
         // Grande, mas com FOLGA: a 13pt a linha ocupa ~4,6mm e termina em y+7,5, enquanto o
         // rótulo da 3ª coluna só começa em y+11 — não se tocam mais (era 17pt em y+9,5).
@@ -1721,17 +1732,25 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         doc.text(sub, cx, y + 22.5)
         if (note) { doc.setFont('helvetica', 'bold'); doc.setFontSize(6.5); doc.setTextColor(rgb[0], rgb[1], rgb[2]); doc.text(note, cx, y + 26.5) }
       }
-      stage(0, 'FROM  ·  BASELINE', dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—', 'WHP',
-        dyno.baseBhp != null ? `${Number(dyno.baseBhp).toFixed(0)} BHP` : 'no baseline yet',
-        dyno.baseName || '', [120, 60, 170])
-      stage(1, 'NOW  ·  BEST PULL', dyno.best > 0 ? dyno.best.toFixed(1) : '—', 'WHP',
-        tgtLoss != null && dyno.best > 0 ? `${(dyno.best / (1 - tgtLoss / 100)).toFixed(0)} BHP` : 'no pulls yet',
-        gainWhp != null ? `+${gainWhp.toFixed(1)} WHP gained` : '', [25, 25, 30])
-      stage(2, 'TARGET  ·  PACK', tgtWhp != null ? tgtWhp.toFixed(1) : '—', 'WHP',
-        `= ${tgtBhp} BHP${tgtLoss != null ? ` @ ${tgtLoss}% loss` : ''}`,
-        '', // o que falta agora é a manchete no topo da moldura
-        met ? [22, 140, 60] : [160, 32, 160])
-      // barra de progresso rente ao rodapé da caixa
+      if (forClient) {
+        const baseB = dyno.baseBhp != null ? Number(dyno.baseBhp) : null
+        stage(0, 'FROM  ·  BASELINE', baseB != null ? baseB.toFixed(0) : '—', 'BHP', baseB != null ? 'engine power, corrected' : 'no baseline yet', dyno.baseName || '', [120, 60, 170])
+        stage(1, 'NOW  ·  BEST PULL', bhpNow != null ? bhpNow.toFixed(0) : '—', 'BHP', bhpNow != null ? 'engine power, corrected' : 'no pulls yet',
+          bhpNow != null && baseB != null ? `+${(bhpNow - baseB).toFixed(0)} BHP gained` : '', [25, 25, 30])
+        stage(2, 'TARGET  ·  PACK', String(tgtBhp), 'BHP', 'engine power, corrected', '', met ? [22, 140, 60] : [160, 32, 160])
+      } else {
+        stage(0, 'FROM  ·  BASELINE', dyno.baseWhp != null ? dyno.baseWhp.toFixed(1) : '—', 'WHP',
+          dyno.baseBhp != null ? `${Number(dyno.baseBhp).toFixed(0)} BHP` : 'no baseline yet',
+          dyno.baseName || '', [120, 60, 170])
+        stage(1, 'NOW  ·  BEST PULL', dyno.best > 0 ? dyno.best.toFixed(1) : '—', 'WHP',
+          bhpNow != null ? `${bhpNow.toFixed(0)} BHP` : 'no pulls yet',
+          gainWhp != null ? `+${gainWhp.toFixed(1)} WHP gained` : '', [25, 25, 30])
+        stage(2, 'TARGET  ·  PACK', tgtWhp != null ? tgtWhp.toFixed(1) : '—', 'WHP',
+          `= ${tgtBhp} BHP${tgtLoss != null ? ` @ ${tgtLoss}% loss` : ''}`,
+          '', // o que falta agora é a manchete no topo da moldura
+          met ? [22, 140, 60] : [160, 32, 160])
+      }
+      // barra de progresso rente ao rodapé da caixa (a proporção é a mesma em WHP ou BHP: a perda é uma só)
       if (tgtWhp != null && tgtWhp > 0) {
         const bx = x + 5, bw2 = w - 10, by = y + h - 2.2, bh = 1.2
         doc.setFillColor(225, 225, 232); doc.rect(bx, by, bw2, bh, 'F')
@@ -1839,12 +1858,17 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) { alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return }
-      // Optionally send the client their own copy of the DataSheet.
+      // Optionally send the client their own copy of the DataSheet — a cópia DO CLIENTE, com a meta em BHP (LEI DA META 17/10/2026).
       if (alsoClient) {
         const to = client && (client.preferred_message_method || 'WhatsApp') === 'WhatsApp' ? toWaNumber(client.phone, client.country) : null
         if (!to) alert('Sent to the group. The client has no WhatsApp number on file, so the DataSheet was not sent to them.')
         else {
-          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: urlData.publicUrl, filename }) })
+          const cliBlob = await buildSheetPdf('client')
+          const cliPath = storagePath.replace(/\.pdf$/, '-client.pdf')
+          const { error: cliUpErr } = await supabase.storage.from('dyno-charts').upload(cliPath, cliBlob, { upsert: true, contentType: 'application/pdf' })
+          if (cliUpErr) { alert('Sent to the group, but the client PDF upload failed: ' + cliUpErr.message); return }
+          const cliUrl = supabase.storage.from('dyno-charts').getPublicUrl(cliPath).data.publicUrl
+          const cli = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ to, body: `🔧 *Your GZ28 Build Sheet*${rideTitle ? `\n${rideTitle}` : ''}`, documentUrl: cliUrl, filename }) })
           const cd = await cli.json().catch(() => ({}))
           if (!cd.ok) alert('Sent to the group, but the client send failed: ' + (cd?.detail?.error ? JSON.stringify(cd.detail.error) : (cd.error || `HTTP ${cli.status}`)))
         }
