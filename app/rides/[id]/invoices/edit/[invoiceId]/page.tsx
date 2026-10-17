@@ -23,6 +23,7 @@ import { supplierNameForRegistry } from '@/lib/supplierGuard'
 import { primeCarRegistry } from '@/lib/carRegistry'
 import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { reservarReport } from '@/lib/reportMark'
+import { urlsDoRecibo, tiposDoRecibo, gravarRecibo, nomeDoArquivo, RECEIPT_KINDS, type ReceiptKind } from '@/lib/receiptKinds'
 
 // mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
 // e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
@@ -38,7 +39,10 @@ type Service = { id?: string; description: string; price: string; payment_date?:
 // `invoice_incomes.paid_from` sai do banco na onda 9 do pacote
 // (MIGRATION_pacote_onda9_regra_dos_campos.sql) — tipo que carrega campo que não existe
 // convida alguém a gravá-lo de volta.
-type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; description: string; date_label: string; paid_at: string }
+// receipt_kinds (17/out/2026, lib/receiptKinds.ts): o TIPO de cada arquivo do receipt_url — NF, entrada no BR (PIX/TED, provisório
+// no US até a remessa chegar) ou entrada na Regions. A direção 4 da travessia copia o BR_ENTRY pro espelho do BR e o cron da remessa
+// troca pelo REGIONS_ENTRY; arquivo sem tipo nunca é mexido — por isso a tela deixa o humano dar o tipo.
+type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; receipt_kinds?: Record<string, ReceiptKind>; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -173,7 +177,24 @@ function groupStock(items: StockItem[]): StockGroup[] {
   return [...by.values()]
 }
 type PartsToStock = { description: string; quantity: string; unit_price: string; date: string }
-type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; description: string }
+type ScannedPayment = { amount: string; amount_brl?: string; source: string; paid_to: string; date: string; receipt_url: string; receipt_kind?: ReceiptKind | ''; description: string }
+
+const RECEIPT_KIND_LABEL: Record<ReceiptKind, string> = { NF: 'NF', BR_ENTRY: 'BR entry (provisional)', REGIONS_ENTRY: 'Regions entry' }
+const RECEIPT_KIND_CHIP: Record<ReceiptKind, string> = { NF: 'NF', BR_ENTRY: 'BR ENTRY', REGIONS_ENTRY: 'REGIONS' }
+// O receipt_url da renda volta no MESMO formato em que estava: um arquivo só em texto puro (como o SCAN grava) continua texto;
+// lista que já era array JSON (como os robôs gravam) continua array. Dois ou mais arquivos só cabem no array.
+function receiptUrlLike(original: string, urls: string[]): string {
+  if (urls.length === 0) return ''
+  if (urls.length === 1 && !String(original || '').trim().startsWith('[')) return urls[0]
+  return gravarRecibo(urls) || ''
+}
+// Só os tipos dos arquivos que ainda estão na renda — tirar o arquivo tira a chave.
+function kindsFor(urls: string[], kinds: Record<string, ReceiptKind> | undefined): Record<string, ReceiptKind> {
+  const out: Record<string, ReceiptKind> = {}
+  for (const u of urls) if (kinds?.[u]) out[u] = kinds[u]
+  return out
+}
+const kindsToDb = (k: Record<string, ReceiptKind>) => Object.keys(k).length ? k : null
 // rowIds: DB ids das linhas por trás do report — no fechamento do diálogo TODAS
 // são "mutadas" na rede de segurança (report-net), enviadas ou recusadas, para o
 // NÃO do usuário valer também no cron (incidente 31/jul/2026).
@@ -416,6 +437,9 @@ export default function EditInvoicePage() {
   const [paidInConfirm, setPaidInConfirm] = useState<{ kind: 'income' | 'expense'; index: number; date: string } | null>(null)
   const [scanningPayment, setScanningPayment] = useState(false)
   const [scannedPayments, setScannedPayments] = useState<ScannedPayment[] | null>(null)
+  // Arquivos subidos NESTA edição da renda — numa renda PAID TO GZ28BR o SAVE pede o tipo de cada um.
+  const [incomeUploads, setIncomeUploads] = useState<string[]>([])
+  const [uploadingIncomeReceipt, setUploadingIncomeReceipt] = useState(false)
   const [notes, setNotes] = useState<Note[]>([])
   const [newNote, setNewNote] = useState('')
   // DUTIES — tasks on this invoice, each matched to the STAFF member who will
@@ -620,6 +644,7 @@ export default function EditInvoicePage() {
       paid_to: p.paid_to || 'GZ28US',
       amount_brl: p.amount_brl != null ? String(p.amount_brl) : '',
       receipt_url: p.receipt_url || '',
+      receipt_kinds: tiposDoRecibo(p.receipt_kinds),
       description: p.description || '',
       date_label: p.date_label || '',
       paid_at: p.paid_at || '',
@@ -1180,11 +1205,16 @@ export default function EditInvoicePage() {
     if (!scannedPayments) return
     const valid = scannedPayments.filter(p => p.amount !== '' && !isNaN(parseFloat(p.amount)))
     if (valid.length === 0) { setScannedPayments(null); return }
+    if (valid.some(p => p.paid_to === 'GZ28BR' && p.receipt_url && !p.receipt_kind)) {
+      alert('PAID TO GZ28BR: choose the RECEIPT TYPE of the document (BR entry = the PIX/TED that landed in Brazil, provisional until the remittance reaches Regions).')
+      return
+    }
     const newRows: Payment[] = valid.map(p => {
       const paidAt = /^\d{4}-\d{2}-\d{2}$/.test(p.date)
         ? new Date(p.date + 'T12:00:00Z').toISOString()
         : new Date().toISOString()
-      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', description: p.description || '', date_label: '', paid_at: paidAt }
+      const receipt_kinds: Record<string, ReceiptKind> = p.receipt_url && p.receipt_kind ? { [p.receipt_url]: p.receipt_kind } : {}
+      return { amount: p.amount, amount_brl: p.amount_brl || '', payment_date: p.date, source: p.source, paid_to: p.paid_to || 'GZ28US', receipt_url: p.receipt_url || '', receipt_kinds, description: p.description || '', date_label: '', paid_at: paidAt }
     })
     setPayments(prev => sortByDateAsc([...prev, ...newRows], incomeOrderDate))
     setScannedPayments(null)
@@ -2032,18 +2062,58 @@ export default function EditInvoicePage() {
     if (payment.id) setRemovedPaymentIds(prev => [...prev, payment.id!])
     setPayments(payments.filter((_, i) => i !== index))
   }
-  function startEditPayment(index: number) { setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }) }
+  function startEditPayment(index: number) { setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }); setIncomeUploads([]) }
   async function saveEditPayment() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
+    const urls = urlsDoRecibo(editingPayment.receipt_url)
+    const kinds = kindsFor(urls, editingPayment.receipt_kinds)
+    if (editingPayment.paid_to === 'GZ28BR' && incomeUploads.some(u => urls.includes(u) && !kinds[u])) {
+      alert('PAID TO GZ28BR: choose the TYPE of each new receipt (BR entry = the PIX/TED that landed in Brazil, provisional until the remittance reaches Regions).')
+      return
+    }
+    // O comprovante só vai pro banco se mudou NESTA edição: o cron da remessa troca o BR_ENTRY pelo REGIONS_ENTRY sozinho,
+    // e uma tela aberta antes da troca não pode desfazê-la regravando o valor velho.
+    const receiptChanged = (editingPayment.receipt_url || '') !== (payment.receipt_url || '')
+      || JSON.stringify(kinds) !== JSON.stringify(kindsFor(urlsDoRecibo(payment.receipt_url), payment.receipt_kinds))
     if (payment.id) {
-      const { error } = await supabase.from('invoice_incomes').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null }).eq('id', payment.id)
+      const { error } = await supabase.from('invoice_incomes').update({ amount: parseFloat(editingPayment.amount), payment_date: isValidDate(editingPayment.payment_date) ? editingPayment.payment_date : null, source: editingPayment.source || null, paid_to: editingPayment.paid_to || 'GZ28US', amount_brl: editingPayment.paid_to === 'GZ28BR' ? (parseFloat(editingPayment.amount_brl || '') || null) : null, description: editingPayment.description || null, date_label: editingPayment.date_label || null, ...(receiptChanged ? { receipt_url: editingPayment.receipt_url || null, receipt_kinds: kindsToDb(kinds) } : {}) }).eq('id', payment.id)
       if (error) { alert(error.message); return }
     }
-    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
-    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' })
+    const updated = [...payments]; updated[editingPaymentIndex!] = { ...editingPayment, receipt_kinds: kinds, id: payment.id }; setPayments(sortByDateAsc(updated, incomeOrderDate))
+    setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }); setIncomeUploads([])
   }
-  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }) }
+  function cancelEditPayment() { setEditingPaymentIndex(null); setEditingPayment({ amount: '', amount_brl: '', payment_date: '', source: '', paid_to: 'GZ28US', receipt_url: '', description: '', date_label: '', paid_at: '' }); setIncomeUploads([]) }
+
+  // Comprovantes da renda em edição. Tirar o arquivo tira a chave dele do receipt_kinds; o arquivo fica no storage.
+  async function uploadReceiptsToEditingPayment(files: FileList) {
+    setUploadingIncomeReceipt(true)
+    const added: string[] = []
+    for (const file of Array.from(files)) {
+      const ext = file.name.split('.').pop()
+      const path = `${ownerId}/incomes/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`
+      const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+      if (error) { alert(error.message); continue }
+      const { data: urlData } = supabase.storage.from('expense-receipts').getPublicUrl(path)
+      added.push(urlData.publicUrl)
+    }
+    setEditingPayment(prev => ({ ...prev, receipt_url: receiptUrlLike(prev.receipt_url, [...urlsDoRecibo(prev.receipt_url), ...added]) }))
+    setIncomeUploads(prev => [...prev, ...added])
+    setUploadingIncomeReceipt(false)
+  }
+  function removeReceiptFromEditingPayment(urlIndex: number) {
+    setEditingPayment(prev => {
+      const urls = urlsDoRecibo(prev.receipt_url).filter((_, i) => i !== urlIndex)
+      return { ...prev, receipt_url: receiptUrlLike(prev.receipt_url, urls), receipt_kinds: kindsFor(urls, prev.receipt_kinds) }
+    })
+  }
+  function setEditingPaymentKind(url: string, kind: ReceiptKind | '') {
+    setEditingPayment(prev => {
+      const k = { ...(prev.receipt_kinds || {}) }
+      if (kind) k[url] = kind; else delete k[url]
+      return { ...prev, receipt_kinds: k }
+    })
+  }
 
   // REMIND — send the client a friendly reminder about a DELAYED (overdue,
   // still-unpaid) income. Delivered by the client's PREFERRED method — never
@@ -2248,7 +2318,7 @@ export default function EditInvoicePage() {
         amount: p.amount,
         source: p.source,
         date: /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : todayStr(),
-        receipt_url: p.receipt_url || '',
+        receipt_url: urlsDoRecibo(p.receipt_url)[0] || '',
         description: p.description || '',
         report: true,
         rowIds: p.id ? [p.id] : [],
@@ -2698,6 +2768,7 @@ export default function EditInvoicePage() {
         paid_to: p.paid_to || 'GZ28US',
         amount_brl: p.paid_to === 'GZ28BR' ? (parseFloat(p.amount_brl || '') || null) : null,
         receipt_url: p.receipt_url || null,
+        receipt_kinds: kindsToDb(kindsFor(urlsDoRecibo(p.receipt_url), p.receipt_kinds)),
         description: p.description || null,
         date_label: p.date_label || null,
         paid_at: p.paid_at || null,
@@ -2861,7 +2932,7 @@ export default function EditInvoicePage() {
         amount: p.amount,
         source: p.source,
         date: p.payment_date,
-        receipt_url: p.receipt_url || '',
+        receipt_url: urlsDoRecibo(p.receipt_url)[0] || '',
         description: p.description || '',
         report: true,
         rowIds: p.id ? [p.id] : [],
@@ -3182,6 +3253,15 @@ export default function EditInvoicePage() {
                         </div>
                       </div>
                       <p className="text-sm text-gray-400 pb-3 whitespace-nowrap">{brlRate(p.amount, p.amount_brl || '')}</p>
+                    </div>
+                  )}
+                  {p.receipt_url && (
+                    <div>
+                      <label className={`block mb-1 text-sm ${p.paid_to === 'GZ28BR' && !p.receipt_kind ? 'text-amber-300 font-bold' : 'text-gray-400'}`}>RECEIPT TYPE{p.paid_to === 'GZ28BR' ? ' — required for GZ28BR' : ''}</label>
+                      <select value={p.receipt_kind || ''} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], receipt_kind: e.target.value as ReceiptKind | '' }; setScannedPayments(a) }} className={`${selectClass} w-full ${p.paid_to === 'GZ28BR' && !p.receipt_kind ? 'border-amber-500' : ''}`}>
+                        <option value="">{p.paid_to === 'GZ28BR' ? 'TYPE?' : '— no type —'}</option>
+                        {RECEIPT_KINDS.map(k => <option key={k} value={k}>{RECEIPT_KIND_LABEL[k]}</option>)}
+                      </select>
                     </div>
                   )}
                   <DatePicker label="DATE" value={p.date} onChange={(v) => { const a = [...scannedPayments]; a[i] = { ...a[i], date: v }; setScannedPayments(a) }} />
@@ -4365,6 +4445,33 @@ export default function EditInvoicePage() {
                             <label className="block mb-1 text-sm text-gray-400">DESCRIPTION</label>
                             <input type="text" value={editingPayment.description} onChange={(e) => setEditingPayment({ ...editingPayment, description: e.target.value })} className={`${smallInputClass} w-full`} placeholder="Optional note" />
                           </div>
+                          <div>
+                            <label className="block mb-1 text-sm text-gray-400">RECEIPTS</label>
+                            <label className={`inline-flex items-center gap-2 bg-gray-600 hover:bg-gray-500 px-3 py-2 rounded-xl font-bold text-sm ${uploadingIncomeReceipt ? 'opacity-60 cursor-wait' : 'cursor-pointer'}`}>
+                              {uploadingIncomeReceipt ? 'UPLOADING…' : '📎 ADD FILES'}
+                              <input type="file" accept="image/*,.pdf" multiple className="hidden" disabled={uploadingIncomeReceipt} onChange={(e) => { if (e.target.files?.length) uploadReceiptsToEditingPayment(e.target.files); e.target.value = '' }} />
+                            </label>
+                            {urlsDoRecibo(editingPayment.receipt_url).length > 0 && (
+                              <div className="mt-2 space-y-1">
+                                {urlsDoRecibo(editingPayment.receipt_url).map((url, ui) => {
+                                  const kind = editingPayment.receipt_kinds?.[url]
+                                  const ask = editingPayment.paid_to === 'GZ28BR' && incomeUploads.includes(url) && !kind
+                                  return (
+                                    <div key={ui} className="flex items-center gap-2">
+                                      <a href={url} target="_blank" rel="noopener noreferrer" className="text-blue-400 hover:text-blue-300 text-sm flex-1 truncate" title={nomeDoArquivo(url)}>File {ui + 1}</a>
+                                      <select value={kind || ''} onChange={(e) => setEditingPaymentKind(url, e.target.value as ReceiptKind | '')}
+                                        className={`bg-gray-900 border rounded-xl px-2 py-1 text-sm ${ask ? 'border-amber-500 text-amber-300' : 'border-gray-600'}`}>
+                                        <option value="">{ask ? 'TYPE?' : '— no type —'}</option>
+                                        {RECEIPT_KINDS.map(k => <option key={k} value={k}>{RECEIPT_KIND_LABEL[k]}</option>)}
+                                      </select>
+                                      <button onClick={() => removeReceiptFromEditingPayment(ui)} className="text-red-400 hover:text-red-300 text-xs font-bold px-2">✕</button>
+                                    </div>
+                                  )
+                                })}
+                              </div>
+                            )}
+                            {editingPayment.paid_to === 'GZ28BR' && <p className="mt-1 text-xs text-amber-300">PAID TO GZ28BR: tag the PIX/TED that landed in Brazil as BR entry — the app copies it to the BR mirror and swaps it for the Regions entry when the remittance arrives.</p>}
+                          </div>
                           <div className="flex gap-3">
                             <button onClick={saveEditPayment} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                             <button onClick={cancelEditPayment} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -4379,7 +4486,11 @@ export default function EditInvoicePage() {
                             {payment.description && <p className="text-sm text-gray-500 truncate" title={payment.description}>{payment.description}</p>}
                           </div>
                           <div className="flex gap-2 shrink-0">
-                            {payment.receipt_url && <a href={payment.receipt_url} target="_blank" rel="noopener noreferrer" className="bg-purple-700 hover:bg-purple-600 px-3 py-1 rounded-xl font-bold text-sm">DOC</a>}
+                            {urlsDoRecibo(payment.receipt_url).map((url, ui, all) => {
+                              const k = payment.receipt_kinds?.[url]
+                              const color = k === 'BR_ENTRY' ? 'bg-amber-700 hover:bg-amber-600' : k === 'REGIONS_ENTRY' ? 'bg-emerald-700 hover:bg-emerald-600' : 'bg-purple-700 hover:bg-purple-600'
+                              return <a key={ui} href={url} target="_blank" rel="noopener noreferrer" title={k ? RECEIPT_KIND_LABEL[k] : 'Receipt with no type'} className={`${color} px-3 py-1 rounded-xl font-bold text-sm whitespace-nowrap`}>{k ? RECEIPT_KIND_CHIP[k] : all.length > 1 ? `DOC ${ui + 1}` : 'DOC'}</a>
+                            })}
                             {status === 'DELAYED' && (
                               <button
                                 onClick={() => remindClient(payment, index)}
