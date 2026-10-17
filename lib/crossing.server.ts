@@ -1501,7 +1501,9 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
         if (pagoBR && pagoBR !== p.f.dia) m.conflito(`imposto da ${p.f.order}: a despesa do BR já tem baixa própria (${pagoBR}) — reajuste à mão, no app do BR`)
         else {
           const q = p.f.q || 1, due = ymd(p.f.linha.br_due_date)
-          const paraE: Record<string, string | number | null> = { price: r2(p.f.brl / q), amount_usd: r2(p.f.usd / q), tax: 0, extra: 0, ...(due ? { due_date: due, payment_date: null } : {}) }
+          // NUNCA apaga o payment_date de um espelho que já existe: um DAS antigo pode ter sido recolhido pelo BR, e o reajuste
+          // o transformaria em conta vencida. O valor e o vencimento mudam; a baixa do DAS é do app do BR.
+          const paraE: Record<string, string | number | null> = { price: r2(p.f.brl / q), amount_usd: r2(p.f.usd / q), tax: 0, extra: 0, ...(due ? { due_date: due } : {}) }
           const deE: Record<string, string | number | null> = { price: p.e.price ?? null, amount_usd: p.e.amount_usd ?? null, tax: p.e.tax ?? null, extra: p.e.extra ?? null, payment_date: p.e.payment_date ?? null }
           m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_expenses', id: p.e.id, de: deE, para: paraE, direcao: 3, rotulo: `imposto ${p.f.order}: US$ ${r2(Rv ?? 0)} → ${p.f.usd} · R$ ${r2(brlBR(p.e))} → ${p.f.brl}` })
           Object.assign(p.e, paraE)
