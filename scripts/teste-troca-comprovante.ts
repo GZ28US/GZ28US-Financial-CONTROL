@@ -52,9 +52,9 @@ function cenario() {
     invoice_incomes: [
       { id: 'tornado', amount: 18515.99, paid_at: 'x', paid_to: 'GZ28BR', receipt_url: JSON.stringify([U('nfe-082.pdf'), U('pix-tornado.pdf')]), receipt_kinds: { [U('nfe-082.pdf')]: 'NF', [U('pix-tornado.pdf')]: 'BR_ENTRY' } },
       { id: 'cambio', amount: 4725.9, paid_at: 'x', paid_to: 'GZ28BR', receipt_url: JSON.stringify([U('pix-cambio.pdf')]), receipt_kinds: { [U('pix-cambio.pdf')]: 'BR_ENTRY' } },
-      { id: 'wire22', amount: 22000, paid_at: 'x', paid_to: 'GZ28US', receipt_url: JSON.stringify([U('wire-22000.pdf')]), receipt_kinds: null },
-      { id: 'zelle300', amount: 300, paid_at: 'x', paid_to: 'GZ28US', receipt_url: JSON.stringify([U('zelle-mara.png')]), receipt_kinds: null },
-      { id: 'wire7582', amount: 7582.39, paid_at: null, paid_to: 'GZ28US', receipt_url: null, receipt_kinds: null },
+      { id: 'wire22', amount: 22000, paid_at: 'x', paid_to: 'GZ28US', receipt_url: JSON.stringify([U('pagto-br-allan.pdf'), U('wire-22000.pdf')]), receipt_kinds: { [U('wire-22000.pdf')]: 'REGIONS_ENTRY' } as any },
+      { id: 'zelle300', amount: 300, paid_at: 'x', paid_to: 'GZ28US', receipt_url: JSON.stringify([U('zelle-mara.png')]), receipt_kinds: { [U('zelle-mara.png')]: 'REGIONS_ENTRY' } as any },
+      { id: 'wire7582', amount: 7582.39, paid_at: null, paid_to: 'GZ28US', receipt_url: null, receipt_kinds: null as any },
     ],
     bank_transactions: [
       { id: 'b1', match_status: 'MATCHED', matched_table: 'invoice_incomes', matched_id: 'wire22', matched_members: null },
@@ -76,6 +76,7 @@ async function main() {
   const r1 = await trocarComprovantes(c.b, { gravar: true })
   const t = c.us.invoice_incomes.find(r => r.id === 'tornado')!
   ok('parcial: Tornado = NF + PIX + wire + zelle', JSON.stringify(urls(t)) === JSON.stringify(['nfe-082.pdf', 'pix-tornado.pdf', 'wire-22000.pdf', 'zelle-mara.png']), urls(t))
+  ok('parcial: papel sem tipo do pedaço NÃO atravessa', !urls(t).includes('pagto-br-allan.pdf'), urls(t))
   ok('parcial: wire tipado REGIONS_ENTRY', (t.receipt_kinds as any)[U('wire-22000.pdf')] === 'REGIONS_ENTRY', t.receipt_kinds)
   ok('parcial: remessa aberta', !c.us.remittances[0].completed_at && !r1.concluidas.length, r1.concluidas)
   ok('parcial: trilha 2 por renda', c.us.data_fixes.length === 4, c.us.data_fixes.length)
@@ -86,6 +87,10 @@ async function main() {
   const w = c.us.invoice_incomes.find(r => r.id === 'wire7582')!
   w.paid_at = 'x'; w.receipt_url = JSON.stringify([U('wire-7582.pdf')])
   c.us.bank_transactions.push({ id: 'b3', match_status: 'MATCHED', matched_table: 'invoice_incomes', matched_id: 'wire7582', matched_members: null })
+  // 2a. chegou e casou, mas o comprovante ainda está sem tipo: o PIX FICA.
+  const r2a = await trocarComprovantes(c.b, { gravar: true })
+  ok('pedaço sem REGIONS_ENTRY: PIX fica', urls(t).includes('pix-tornado.pdf') && !c.us.remittances[0].completed_at, r2a.avisos)
+  w.receipt_kinds = { [U('wire-7582.pdf')]: 'REGIONS_ENTRY' }
   const r2 = await trocarComprovantes(c.b, { gravar: true })
   ok('inteira: Tornado = NF + 3 da Regions, PIX fora', JSON.stringify(urls(t)) === JSON.stringify(['nfe-082.pdf', 'wire-22000.pdf', 'zelle-mara.png', 'wire-7582.pdf']), urls(t))
   ok('inteira: NF continua NF', (t.receipt_kinds as any)[U('nfe-082.pdf')] === 'NF' && !(U('pix-tornado.pdf') in (t.receipt_kinds as any)), t.receipt_kinds)

@@ -76,20 +76,22 @@ export async function trocarComprovantes(b: { us: SupabaseClient; br: SupabaseCl
     const cobertas = meus.filter(e => e.role === 'COVERS').map(e => rendas.get(String(e.income_id))).filter(Boolean) as Row[]
     if (!cobertas.length) { out.avisos.push(`${rem.code}: nenhuma renda coberta (COVERS) ligada — nada a trocar`); continue }
     const chegou = (p: Row) => !!p.paid_at && naRegions.has(String(p.id))
-    // Os comprovantes dos pedaços que chegaram — tudo menos o que o próprio pedaço tipou como NF ou BR_ENTRY. Um por nome.
+    // Os comprovantes dos pedaços que chegaram: SÓ o que o pedaço tipou REGIONS_ENTRY (wire/Zelle de entrada na Regions). O pedaço
+    // pode carregar outro papel sem tipo (ex.: o pagamento do BR ao Allan nas 006.N) — sem tipo, nunca atravessa. Um por nome.
     const daRegions: string[] = []
     const vistos = new Set<string>()
+    const semRegions: Row[] = []
     for (const p of pedacos.filter(chegou)) {
-      const k = tiposDoRecibo(p.receipt_kinds)
-      const urls = urlsDoRecibo(p.receipt_url).filter(u => k[u] !== 'NF' && k[u] !== 'BR_ENTRY')
-      if (!urls.length) out.avisos.push(`${rem.code}: o pedaço ${String(p.id).slice(0, 8)} (US$ ${p.amount}) chegou à Regions SEM comprovante anexado`)
+      const urls = urlsDoRecibo(p.receipt_url).filter(u => tiposDoRecibo(p.receipt_kinds)[u] === 'REGIONS_ENTRY')
+      if (!urls.length) semRegions.push(p)
       for (const u of urls) { const n = nomeDoArquivo(u); if (!vistos.has(n)) { vistos.add(n); daRegions.push(u) } }
     }
+    for (const p of semRegions) out.avisos.push(`${rem.code}: o pedaço ${String(p.id).slice(0, 8)} (US$ ${p.amount}) chegou à Regions sem comprovante tipado REGIONS_ENTRY — o PIX fica até ele existir`)
     const somaPedacos = r2(pedacos.reduce((s, p) => s + Number(p.amount || 0), 0))
     const inteira = pedacos.length > 0 && pedacos.every(chegou) && Math.abs(somaPedacos - Number(rem.amount_usd)) < 0.01
     if (pedacos.length && pedacos.every(chegou) && !inteira) out.avisos.push(`${rem.code}: os pedaços somam US$ ${somaPedacos}, a remessa é US$ ${rem.amount_usd} — falta pedaço; o PIX fica provisório`)
-    if (inteira && !daRegions.length) out.avisos.push(`${rem.code}: chegou inteira mas nenhum pedaço tem comprovante — o PIX fica até o da Regions ser anexado`)
-    const trocaPix = inteira && daRegions.length > 0
+    // O PIX só sai quando CADA pedaço tem o seu comprovante da Regions («quando existirem os comprovantes do US»).
+    const trocaPix = inteira && semRegions.length === 0
     let tudoCerto = trocaPix
 
     for (const c of cobertas) {
