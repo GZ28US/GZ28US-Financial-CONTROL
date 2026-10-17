@@ -322,6 +322,7 @@ export async function fetchRecentGmail(accessToken: string, sinceIso: string, op
       walk(m.payload)
       out.push({
         id: String(m.id || ''),
+        folderId: Array.isArray(m.labelIds) ? m.labelIds.join(',') : '',
         subject: hv('subject'),
         from: fromRaw.replace(/<[^>]+>/, '').replace(/"/g, '').trim(),
         fromAddr: (fromRaw.match(/<([^>]+)>/)?.[1] || fromRaw).toLowerCase().trim(),

@@ -53,11 +53,12 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail,
+  listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail, maySweep, inboxFolderId, folderMap,
   extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg, type MailAuth,
 } from './streamMail.server'
 import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
 import { valorDespesa, valorItem } from './estorno'
+import { carregaIndiceCarros, carrosDaCarta, arquivaNoCarro, esqueceCachePastas, type CaixaCarro } from './carMail.server'
 
 // A lista de tabelas NÃO mora aqui: vem de ITEM_TABLES. Desde 03/set/2026 ela
 // inclui staff_expenses (lei do dono: compra pessoal entra no STREAM e tem rastreio),
@@ -198,6 +199,7 @@ export type MailToItemResult = {
   semLinha: string[]               // compra vista no e-mail e sem linha no app
   duvidas: string[]                // o que precisa de gente
   caixas: string[]
+  arquivados?: string[]            // cartas de pedido de carro guardadas na pasta do carro (17/10/2026)
 }
 
 // Toda escrita deixa rastro, igual ao robô do 17TRACK. Se data_fixes não
@@ -260,29 +262,52 @@ function pedidosNoTexto(texto: string, dicionario: Map<string, Linha[]>): string
 // sumiu é justamente onde a Amazon manda nota de embarque. Desde 04/set/2026 o
 // provedor vem da LINHA (mailProvider), não do número do slot: a 5ª caixa
 // (gz28speedshop@gmail.com) entrou sem tocar aqui.
-async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<{ nome: string; msgs: MailMsg[] }> {
+async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Promise<{ nome: string; msgs: MailMsg[]; carro: CaixaCarro | null }> {
   const nome = auth.account || 'slot' + auth.id
   const token = await freshAccessToken(db, auth)
-  if (!token) return { nome: nome + ':sem-token', msgs: [] }
-  const msgs = mailProvider(auth) === 'gmail' ? await fetchRecentGmail(token, desde) : await fetchRecentMessages(token, desde)
-  return { nome: nome + ':' + msgs.length, msgs }
+  if (!token) return { nome: nome + ':sem-token', msgs: [], carro: null }
+  const gmail = mailProvider(auth) === 'gmail'
+  const msgs = gmail ? await fetchRecentGmail(token, desde) : await fetchRecentMessages(token, desde)
+  // PASTA DO CARRO (17/10/2026): só caixa com auto_sweep ligado; no Graph, a inbox e «Purchases» são as origens de onde se tira.
+  let carro: CaixaCarro | null = null
+  if (maySweep(auth) && msgs.length) {
+    const inboxId = gmail ? null : await inboxFolderId(token)
+    const purchases = gmail ? undefined : (await folderMap(token)).get('purchases')
+    carro = { slot: auth.id || 0, token, gmail, inboxId, origensOk: new Set(purchases ? [purchases] : []) }
+  }
+  return { nome: nome + ':' + msgs.length, msgs, carro }
 }
 
 export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailToItemResult> {
-  const out: MailToItemResult = { varridas: 0, rastreios: [], entregas: [], estornos: [], semLinha: [], duvidas: [], caixas: [] }
+  const out: MailToItemResult = { varridas: 0, rastreios: [], entregas: [], estornos: [], semLinha: [], duvidas: [], caixas: [], arquivados: [] }
   const dicionario = await carregarLinhas(db)
   if (!dicionario.size) return out
+  esqueceCachePastas()
+  const indiceCarros = await carregaIndiceCarros(db, out.duvidas)
 
   const desde = new Date(Date.now() - dias * 86400e3).toISOString()
   const jaAvisado = new Set<string>()
 
   for (const auth of await listMailAuths(db)) {
-    let caixa: { nome: string; msgs: MailMsg[] }
+    let caixa: { nome: string; msgs: MailMsg[]; carro: CaixaCarro | null }
     try { caixa = await lerCaixa(db, auth, desde) } catch { out.caixas.push((auth.account || 'slot' + auth.id) + ':erro'); continue }
     out.caixas.push(caixa.nome)
 
     for (const msg of caixa.msgs) {
       const texto = `${msg.subject} ${msg.text}`
+      // ── 0. A CARTA DO PEDIDO DE CARRO VAI PARA A PASTA DO CARRO (Márcio, 17/10/2026) ──────────────────────────
+      // Toda carta do pedido — confirmação, PayPal, envio, entrega, conversa — e não só a do lançamento. O move troca o
+      // id da carta no Graph; nada abaixo usa o id, então guardar primeiro não muda o resto da rodada.
+      if (caixa.carro) {
+        const carros = carrosDaCarta(indiceCarros, msg)
+        if (carros.length) {
+          try {
+            const r = await arquivaNoCarro(caixa.carro, msg, carros)
+            if (r.feito) out.arquivados!.push(`Rides/${r.onde} ← ${msg.subject.slice(0, 55)}`)
+            else if (r.motivo && /sem pasta|sem label|falhou|recusou/.test(r.motivo)) out.duvidas.push(`pasta do carro: "${msg.subject.slice(0, 50)}" — ${r.motivo}`)
+          } catch (e) { out.duvidas.push('pasta do carro: ' + String((e as Error).message || e).slice(0, 120)) }
+        }
+      }
       const pedidos = pedidosNoTexto(texto, dicionario)
 
       // ── 4. COMPRA SEM LINHA: só quando o e-mail não casou com nada ────────
