@@ -18,6 +18,9 @@ type Duty = {
   description: string
   done: boolean
   priority: string
+  // BLOQUEIO (17/10/2026): STANDBY esperando peça chegar / outra duty fechar — o robô libera sozinho (lib/dutyRelease.server).
+  blockedLabel: string | null
+  releaseIssue: string | null
   invoice_id: string
   invoiceCode: string
   carLabel: string
@@ -175,6 +178,14 @@ export default function StaffDutiesPage() {
         description: d.description || '',
         done: !!d.done,
         priority: String(d.priority || '1'),
+        blockedLabel: (() => {
+          const ne = Array.isArray(d.blocked_by_expenses) ? d.blocked_by_expenses.length : 0, nd = Array.isArray(d.blocked_by_duties) ? d.blocked_by_duties.length : 0
+          // STANDBY à mão (peça ainda sem linha no app): só a frase do porquê — o robô não tem o que vigiar.
+          if (!ne && !nd) return d.blocked_reason && !d.done ? `⏸ waiting: ${d.blocked_reason}` : null
+          const parts = [ne ? `${ne} part${ne > 1 ? 's' : ''} to arrive` : '', nd ? `${nd} dut${nd > 1 ? 'ies' : 'y'} to finish` : ''].filter(Boolean).join(' + ')
+          return `🔒 waiting: ${parts}${d.release_priority ? ` → releases to P${d.release_priority}` : ''}${d.blocked_reason ? ` · ${d.blocked_reason}` : ''}`
+        })(),
+        releaseIssue: d.release_issue || null,
         invoice_id: d.invoice_id,
         invoiceCode: inv?.invoice_code || '—',
         carLabel,
@@ -505,6 +516,8 @@ export default function StaffDutiesPage() {
                           <p className={`text-base font-bold truncate ${d.done ? 'text-green-400 line-through' : dutyTextColor(d.priority)}`} title={d.description}>{d.description}</p>
                           {d.estimated_seconds ? <span className="px-2 py-0.5 rounded-full text-xs font-bold shrink-0 bg-gray-700 text-gray-200" title="Estimated time">⏱ {fmtDutyEst(d.estimated_seconds)}</span> : null}
                         </div>
+                        {!d.done && d.blockedLabel && <p className="text-xs text-sky-300 truncate" title={d.blockedLabel}>{d.blockedLabel}</p>}
+                        {!d.done && d.releaseIssue && <p className="text-xs text-amber-400 truncate" title={d.releaseIssue}>⚠ {d.releaseIssue}</p>}
                         <p className="text-sm text-gray-400">
                           <a href={`${BASE_PATH}${d.href}`} className="text-gray-500 hover:text-blue-400 hover:underline">{d.invoiceCode}</a>
                           {d.carLabel ? ` · ${d.carLabel}` : ''}

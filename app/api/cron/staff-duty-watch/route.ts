@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb } from '@/lib/plaid.server'
 import { evaluateDuties, sendNudges } from '@/lib/staffDutyWatch.server'
+import { releaseDuties } from '@/lib/dutyRelease.server'
 import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
 
 // DUTY WATCH (cron 30/30min): timer esquecido / duties simultâneas / virada de
@@ -17,7 +18,9 @@ export async function GET(req: NextRequest) {
     const db = bankDb()
     const incidents = await evaluateDuties(db)
     const sent = await sendNudges(db, incidents)
-    return NextResponse.json({ ok: true, at: new Date().toISOString(), incidents: incidents.length, ...sent })
+    // DUTY DESTRAVA SOZINHA (17/10/2026): STANDBY com bloqueio cuja peça chegou / duty-bloqueio fechou sobe para a prioridade dela.
+    const release = await releaseDuties(db).catch(e => ({ checked: 0, released: 0, notified: 0, issues: 0, errors: [String((e as Error).message || e).slice(0, 200)] }))
+    return NextResponse.json({ ok: true, at: new Date().toISOString(), incidents: incidents.length, ...sent, release })
   } catch (e) {
     return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 500 })
   }
