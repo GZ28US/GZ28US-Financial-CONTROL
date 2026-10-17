@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { cronOk, readKeyOk } from '@/lib/apiAuth.server'
-import { bancosDoServidor, ErroTravessia, sincronizar } from '@/lib/crossing.server'
+import { bancosDoServidor, ErroTravessia, sincronizar, travessiaPausada } from '@/lib/crossing.server'
+import { trocarComprovantes, type ResultadoTroca } from '@/lib/remittance.server'
 
 // ── O CRON DA TRAVESSIA US ⇄ BR (14/set/2026) ─────────────────────────────────
 // A lei sagrada de 13/set diz que TODO dinheiro que cruza as empresas vira shopping invoice no app do
@@ -24,6 +25,10 @@ import { bancosDoServidor, ErroTravessia, sincronizar } from '@/lib/crossing.ser
 //
 // TRAVESSIA_PAUSADA=1 no ambiente segura as escritas (o cron só conta o que faria).
 //
+// O COMPROVANTE PROVISÓRIO (17/out/2026, lib/remittance.server.ts): DEPOIS do motor (a direção 4 já copiou o PIX ao espelho
+// do BR), a troca do BR_ENTRY pelo comprovante da Regions nas rendas cobertas por uma remessa que chegou inteira. Erro nela
+// sai em `comprovantes.erro` e no log, sem derrubar a resposta da travessia.
+//
 // Portão: o cron da Vercel (Authorization: Bearer CRON_SECRET) ou a chave de leitura no header
 // x-read-key, para a rodada humana. As duas comparações falham fechadas.
 
@@ -42,6 +47,9 @@ export async function GET(req: NextRequest) {
     const gravadas = r.chaves.filter(c => c.escritas > 0)
     const erros = r.chaves.filter(c => c.resultado === 'erro')
     for (const e of erros) console.error(`[cron crossing] ${e.erro_tipo === 'banco' ? 'PAROU' : 'pulou'} em`, e.mirror_key, '—', e.motivo)
+    let comprovantes: ResultadoTroca | { erro: string }
+    try { comprovantes = await trocarComprovantes(bancos, { gravar: !travessiaPausada() }) }
+    catch (e) { comprovantes = { erro: e instanceof Error ? e.message : String(e) }; console.error('[cron crossing] comprovantes —', comprovantes.erro) }
     return NextResponse.json({
       ok: r.ok,
       pausada: r.pausada,
@@ -54,6 +62,7 @@ export async function GET(req: NextRequest) {
       parou_por: r.parou_por,
       parou_em: r.parou_em,
       chaves: r.chaves,
+      comprovantes,
     }, { status: r.ok ? 200 : 502 })
   } catch (e) {
     const kind = e instanceof ErroTravessia ? e.kind : 'db'

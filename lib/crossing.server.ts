@@ -58,6 +58,7 @@ import { createHash, randomUUID } from 'crypto'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
 import { foraDoDinheiro, soOQueConta } from '@/lib/estorno'
+import { gravarRecibo, nomeDoArquivo, urlsDoRecibo, urlsDoTipo } from '@/lib/receiptKinds'
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -204,7 +205,10 @@ const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
     ['fixed_cost_expenses', 'amount_brl'],
     // invoice_expenses.amount_brl + br_due_date (17/10/2026, MIGRATION_invoice_expenses_brl_due.sql): o R$ real da linha paga pelo BR
     // (prevalece sobre a cotação) e o vencimento da despesa espelho que nasce A PAGAR no BR (o DAS do imposto da NF).
-    ['invoice_expenses', 'amount_brl'], ['invoice_expenses', 'br_due_date']],
+    ['invoice_expenses', 'amount_brl'], ['invoice_expenses', 'br_due_date'],
+    // invoice_incomes.receipt_kinds (17/10/2026, MIGRATION_comprovante_entrada.sql): o tipo de cada comprovante — a direção 4 copia
+    // o BR_ENTRY (PIX/TED de entrada no BR) para o pagamento espelho na 085.N.
+    ['invoice_incomes', 'receipt_kinds']],
   // expenses.amount_usd (14/set/2026): o US$ gravado da folha do BR paga pelo GZ28US — sem ela a folha do BR não atravessa.
   BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct'], ['expenses', 'amount_usd']],
 }
@@ -262,7 +266,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.us, 'US', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, paid_from, paid_to, source, order_number, part_number, position, br_expense_id, created_at, cancel_status' + x('US.invoice_expenses')),
     // cancel_status do item: MIGRATION_invoice_items_cancel_status.sql (14/set) — roda ANTES deste deploy.
     lerTudo(b.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, base_cost, position, payment_date, cancel_status' + x('US.invoice_items')),
-    lerTudo(b.us, 'US', 'invoice_incomes', 'id, invoice_id, amount, amount_brl, payment_date, paid_at, paid_to, description, source' + x('US.invoice_incomes')),
+    lerTudo(b.us, 'US', 'invoice_incomes', 'id, invoice_id, amount, amount_brl, payment_date, paid_at, paid_to, description, source, receipt_url' + x('US.invoice_incomes')),
     lerTudo(b.us, 'US', 'invoice_services', 'id, invoice_id, price'),
     lerTudo(b.us, 'US', 'assets', 'id, description, quantity, unit_price, purchase_date, payment_date, supplier, source, paid_from, paid_to, order_number, cancel_status'),
     lerTudo(b.us, 'US', 'assets_expenses', 'id, good_id, description, amount, expense_date, payment_date, supplier, source, paid_from, paid_to, order_number, cancel_status'),
@@ -279,7 +283,7 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.br, 'BR', 'rides', 'id, project_code, project_name'),
     lerTudo(b.br, 'BR', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, amount_usd, payment_date, expense_date, due_date, paid_from, paid_to, source, order_number, part_number, position, us_expense_id, cancel_status' + x('BR.invoice_expenses')),
     lerTudo(b.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, unit_price_usd, position, payment_date' + x('BR.invoice_parts')),
-    lerTudo(b.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, paid_to, paid_from, description, source' + x('BR.invoice_payments')),
+    lerTudo(b.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, payment_date, paid_at, paid_to, paid_from, description, source, receipt_url' + x('BR.invoice_payments')),
     lerTudo(b.br, 'BR', 'invoice_services', 'id, invoice_id, price'),
     lerTudo(b.br, 'BR', 'expenses', 'id, season_id, staff_id, type, amount, expense_date, payment_date, paid, description, supplier, source, origin, paid_from, paid_to, order_number' + x('BR.expenses')),
     lerTudo(b.br, 'BR', 'seasons', 'id, season_code, staff_id, date_entry'),
@@ -452,6 +456,9 @@ export type Op =
   | { tipo: 'pendente_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; rotulo: string }
   // ESPELHO ÓRFÃO (01/10/2026): a renda do BR que originou esta renda do US não existe mais — a cópia sai junto.
   | { tipo: 'espelho_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; origem_id: string; rotulo: string }
+  // COMPROVANTE DE ENTRADA NO BR (17/10/2026): o BR_ENTRY da renda do US entra no receipt_url do pagamento espelho. Só ACRESCENTA
+  // (nunca tira arquivo do BR); `de` = o receipt_url lido no plano, guarda do update.
+  | { tipo: 'anexar_comprovante'; banco: Banco; tabela: string; id: string; de: string | null; urls: string[]; direcao: Direcao; rotulo: string }
 
 // Uma linha relida no banco antes de gravar: se qualquer campo mudou desde o plano, a chave não grava.
 export type Conferencia = { banco: Banco; tabela: string; id: string; campos: Record<string, string | number | null> }
@@ -555,7 +562,7 @@ class Montador {
   }
   fechar(): ChavePlano {
     const c = this.c
-    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'espelho_apagar', 'criar_linha', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
+    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'espelho_apagar', 'criar_linha', 'anexar_comprovante', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
     const PAPEL = { despesa: 0, item: 1, renda: 2 } as const
     c.ops.sort((a, b) => ORDEM.indexOf(a.tipo) - ORDEM.indexOf(b.tipo) || (a.tipo === 'criar_linha' && b.tipo === 'criar_linha' ? PAPEL[a.papel] - PAPEL[b.papel] : 0))
     if (c.conflitos.length) { c.status = 'conflito'; c.ops = [] }
@@ -1546,6 +1553,10 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       const gravado = s.amount_brl != null && String(s.amount_brl) !== ''
       let brl: number, regra = 'R$ gravado no US'
       const src = `US:invoice_incomes:${s.id}`
+      // COMPROVANTE DE ENTRADA DE CADA LADO (Márcio, 17/10/2026): «no espelho do BR os comprovantes anexados devem ser os de entrada
+      // nas contas do BR». O PIX/TED tipado BR_ENTRY na renda do US vai para o pagamento espelho — ao criar e nas rodadas seguintes.
+      // A NF (documento da venda) não vai. No US ele fica PROVISÓRIO até a remessa chegar à Regions (lib/remittance.server.ts).
+      const entradaBR = urlsDoTipo(s, 'BR_ENTRY')
       // O elo em TODOS os pagamentos da 085.N, com baixa ou sem (revisão 14/set/2026 — ver a direção 2).
       const eloQualquer = Pg.find(p => p.mirror_src === src || p.us_income_id === s.id)
       if (eloQualquer && !eloQualquer.paid_at) { m.conflito(`o pagamento espelhado de ${String(s.description || 'renda').slice(0, 30)} (${String(eloQualquer.id).slice(0, 8)}) está SEM baixa no BR, mas a renda no US está paga — alguém desmarcou? qual vale?`); continue }
@@ -1568,9 +1579,15 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
         const ok = ja.amount_usd != null ? perto(num(ja.amount_usd), usd) : perto(num(ja.amount), brl, 0.05)
         m.c.pares.push({ direcao: 4, fonte_tabela: 'invoice_incomes', fonte_id: s.id, alvo_tabela: 'invoice_payments', alvo_id: ja.id, alvo_invoice: bInv.get(ja.invoice_id)?.invoice_code || '?', como: ja.mirror_src === src ? 'mirror_src' : ja.us_income_id === s.id ? 'elo' : 'valor', classe: ok ? 'ok' : 'divergente', usd_fonte: usd, usd_alvo: ja.amount_usd == null ? null : num(ja.amount_usd), rotulo: String(s.description || '').slice(0, 80) })
         if (!ok) m.conflito(`renda espelhada com valor divergente: ${String(s.description || '').slice(0, 30)}`)
-        else if (ja.mirror_src !== src) m.op({ tipo: 'vincular_linha', banco: 'BR', tabela: 'invoice_payments', id: ja.id, mirror_src: src, elo: ja.us_income_id ? null : { campo: 'us_income_id', valor: s.id }, direcao: 4, rotulo: `renda ${String(s.description || '').slice(0, 50)}` })
+        else {
+          if (ja.mirror_src !== src) m.op({ tipo: 'vincular_linha', banco: 'BR', tabela: 'invoice_payments', id: ja.id, mirror_src: src, elo: ja.us_income_id ? null : { campo: 'us_income_id', valor: s.id }, direcao: 4, rotulo: `renda ${String(s.description || '').slice(0, 50)}` })
+          // O mesmo arquivo copiado à mão para o storage do BR tem o mesmo nome: nome repetido = já está lá.
+          const noBR = new Set(urlsDoRecibo(ja.receipt_url).map(nomeDoArquivo))
+          const faltam = entradaBR.filter(u => !noBR.has(nomeDoArquivo(u)))
+          if (faltam.length) m.op({ tipo: 'anexar_comprovante', banco: 'BR', tabela: 'invoice_payments', id: ja.id, de: ja.receipt_url ?? null, urls: faltam, direcao: 4, rotulo: `comprovante de entrada no BR de ${String(s.description || 'renda').slice(0, 40)} (${faltam.map(nomeDoArquivo).join(', ')})` })
+        }
       } else {
-        const campos = { invoice_id: ALVO, amount: brl, amount_usd: usd, payment_date: dia, paid_at: s.paid_at, source: null, paid_from: 'GZ28US', paid_to: 'GZ28BR', description: `Income ${U?.invoice_code || ''} — ${String(s.description || 'renda').trim()} (PAID TO GZ28BR)`, us_income_id: s.id, mirror_src: src }
+        const campos = { invoice_id: ALVO, amount: brl, amount_usd: usd, payment_date: dia, paid_at: s.paid_at, source: null, paid_from: 'GZ28US', paid_to: 'GZ28BR', description: `Income ${U?.invoice_code || ''} — ${String(s.description || 'renda').trim()} (PAID TO GZ28BR)`, us_income_id: s.id, mirror_src: src, receipt_url: gravarRecibo(entradaBR) }
         novosPag.push(campos)
         m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_payments', mirror_src: src, direcao: 4, papel: 'renda', usd, brl, rotulo: `renda ${String(s.description || '').slice(0, 50)} · ${regra}`, campos, confere: conf4 })
       }
@@ -1590,7 +1607,8 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       camposNovo: valor => ({ invoice_id: ALVO, amount: valor, paid_at: null, payment_date: latestAll || hojeEm('America/Sao_Paulo'), source: null, description: 'Pending balance', paid_from: 'GZ28US', paid_to: 'GZ28BR', mirror_src: `pendente:${key}` }),
     })
 
-    const temEscrita = m.c.ops.length > 0
+    // Anexar comprovante não é dinheiro: sozinho, não adota nem cria invoice.
+    const temEscrita = m.c.ops.some(o => o.tipo !== 'anexar_comprovante')
     if (alvo && alvo.mirror_key !== key && temEscrita) m.op({ tipo: 'vincular_invoice', banco: 'BR', id: alvo.id, codigo: alvo.invoice_code, como: m.c.alvo.como === 'texto' ? 'texto' : 'ponteiro', rotulo: `adota ${alvo.invoice_code}` })
     if (!alvo && temEscrita) {
       if (latestRate == null) { const d = latestAll || [...g.rendas.map(r => ymd(r.payment_date))].filter(Boolean).sort().pop() || null; latestRate = regraApp(cot, d)?.usdRate ?? null }
@@ -2073,6 +2091,15 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
         if (error || !ins) throw falhaDe(`criar ${o.tabela} (${o.mirror_src}): ${error?.message || 'sem linha'}`, error)
         escritas++
         await trilha(o.banco, o.tabela, ins.id, '(linha criada)', null, o.mirror_src, o.rotulo)
+      } else if (o.tipo === 'anexar_comprovante') {
+        // Guarda: o receipt_url tem de estar como o plano leu. Alguém anexou no meio = conflito; a próxima rodada refaz.
+        const para = gravarRecibo([...urlsDoRecibo(o.de), ...o.urls])
+        const q: any = db.from(o.tabela).update({ receipt_url: para }).eq('id', o.id)
+        const { data, error } = await (o.de == null ? q.is('receipt_url', null) : q.eq('receipt_url', o.de)).select('id')
+        if (error) throw falhaDe(`anexar comprovante ${o.tabela} ${o.id}: ${error.message}`, error)
+        if (data?.length !== 1) throw new ErroTravessia('conflict', `o comprovante de ${o.tabela} ${o.id.slice(0, 8)} mudou desde o plano — nada anexado; a próxima rodada refaz`)
+        escritas++
+        await trilha(o.banco, o.tabela, o.id, 'receipt_url', o.de, para, o.rotulo)
       } else if (o.tipo === 'pendente_atualizar') {
         const { data, error } = await soDoPendente(db.from(o.tabela).update({ amount: o.para, mirror_src: o.mirror_src }).eq('id', o.id).is('paid_at', null).eq('amount', o.de), o.mirror_src).select('id')
         if (error) throw falhaDe(`pendente ${o.id}: ${error.message}`, error)
