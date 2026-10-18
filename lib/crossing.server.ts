@@ -779,7 +779,7 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
     // ── a 006.N-alvo: mirror_key → ponteiro us_invoice_id → texto do SERVICE ──
     const porKey = us006.filter(i => i.mirror_key === key)
     const ptr = B.us_invoice_id ? uInv.get(B.us_invoice_id) : null
-    const porTexto = us006.filter(i => String(i.service || '').startsWith(`GZ28BR Invoice ${B.invoice_code}.`))
+    const porTexto = us006.filter(i => (!i.mirror_key || i.mirror_key === key) && String(i.service || '').startsWith(`GZ28BR Invoice ${B.invoice_code}.`))
     const candidatos = new Map<string, Row>()
     for (const i of [...porKey, ...(ptr ? [ptr] : []), ...porTexto]) candidatos.set(i.id, i)
     let alvo: Row | null = null
@@ -1129,7 +1129,7 @@ function planejarStaffBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
 
     // ── a 006.N-alvo: mirror_key → texto do SERVICE ──
     const porKey = us006.filter(i => i.mirror_key === key)
-    const porTexto = us006.filter(i => String(i.service || '').startsWith(textoService))
+    const porTexto = us006.filter(i => (!i.mirror_key || i.mirror_key === key) && String(i.service || '').startsWith(textoService))
     const candidatos = new Map<string, Row>()
     for (const i of [...porKey, ...porTexto]) candidatos.set(i.id, i)
     const cands = [...candidatos.values()]
