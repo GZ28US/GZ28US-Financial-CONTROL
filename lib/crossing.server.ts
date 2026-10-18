@@ -1930,6 +1930,14 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
           m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_payments', id: ja.id, de: { amount_usd: ja.amount_usd ?? null }, para: { amount_usd: r2(usd) }, direcao: 4, rotulo: `US$ do pagamento espelho ${String(s.description || 'renda').slice(0, 40)}: ${num(ja.amount_usd)} → ${r2(usd)} (o R$ ${r2(num(ja.amount))} fica)` })
           ja.amount_usd = r2(usd); ok = true
         }
+        // US$ VAZIO NO ESPELHO (18/10/2026 — o pagamento 41af0a85 da HellNessey veio da invoice BR do carro, sem amount_usd): ligado por
+        // mirror_src e com o R$ batendo, o US$ da renda do US é carimbado — só em campo vazio. Sem ele a dívida converteria o R$ pela
+        // taxa da invoice, e não pelo US$ que o US registrou.
+        if (ok && ja.mirror_src === src && ja.amount_usd == null) {
+          m.op({ tipo: 'carimbo', banco: 'BR', tabela: 'invoice_payments', id: ja.id, campo: 'amount_usd', valor: r2(usd), regra: `US$ da renda ${String(s.id).slice(0, 8)} do US`, direcao: 4,
+            rotulo: `US$ ${r2(usd)} do pagamento espelho ${String(s.description || 'renda').slice(0, 40)} (estava vazio)`, guarda: { amount: ja.amount ?? null }, confere: [] })
+          ja.amount_usd = r2(usd)
+        }
         m.c.pares.push({ direcao: 4, fonte_tabela: 'invoice_incomes', fonte_id: s.id, alvo_tabela: 'invoice_payments', alvo_id: ja.id, alvo_invoice: bInv.get(ja.invoice_id)?.invoice_code || '?', como: ja.mirror_src === src ? 'mirror_src' : ja.us_income_id === s.id ? 'elo' : 'valor', classe: ok ? 'ok' : 'divergente', usd_fonte: usd, usd_alvo: ja.amount_usd == null ? null : num(ja.amount_usd), rotulo: String(s.description || '').slice(0, 80) })
         if (!ok) m.conflito(`renda espelhada com valor divergente: ${String(s.description || '').slice(0, 30)}`)
         else {
