@@ -1458,7 +1458,10 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     // ── a 085.N-alvo ──
     const porKey = br085.filter(i => i.mirror_key === key)
     const ptr = U?.br_invoice_id ? bInv.get(U.br_invoice_id) : null
-    const porTexto = g.tipo === 'fixed' || g.tipo === 'supplies' ? [] : br085.filter(i => String(i.service || '').startsWith(prefixo))
+    // O TEXTO SÓ ACHA 085.N SEM CHAVE (18/10/2026). A renumeração das seasons de 27/set deixou o service das 085.N com o código
+    // VELHO («GZ28US Season US.006» na 085.23, que é da season que hoje é a US.007): pelo texto, cada season pegava a 085.N da
+    // vizinha e travava em «mais de uma 085.N para o mesmo documento». Quem tem mirror_key é da chave dela.
+    const porTexto = g.tipo === 'fixed' || g.tipo === 'supplies' ? [] : br085.filter(i => (!i.mirror_key || i.mirror_key === key) && String(i.service || '').startsWith(prefixo))
     if (porKey.length > 1) m.conflito(`${porKey.length} invoices do BR com a mesma mirror_key`)
     if (U?.br_invoice_id && !ptr) m.conflito(`ponteiro morto: br_invoice_id ${String(U.br_invoice_id).slice(0, 8)} aponta para uma 085.N que não existe — recriar só com ordem`)
     if (ptr && ptr.client_id !== BR_CLIENTE_GZ28US) m.conflito(`o ponteiro br_invoice_id aponta para ${ptr.invoice_code}, que não é do cliente GZ28 V8 SpeedShop USA LLC`)
@@ -1544,6 +1547,21 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
           }
           Rv = usdBR(p.e, taxaInv); ok = perto(Rv, p.f.usd); reajustado = true
         }
+      }
+      // US$ DO ESPELHO ANTIGO (18/10/2026): o motor de antes gravava no espelho o US$ = R$ ÷ cotação. Quando o R$ do espelho JÁ é o
+      // R$ gravado no US e só o US$ diverge, o US$ do espelho passa a ser o do US — o valor de face (Márcio, 17/10: «replique a vida
+      // real»). O dinheiro em R$ não muda, então a baixa do BR não importa aqui. Despesa e item.
+      if (!ok && !reajustado && p.como === 'mirror_src' && p.f.brl != null && perto(brlBR(p.e), p.f.brl, 0.05) && !num(p.e.tax) && !num(p.e.extra)) {
+        const q = p.f.q || 1
+        const paraE = { amount_usd: r2(p.f.usd / q) }
+        m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_expenses', id: p.e.id, de: { amount_usd: p.e.amount_usd ?? null }, para: paraE, direcao: 3, rotulo: `US$ do espelho ${p.f.item.slice(0, 40)}: ${r2(Rv ?? 0)} → ${p.f.usd} (o R$ ${r2(brlBR(p.e))} fica)` })
+        Object.assign(p.e, paraE)
+        if (pt && parseSrc(pt.mirror_src)) {
+          const paraP = { unit_price_usd: r2(p.f.usd / q) }
+          m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_parts', id: pt.id, de: { unit_price_usd: pt.unit_price_usd ?? null }, para: paraP, direcao: 3, rotulo: `US$ do item ${p.f.item.slice(0, 40)} → ${p.f.usd}` })
+          Object.assign(pt, paraP)
+        }
+        Rv = usdBR(p.e, taxaInv); ok = perto(Rv, p.f.usd); reajustado = true
       }
       m.c.pares.push({ direcao: 3, fonte_tabela: p.f.tabela, fonte_id: p.f.linha.id, alvo_tabela: 'invoice_expenses', alvo_id: p.e.id, alvo_invoice: bInv.get(p.e.invoice_id)?.invoice_code || '?', como: p.como, classe: ok ? 'ok' : 'divergente', usd_fonte: p.f.usd, usd_alvo: Rv == null ? null : r2(Rv), rotulo: p.f.item.slice(0, 80) })
       if (!ok) m.conflito(`valor divergente: ${p.f.item.slice(0, 40)} — US US$ ${p.f.usd} × BR US$ ${Rv == null ? 'sem amount_usd' : r2(Rv)}`)

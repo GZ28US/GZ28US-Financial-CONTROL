@@ -98,7 +98,7 @@ async function notifyReleased(db: SupabaseClient, errors: string[]): Promise<num
   let n = 0
   for (const d of pend as any[]) {
     // O que destravou mora na trilha da liberação.
-    const { data: fx } = await db.from('data_fixes').select('label').eq('check_key', 'duty-release').eq('row_id', String(d.id)).order('created_at', { ascending: false }).limit(1)
+    const { data: fx } = await db.from('data_fixes').select('label').eq('check_key', 'duty-release').eq('row_id', String(d.id)).order('fixed_at', { ascending: false }).limit(1)
     const got = String(fx?.[0]?.label || '').match(/· chegou: (.*?) · bloqueios eram/)?.[1] || ''
     const car = carOf.get(String(d.invoice_id)) || ''
     const desc = String(d.description || '').replace(/^\s*\d+[.)]\s*/, '')
