@@ -76,7 +76,8 @@ export function payerIsHouse(table: PnbTable, r: any): boolean {
   if (table === 'invoice_incomes') return up(r.paid_to) === HOUSE_PAYER
   if (up(r.paid_from) === 'GZ28BR' || up(r.paid_to) === 'GZ28BR') return false
   if (up(r.paid_from) === HOUSE_PAYER) return true
-  return !up(r.paid_from) && (PAYER_RULE[table] as { paidFrom: string }).paidFrom === 'house'
+  const mode = (PAYER_RULE[table] as { paidFrom: string }).paidFrom
+  return !up(r.paid_from) && (mode === 'house' || mode === 'house_choice')
 }
 
 // Já tem linha? Par casado (o sinal ?matched=1 expande pedido e misto) ou elo gravado no próprio registro.

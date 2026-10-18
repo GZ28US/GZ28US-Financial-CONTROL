@@ -209,7 +209,9 @@ const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
     ['invoice_expenses', 'amount_brl'], ['invoice_expenses', 'br_due_date'],
     // invoice_incomes.receipt_kinds (17/10/2026, MIGRATION_comprovante_entrada.sql): o tipo de cada comprovante — a direção 4 copia
     // o BR_ENTRY (PIX/TED de entrada no BR) para o pagamento espelho na 085.N.
-    ['invoice_incomes', 'receipt_kinds']],
+    ['invoice_incomes', 'receipt_kinds'],
+    // inputs/inventory.amount_brl (18/10/2026, MIGRATION_inputs_inventory_amount_brl.sql): o R$ real de supplies/estoque pagos pelo BR.
+    ['inputs', 'amount_brl'], ['inventory', 'amount_brl']],
   // expenses.amount_usd (14/set/2026): o US$ gravado da folha do BR paga pelo GZ28US — sem ela a folha do BR não atravessa.
   BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct'], ['expenses', 'amount_usd']],
 }
@@ -218,7 +220,7 @@ export type Foto = {
   lida_em: string
   faltando: { US: string[]; BR: string[] }
   // estornadas: as linhas com cancel_status que NÃO contam dinheiro (lib/estorno.ts) — os PRÓPRIOS objetos das listas acima.
-  us: { invoices: Row[]; rides: Row[]; despesas: Row[]; itens: Row[]; rendas: Row[]; servicos: Row[]; assets: Row[]; assetsExp: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; fixos: Row[]; fornecedoresFixos: Row[]; semOpcao: { tabela: string; linha: Row }[]; ponteirosBanco: Set<string>; estornadas: Set<Row> }
+  us: { invoices: Row[]; rides: Row[]; despesas: Row[]; itens: Row[]; rendas: Row[]; servicos: Row[]; assets: Row[]; assetsExp: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; fixos: Row[]; fornecedoresFixos: Row[]; semOpcao: { tabela: string; linha: Row }[]; supplies: { tabela: 'inputs' | 'inventory'; linha: Row }[]; ponteirosBanco: Set<string>; estornadas: Set<Row> }
   // staffExp / seasons / staff: a folha do BR (tabela `expenses`, sem cancel_status — não entra no estorno).
   br: { clientes: Row[]; invoices: Row[]; rides: Row[]; despesas: Row[]; partes: Row[]; pagamentos: Row[]; servicos: Row[]; staffExp: Row[]; seasons: Row[]; staff: Row[]; estornadas: Set<Row> }
 }
@@ -274,8 +276,8 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
     lerTudo(b.us, 'US', 'staff_expenses', 'id, season_id, type, amount, amount_brl, expense_date, payment_date, description, supplier, source, origin, paid_from, paid_to, order_number, cancel_status'),
     lerTudo(b.us, 'US', 'seasons', 'id, season_code, staff_id, date_entry'),
     lerTudo(b.us, 'US', 'staff', 'id, name'),
-    lerTudo(b.us, 'US', 'inputs', 'id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source', q => q.or(GZBR)),
-    lerTudo(b.us, 'US', 'inventory', 'id, description, unit_price, quantity, purchase_date, paid_from, paid_to, source', q => q.or(GZBR)),
+    lerTudo(b.us, 'US', 'inputs', 'id, description, category, supplier, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, order_number' + x('US.inputs'), q => q.or(GZBR)),
+    lerTudo(b.us, 'US', 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, order_number' + x('US.inventory'), q => q.or(GZBR)),
     lerTudo(b.us, 'US', 'fixed_cost_expenses', 'id, supplier_id, description, amount, payment_date, expense_date, paid_from, paid_to, source, order_number' + x('US.fixed_cost_expenses'), q => q.or(GZBR)),
     lerTudo(b.us, 'US', 'fixed_cost_suppliers', 'id, company, description, cost_type'),
     lerTudo(b.us, 'US', 'bank_transactions', 'id, match_status, matched_table, matched_id, matched_members', q => q.not('matched_table', 'is', null)),
@@ -305,15 +307,19 @@ export async function lerFoto(b: Bancos): Promise<Foto> {
   const estornadasBR = foraDoDinheiro(bExp, brlBR, porInvoice)
   // O custo fixo só tem opção GZ28BR quando o fornecedor é de MARKETING (lib/payerRule.ts · fixed_cost_marketing). Os outros
   // continuam «sem opção» e aparecem como pergunta, como antes.
-  const mkt = new Set(uFixSup.filter(s => String(s.cost_type || '').toUpperCase() === 'MARKETING').map(s => s.id))
-  const uFixos = uFixed.filter(l => mkt.has(l.supplier_id)), uFixOutros = uFixed.filter(l => !mkt.has(l.supplier_id))
+  // 18/10/2026 (Márcio: «tudo que está gasto pro GZ28US aí, é paid from GZ28BR, vai diminuir a dívida» · «Sim, liberar nas
+  // telas»): custo fixo de QUALQUER tipo atravessa (uma 085.N por fornecedor), e supplies + estoque COMPRADO também (uma 085.N
+  // por mês). Estoque DOADO não tem pagador: continua «sem opção».
+  const uFixos = uFixed
+  const comprado = (l: Row) => String(l.source_type || '').toUpperCase() !== 'DONATED'
   return {
     lida_em: new Date().toISOString(),
     faltando,
     us: {
       invoices: uInv, rides: uRides, despesas: uExp, itens: uItens, rendas: uRendas, servicos: uServ, assets: uAssets, assetsExp: uAssetsExp,
       staffExp: uStaffExp, seasons: uSeasons, staff: uStaff, fixos: uFixos, fornecedoresFixos: uFixSup, ponteirosBanco, estornadas: estornadasUS,
-      semOpcao: [...uInputs.map(l => ({ tabela: 'inputs', linha: l })), ...uInventory.map(l => ({ tabela: 'inventory', linha: l })), ...uFixOutros.map(l => ({ tabela: 'fixed_cost_expenses', linha: l }))],
+      semOpcao: uInventory.filter(l => !comprado(l)).map(l => ({ tabela: 'inventory', linha: l })),
+      supplies: [...uInputs.map(l => ({ tabela: 'inputs' as const, linha: l })), ...uInventory.filter(comprado).map(l => ({ tabela: 'inventory' as const, linha: l }))],
     },
     br: { clientes: bCli, invoices: bInv, rides: bRides, despesas: bExp, partes: bPartes, pagamentos: bPag, servicos: bServ, staffExp: bStaffExp, seasons: bSeasons, staff: bStaff, estornadas: estornadasBR },
   }
@@ -480,10 +486,13 @@ const COLS = {
   staff_expenses: ['season_id', 'amount', 'amount_brl', 'payment_date', 'expense_date', 'origin', 'paid_from', 'paid_to', 'source', 'cancel_status'],
   // custo fixo não tem cancel_status
   fixed_cost_expenses: ['supplier_id', 'amount', 'amount_brl', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source'],
+  // supplies/estoque pagos pelo BR (18/10/2026)
+  inputs: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source', 'amount_brl'],
+  inventory: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source', 'source_type', 'amount_brl'],
   espelho: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'mirror_src', 'cancel_status'],
   brStaff: ['season_id', 'amount', 'amount_usd', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source', 'origin'],
 } as const
-const colsFonte3 = (tabela: string): string[] => [...(tabela === 'invoice_expenses' ? COLS.usDespesa : tabela === 'assets' ? COLS.assets : tabela === 'assets_expenses' ? COLS.assets_expenses : tabela === 'fixed_cost_expenses' ? COLS.fixed_cost_expenses : COLS.staff_expenses)]
+const colsFonte3 = (tabela: string): string[] => [...(tabela === 'invoice_expenses' ? COLS.usDespesa : tabela === 'assets' ? COLS.assets : tabela === 'assets_expenses' ? COLS.assets_expenses : tabela === 'fixed_cost_expenses' ? COLS.fixed_cost_expenses : tabela === 'inputs' ? COLS.inputs : tabela === 'inventory' ? COLS.inventory : COLS.staff_expenses)]
 
 export type Par = { direcao: Direcao; fonte_tabela: string; fonte_id: string; alvo_tabela: string; alvo_id: string; alvo_invoice: string; como: 'mirror_src' | 'elo' | 'valor' | 'valor-b'; classe: 'ok' | 'b' | 'divergente'; usd_fonte: number | null; usd_alvo: number | null; rotulo: string }
 export type SemPar = { direcao: Direcao; lado: 'fonte' | 'alvo'; tabela: string; id: string; usd: number | null; rotulo: string; motivo: string }
@@ -492,7 +501,7 @@ export type ChavePlano = {
   mirror_key: string
   direcoes: Direcao[]
   banco_alvo: Banco
-  origem: { banco: Banco; tipo: 'invoice' | 'season' | 'assets' | 'fixed'; id: string; codigo: string; rotulo: string }
+  origem: { banco: Banco; tipo: 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies'; id: string; codigo: string; rotulo: string }
   alvo: { id: string | null; codigo: string | null; como: 'mirror_key' | 'ponteiro' | 'texto' | 'criar' | null }
   primeira_data: string | null
   status: 'criar' | 'atualizar' | 'nada' | 'conflito'
@@ -1275,7 +1284,7 @@ function planejarStaffBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
 }
 
 // ── DIREÇÕES 3 + 4 → BR 085.N ───────────────────────────────────────────────
-type Fonte3 = { tabela: 'invoice_expenses' | 'assets' | 'assets_expenses' | 'staff_expenses' | 'fixed_cost_expenses'; linha: Row; usd: number; brl: number | null; q: number; unitUsd: number; taxUsd: number; extraUsd: number; dia: string; item: string; supplier: string | null; order: string | null; part: string | null }
+type Fonte3 = { tabela: 'invoice_expenses' | 'assets' | 'assets_expenses' | 'staff_expenses' | 'fixed_cost_expenses' | 'inputs' | 'inventory'; linha: Row; usd: number; brl: number | null; q: number; unitUsd: number; taxUsd: number; extraUsd: number; dia: string; item: string; supplier: string | null; order: string | null; part: string | null }
 
 function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlano[] {
   const idsEstornadosUS = new Set([...foto.us.estornadas].map(r => String(r.id)))
@@ -1290,8 +1299,8 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   // bloqueios: linha que cruza mas não pode ser gravada sem resposta do dono (sem data, valor a confirmar) —
   // trava a chave inteira, com o motivo, em vez de sumir da conta calada.
   type Bloqueio = { tabela: 'staff_expenses' | 'fixed_cost_expenses'; linha: Row; usd: number | null; rotulo: string; motivo: string }
-  const grupos = new Map<string, { tipo: 'invoice' | 'season' | 'assets' | 'fixed'; id: string; fontes: Fonte3[]; rendas: Row[]; bloqueios: Bloqueio[] }>()
-  const grupo = (key: string, tipo: 'invoice' | 'season' | 'assets' | 'fixed', id: string) => { let g = grupos.get(key); if (!g) { g = { tipo, id, fontes: [], rendas: [], bloqueios: [] }; grupos.set(key, g) } return g }
+  const grupos = new Map<string, { tipo: 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies'; id: string; fontes: Fonte3[]; rendas: Row[]; bloqueios: Bloqueio[] }>()
+  const grupo = (key: string, tipo: 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies', id: string) => { let g = grupos.get(key); if (!g) { g = { tipo, id, fontes: [], rendas: [], bloqueios: [] }; grupos.set(key, g) } return g }
   const exclui = (tabela: string, l: Row, documento: string, rotulo: string, usd: number | null, brl: number | null, motivo: string, direcao: Direcao = 3) => excluidos.push({ direcao, banco: 'US', tabela, id: l.id, documento, rotulo: rotulo.slice(0, 80), usd, brl, motivo })
 
   // Linha GZ28BR: quem pagou é o BR e a conta NÃO é do BR (PAID TO GZ28BR dos dois lados é interna do BR).
@@ -1367,7 +1376,8 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   const fornecedores = new Map(foto.us.fornecedoresFixos.map(s => [s.id, s]))
   for (const f of foto.us.fixos) {
     const sup = fornecedores.get(f.supplier_id)
-    const doc = `MARKETING ${sup?.description || sup?.company || '?'}`, usd = r2(num(f.amount)), rot = String(f.description || sup?.description || 'marketing')
+    const tipoFixo = String(sup?.cost_type || 'FIXED').toUpperCase()
+    const doc = `${tipoFixo} ${sup?.description || sup?.company || '?'}`, usd = r2(num(f.amount)), rot = String(f.description || sup?.description || tipoFixo.toLowerCase())
     if (!cruzaBR(f, 'fixed_cost_expenses', doc, rot, usd)) continue
     const brl = f.amount_brl == null || String(f.amount_brl) === '' ? null : r2(num(f.amount_brl))
     const dia = ymd(f.payment_date)
@@ -1375,13 +1385,26 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     if (!usd && !brl) { grupo(`US:fixed:${f.supplier_id}`, 'fixed', f.supplier_id).bloqueios.push({ tabela: 'fixed_cost_expenses', linha: f, usd, rotulo: rot, motivo: 'valor a confirmar (US$ 0 e sem R$)' }); continue }
     grupo(`US:fixed:${f.supplier_id}`, 'fixed', f.supplier_id).fontes.push({ tabela: 'fixed_cost_expenses', linha: f, usd, brl, q: 1, unitUsd: usd, taxUsd: 0, extraUsd: 0, dia, item: rot, supplier: sup?.company || sup?.description || null, order: String(f.order_number || '').trim() || null, part: null })
   }
+  // SUPPLIES E ESTOQUE COMPRADO PAGOS PELO BR (18/10/2026): uma 085.N por MÊS do pagamento (US:supplies:<AAAA-MM>), como os
+  // ativos da oficina. US$ = preço × quantidade (estas tabelas não têm tax/extra); R$ = amount_brl quando gravado.
+  for (const { tabela, linha: l } of foto.us.supplies) {
+    const q = num(l.quantity) || 1, usd = r2(num(l.unit_price) * q), rot = String(l.description || (tabela === 'inputs' ? 'supplies' : 'estoque'))
+    const doc = tabela === 'inputs' ? `SUPPLIES ${l.category || ''}`.trim() : 'ESTOQUE'
+    if (!cruzaBR(l, tabela, doc, rot, usd)) continue
+    if (l.cancel_status) { exclui(tabela, l, doc, rot, usd, null, ESTORNADA_US); continue }
+    const brl = l.amount_brl == null || String(l.amount_brl) === '' ? null : r2(num(l.amount_brl))
+    const dia = ymd(l.payment_date)
+    if (!dia) { exclui(tabela, l, doc, rot, usd, brl, 'sem payment_date — ainda não é pagamento'); continue }
+    if (!usd && !brl) { grupo(`US:supplies:${dia.slice(0, 7)}`, 'supplies', dia.slice(0, 7)).bloqueios.push({ tabela, linha: l, usd, rotulo: rot, motivo: 'valor a confirmar (US$ 0 e sem R$)' }); continue }
+    grupo(`US:supplies:${dia.slice(0, 7)}`, 'supplies', dia.slice(0, 7)).fontes.push({ tabela, linha: l, usd, brl, q, unitUsd: num(l.unit_price), taxUsd: 0, extraUsd: 0, dia, item: rot, supplier: l.supplier || null, order: String(l.order_number || '').trim() || null, part: null })
+  }
   for (const { tabela, linha } of foto.us.semOpcao) {
     if (quemPagou(linha) !== 'GZ28BR' && empresa(linha.paid_to) !== 'GZ28BR') continue
     const usd = linha.amount != null ? num(linha.amount) : r2(num(linha.unit_price) * (num(linha.quantity) || 1))
     exclui(tabela, linha, tabela.toUpperCase(), String(linha.description || ''), usd, null, 'tabela sem opção GZ28BR (pacote PAID FROM/TO: sempre GZ28US) — pergunta')
   }
   // Espelho que já existe no BR sem fonte hoje também entra, para aparecer.
-  for (const i of br085) { const s = parseSrc(i.mirror_key); if (s?.banco === 'US') { const tipo = s.tabela as 'invoice' | 'season' | 'assets' | 'fixed'; if (['invoice', 'season', 'assets', 'fixed'].includes(tipo)) grupo(i.mirror_key, tipo, s.id) } }
+  for (const i of br085) { const s = parseSrc(i.mirror_key); if (s?.banco === 'US') { const tipo = s.tabela as 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies'; if (['invoice', 'season', 'assets', 'fixed', 'supplies'].includes(tipo)) grupo(i.mirror_key, tipo, s.id) } }
   for (const U of foto.us.invoices) if (U.br_invoice_id && bInv.get(U.br_invoice_id)?.client_id === BR_CLIENTE_GZ28US && !U.is_quote) grupo(`US:invoice:${U.id}`, 'invoice', U.id)
 
   const chaves: ChavePlano[] = []
@@ -1405,8 +1428,14 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       prefixo = textoService = `GZ28US Season ${se?.season_code || '?'} — ${nome}`
     } else if (g.tipo === 'fixed') {
       const sup = fornecedores.get(g.id), nome = sup?.description || sup?.company || '?'
-      origem = { banco: 'US', tipo: 'fixed', id: g.id, codigo: 'MARKETING', rotulo: `MARKETING — ${nome}` }
-      prefixo = textoService = `GZ28US Marketing — ${nome}`
+      // Marketing segue «GZ28US Marketing — …» (as 085.N que já existem não mudam); os outros tipos levam o tipo no nome (18/10/2026).
+      const tipoFixo = String(sup?.cost_type || 'FIXED').toUpperCase()
+      const tipoTxt = tipoFixo === 'MARKETING' ? 'Marketing' : tipoFixo
+      origem = { banco: 'US', tipo: 'fixed', id: g.id, codigo: tipoFixo, rotulo: `${tipoFixo} — ${nome}` }
+      prefixo = textoService = `GZ28US ${tipoTxt} — ${nome}`
+    } else if (g.tipo === 'supplies') {
+      origem = { banco: 'US', tipo: 'supplies', id: g.id, codigo: g.id, rotulo: `SUPPLIES ${g.id}` }
+      prefixo = textoService = `GZ28US Supplies ${g.id}`
     } else {
       origem = { banco: 'US', tipo: 'assets', id: g.id, codigo: g.id, rotulo: `ASSETS ${g.id}` }
       prefixo = textoService = `GZ28US Assets ${g.id}`
@@ -1429,7 +1458,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
     // ── a 085.N-alvo ──
     const porKey = br085.filter(i => i.mirror_key === key)
     const ptr = U?.br_invoice_id ? bInv.get(U.br_invoice_id) : null
-    const porTexto = g.tipo === 'fixed' ? [] : br085.filter(i => String(i.service || '').startsWith(prefixo))
+    const porTexto = g.tipo === 'fixed' || g.tipo === 'supplies' ? [] : br085.filter(i => String(i.service || '').startsWith(prefixo))
     if (porKey.length > 1) m.conflito(`${porKey.length} invoices do BR com a mesma mirror_key`)
     if (U?.br_invoice_id && !ptr) m.conflito(`ponteiro morto: br_invoice_id ${String(U.br_invoice_id).slice(0, 8)} aponta para uma 085.N que não existe — recriar só com ordem`)
     if (ptr && ptr.client_id !== BR_CLIENTE_GZ28US) m.conflito(`o ponteiro br_invoice_id aponta para ${ptr.invoice_code}, que não é do cliente GZ28 V8 SpeedShop USA LLC`)
@@ -1765,7 +1794,7 @@ export function datasDaFoto(foto: Foto): string[] {
   const d: (string | null)[] = []
   for (const p of foto.br.pagamentos) if (empresa(p.paid_to) === 'GZ28US') d.push(ymd(p.payment_date) || diaEm(p.paid_at, 'America/Sao_Paulo'))
   for (const p of foto.us.rendas) if (empresa(p.paid_to) === 'GZ28BR') d.push(ymd(p.payment_date) || diaEm(p.paid_at, 'America/New_York'))
-  for (const t of [foto.us.despesas, foto.us.assets, foto.us.assetsExp, foto.us.staffExp, foto.us.fixos]) for (const l of t) if (quemPagou(l) === 'GZ28BR') d.push(ymd(l.payment_date))
+  for (const t of [foto.us.despesas, foto.us.assets, foto.us.assetsExp, foto.us.staffExp, foto.us.fixos, foto.us.supplies.map(x => x.linha)]) for (const l of t) if (quemPagou(l) === 'GZ28BR') d.push(ymd(l.payment_date))
   return d.filter((x): x is string => !!x)
 }
 

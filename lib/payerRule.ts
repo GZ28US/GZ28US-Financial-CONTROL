@@ -16,10 +16,15 @@
 // fixed_cost_marketing (mesma tabela do banco, fixed_cost_expenses; quem escolhe é fixedCostPayerTable pelo cost_type).
 // A linha GZ28BR atravessa para uma 085.N por fornecedor de marketing (lib/crossing.server.ts, chave US:fixed:<id>).
 // ESTOQUE DOADO não é compra: peça doada não tem pagador nenhum (inventory_donated).
+// ABERTO A GZ28BR (Márcio, 18/10/2026, pela AutoBook GZ28US: «Sim, liberar nas telas» · «tudo que está gasto pro GZ28US aí, é
+// paid from GZ28BR, vai diminuir a dívida»): CUSTO FIXO de qualquer tipo, SUPPLIES e ESTOQUE COMPRADO passam a mostrar o PAID
+// FROM — modo 'house_choice': a tela mostra a escolha, e quem não escolhe continua GZ28US escondido, como antes. A linha GZ28BR
+// atravessa: custo fixo para uma 085.N por fornecedor (US:fixed:<id>), supplies/estoque para uma 085.N por mês (US:supplies:<AAAA-MM>).
 // SEM CHECK no banco, de propósito: «qualquer empresa pode pagar pra qualquer empresa, o
 // importante é o Flow reportar» — a regra mora aqui.
 // invoice_items não aparece: «não existe movimentação financeira no ITEMS».
-export type PayerMode = 'choice' | 'house' | 'none'
+// house_choice (18/10/2026): a tela MOSTRA o PAID FROM, e o vazio grava GZ28US como no 'house'.
+export type PayerMode = 'choice' | 'house' | 'house_choice' | 'none'
 export const HOUSE_PAYER = 'GZ28US'
 export const PAYER_RULE = {
   invoice_expenses: { paidFrom: 'choice', paidTo: 'house' },
@@ -27,10 +32,10 @@ export const PAYER_RULE = {
   assets: { paidFrom: 'choice', paidTo: 'house' },
   assets_expenses: { paidFrom: 'choice', paidTo: 'house' },
   staff_expenses: { paidFrom: 'choice', paidTo: 'house' },
-  inputs: { paidFrom: 'house', paidTo: 'house' },
-  inventory: { paidFrom: 'house', paidTo: 'house' },
+  inputs: { paidFrom: 'house_choice', paidTo: 'house' },
+  inventory: { paidFrom: 'house_choice', paidTo: 'house' },
   inventory_donated: { paidFrom: 'none', paidTo: 'none' },
-  fixed_cost_expenses: { paidFrom: 'house', paidTo: 'house' },
+  fixed_cost_expenses: { paidFrom: 'house_choice', paidTo: 'house' },
   fixed_cost_marketing: { paidFrom: 'choice', paidTo: 'house' },
 } as const satisfies Record<string, { paidFrom: PayerMode; paidTo: PayerMode }>
 export type PayerTable = keyof typeof PAYER_RULE
@@ -70,7 +75,7 @@ export function hiddenPayers(
   // SOURCE legado conta como resposta (revisão 14/set): whoPaid lê o source quando paid_from está vazio, então
   // um source GZ28BR é pagador gravado — o escondido não o vira GZ28US por baixo.
   const legacyOther = !!before && isOtherPayerSource(before.source)
-  if (rule.paidFrom === 'house' && !legacyOther && born(before?.paid_from)) out.paid_from = HOUSE_PAYER
+  if ((rule.paidFrom === 'house' || rule.paidFrom === 'house_choice') && !legacyOther && born(before?.paid_from)) out.paid_from = HOUSE_PAYER
   if (rule.paidTo === 'house' && born(before?.paid_to)) out.paid_to = HOUSE_PAYER
   return out
 }
@@ -86,7 +91,7 @@ export async function fillHiddenPayers(db: Db, table: Exclude<PayerTable, 'inven
   const list = [...new Set(ids.filter((x): x is string => !!x))]
   if (!list.length) return null
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
-  const cols = [rule.paidFrom === 'house' ? 'paid_from' : null, rule.paidTo === 'house' ? 'paid_to' : null].filter((c): c is string => !!c)
+  const cols = [rule.paidFrom === 'house' || rule.paidFrom === 'house_choice' ? 'paid_from' : null, rule.paidTo === 'house' ? 'paid_to' : null].filter((c): c is string => !!c)
   const errors: string[] = []
   // SOURCE legado conta como pagador gravado (revisão 14/set): linha com source GZ28BR não recebe PAID FROM
   // escondido — whoPaid a lê pelo source e o saldo US vs BR mudaria calado.

@@ -70,6 +70,8 @@ export function payerToRow(p: PaymentInfo, table: PayerTable, paidNow: boolean):
     ...hiddenPayers(table, p.wasPaid === null ? null : { paid: p.wasPaid, paid_from: p.paidFrom, paid_to: p.paidTo }, paidNow),
   }
   if (rule.paidFrom === 'choice') out.paid_from = p.paidFrom || null
+  // house_choice: o escolhido vale; vazio fica com o escondido do hiddenPayers (GZ28US).
+  if (rule.paidFrom === 'house_choice' && p.paidFrom) out.paid_from = p.paidFrom
   if (rule.paidTo === 'choice') out.paid_to = p.paidTo || null
   return out
 }
@@ -128,14 +130,14 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
 }) {
   const set = (patch: Partial<PaymentInfo>) => onChange({ ...value, ...patch })
   const rule: { paidFrom: PayerMode; paidTo: PayerMode } = PAYER_RULE[table]
-  const showFrom = rule.paidFrom === 'choice'
+  const showFrom = rule.paidFrom === 'choice' || rule.paidFrom === 'house_choice'
   const showTo = rule.paidTo === 'choice'
   // A tela nunca esconde o que está gravado FORA da régua: campo escondido com valor
   // que não é GZ28US (nem vazio) ganha uma linha dizendo o que está lá — o mesmo
   // espírito da opção-fantasma dos seletores. Salvar não o troca (hiddenPayers só
   // preenche vazio): mudar um pagador fora da régua é conversa com o Márcio.
   const offRule = (mode: PayerMode, stored: string, label: string) => (
-    mode !== 'choice' && stored && stored !== HOUSE_PAYER
+    mode !== 'choice' && mode !== 'house_choice' && stored && stored !== HOUSE_PAYER
       ? (
         <p className="sm:col-span-full text-sm text-amber-300">
           {label} gravado nesta linha: {stored} — fora da régua desta tabela ({mode === 'house' ? `aqui é sempre ${HOUSE_PAYER}` : 'aqui não há pagador'}). O campo não aparece e salvar não o muda.
@@ -155,8 +157,8 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
       {showFrom && (
         <div>
           <label className="block mb-2 text-lg font-bold">PAID FROM</label>
-          <select value={value.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })} className={selectClass + (!value.paidFrom ? ' border-amber-500 text-amber-300' : '')}>
-            {!value.paidFrom && <option value="">— quem pagou? —</option>}
+          <select value={value.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })} className={selectClass + (!value.paidFrom && rule.paidFrom === 'choice' ? ' border-amber-500 text-amber-300' : '')}>
+            {!value.paidFrom && <option value="">{rule.paidFrom === 'house_choice' ? `— ${HOUSE_PAYER} (padrão) —` : '— quem pagou? —'}</option>}
             {PAID_FROM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
             {value.paidFrom && !PAID_FROM_OPTIONS.includes(value.paidFrom as any) && <option value={value.paidFrom}>{value.paidFrom}</option>}
           </select>
