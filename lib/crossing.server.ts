@@ -107,8 +107,8 @@ export const RENDA_BR_DECIDIDA: Readonly<Record<string, { usd: number; motivo: s
 // fica em CONFLITO com o motivo escrito — o plano mostra os números que ela gravaria (manchete.bloqueadas),
 // e nada é escrito até o dono responder. A resposta do Márcio vira a remoção de UMA linha daqui.
 export const CHAVES_SEGURAS: Readonly<Record<string, string>> = {
-  'US:invoice:15b95131': 'US.009.1 Poltergeist → 085.1: possível contagem dobrada com a US.007.1 Panther — segura até o Márcio responder (14/set)',
-  'US:invoice:828e9c2f': 'US.007.1 Panther (ainda sem 085.N): possível contagem dobrada com a US.009.1 Poltergeist — segura até o Márcio responder (14/set)',
+  // US.009.1 Poltergeist → 085.1 e US.007.1 Panther SOLTAS em 18/10/2026 — Márcio: «unblock it» · «you should do what you've got to do»
+  // (App Development 2) e «parece que o app bloqueia o que estamos querendo fazer, desbloqueie, é pra fazer, ordem minha» (via AutoBook GZ28US).
 }
 const chaveSegura = (key: string): string | null => { for (const [p, motivo] of Object.entries(CHAVES_SEGURAS)) if (key.startsWith(p)) return motivo; return null }
 
