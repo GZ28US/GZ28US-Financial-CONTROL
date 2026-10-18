@@ -89,7 +89,8 @@ export const FORA_DE_ESCOPO_BR: Readonly<Record<string, string>> = {
 // travam a US.003.1 (a linha «kit motor» da 085.6 não tem origem no US); a lista deixa a trava de pé
 // mesmo que alguém mexa nas linhas antes de o dono decidir.
 export const FORA_DE_ESCOPO_US: Readonly<Record<string, string>> = {
-  'US.003.1': '085.6 «kit motor» (US$ 5.606,13 / R$ 31.114,02) sem origem no US — travada até o Márcio decidir (14/set)',
+  // US.003.1 SAIU (18/10/2026): o «kit motor» da 085.6 = as 5 linhas HHP 360766 da US.003.1; a AutoBook BR apagou as linhas
+  // soltas da 085.6 (data_fixes travessia-safra1-18out) — Márcio: «Feche à perfeição estes 6 carros».
 }
 
 // RENDA DO BR COM O US$ DECIDIDO PELO DONO (14/set/2026, noite). Chave = id da linha em invoice_payments
@@ -1566,7 +1567,10 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       m.op({ tipo: 'criar_linha', banco: 'BR', tabela: 'invoice_expenses', mirror_src: src, direcao: 3, papel: 'despesa', usd: lineUsd, brl: lineBrl, rotulo: `despesa ${f.item.slice(0, 50)} · ${regra}`, confere: conf3, campos: {
         // DESPESA DO BR A PAGAR (17/10/2026): com br_due_date na linha do US (o DAS do imposto da NF), o espelho nasce SEM
         // payment_date e com o vencimento — o US já pagou ao BR (o item abaixo entra na conta); o BR recolher ou não é outra conta.
-        invoice_id: ALVO, item: f.item, supplier: f.supplier, price, amount_usd: r2(f.unitUsd), quantity: f.q, tax, extra: ext,
+        // Com R$ gravado, tax/extra viram 0 no R$ (o amount_brl é o total da linha) — então o US$ unitário tem de ser o da LINHA
+        // inteira (preço × qtd + tax + extra) ÷ qtd, o valor de face do fornecedor. Sem isso o espelho perdia o tax do US (Borla
+        // 1.564,34 → 1.392,67; correias Gates) e a rodada seguinte travava em «valor divergente» (achado da AutoBook BR, 18/10).
+        invoice_id: ALVO, item: f.item, supplier: f.supplier, price, amount_usd: f.brl != null ? r2(f.usd / f.q) : r2(f.unitUsd), quantity: f.q, tax, extra: ext,
         ...(f.tabela === 'invoice_expenses' && ymd(f.linha.br_due_date) ? { payment_date: null, due_date: ymd(f.linha.br_due_date) } : { payment_date: f.dia }), expense_date: f.dia,
         source: 'GZ28BR', paid_from: 'GZ28BR', paid_to: 'GZ28BR', item_discount: 0, position: ++pos, order_number: f.order, part_number: f.part,
         us_expense_id: f.tabela === 'invoice_expenses' ? f.linha.id : null, mirror_src: src,
