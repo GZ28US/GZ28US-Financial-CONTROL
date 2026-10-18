@@ -138,6 +138,7 @@ export default function NewInvoicePage() {
         global_discount: src.global_discount ?? null,
         import_margin: src.import_margin ?? 0,
         service: src.service ?? null,
+        pack_id: src.pack_id ?? null,
         // Literal clone: carry the source's dates, mileage, and status.
         hiring_date: src.hiring_date ?? null, entry_date: src.entry_date ?? null,
         conclusion_date: src.conclusion_date ?? null, delivery_date: src.delivery_date ?? null,
@@ -316,6 +317,7 @@ export default function NewInvoicePage() {
     // Applying a pack copies its totals config onto the new invoice. Florida taxes
     // is NOT carried — a quote/invoice starts with no FL tax; the user adds it if wanted.
     if (pack) {
+      row.pack_id = pack.id
       row.target_grand_total = pack.target_grand_total ?? null
       row.florida_taxes = null
       row.global_discount = pack.global_discount ?? null
@@ -350,6 +352,15 @@ export default function NewInvoicePage() {
     }
     // Add-ons escolhidos aplicam POR CIMA, na ordem marcada — mesmo applyPack.
     for (const a of chosenAddons) await applyPack(invoice.id, a)
+    // PERFORMANCE QUE NASCE COM A INVOICE (18/10/2026): pack GZ28 Shop LOCKED validado → BoneStock + o build do pack + a Build Sheet
+    // dele (lib/packPerformance.server.ts). Quote não cria: a performance nasce quando ela vira invoice (o editor chama de novo).
+    if (pack && !invoice.is_quote && invoice.ride_id) {
+      try {
+        const res = await fetch(`${BASE_PATH}/api/performance/seed-pack`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ invoiceId: invoice.id }) })
+        const r = await res.json().catch(() => ({}))
+        if (!res.ok || r.ok === false) alert('Invoice created, but the PERFORMANCE of the car (BoneStock + pack build) was not:\n' + ((r.errors || []).join('\n') || res.status))
+      } catch (err) { alert('Invoice created, but the PERFORMANCE of the car was not: ' + String(err)) }
+    }
 
     router.push(`${basePath}/edit/${invoice.id}`)
   }

@@ -354,6 +354,15 @@ async function linhasDaTravessia(tabela: keyof typeof ELOS_DA_TRAVESSIA, ids: st
   return { ids: (data as any[]).filter(r => cols.some(c => r[c] != null && r[c] !== '')).map(r => String(r.id)), falha: null }
 }
 
+// A performance que nasce com a invoice do pack validado (18/10/2026) — /api/performance/seed-pack. Erro não trava o save: avisa.
+async function semearPerformance(invoiceId: string) {
+  try {
+    const res = await fetch(`${BASE_PATH}/api/performance/seed-pack`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ invoiceId }) })
+    const r = await res.json().catch(() => ({}))
+    if (!res.ok || r.ok === false) alert('The invoice was saved, but the PERFORMANCE of the car (BoneStock + pack build) was not created:\n' + ((r.errors || []).join('\n') || res.status))
+  } catch (err) { alert('The invoice was saved, but the PERFORMANCE of the car was not created: ' + String(err)) }
+}
+
 async function syncInvoiceFolder(rideId: string, invoiceCode: string, service: string | null, oldInvoiceCode?: string) {
   try {
     const { data: r } = await supabase.from('rides').select('project_code, project_name').eq('id', rideId).single()
@@ -2705,6 +2714,9 @@ export default function EditInvoicePage() {
     }).eq('id', invoiceId)
     if (error) { alert(error.message); return }
     setIsQuote(nextIsQuote)
+    // A QUOTE VIROU INVOICE (18/10/2026): pack GZ28 Shop LOCKED validado cria a performance do carro — BoneStock, o build do pack
+    // e a Build Sheet dele (lib/packPerformance.server.ts). Idempotente; pack não validado ou carro que já tem o build = nada.
+    if (isQuote && !nextIsQuote) await semearPerformance(invoiceId)
 
     // Persist parts in their current order: insert new ones with their position,
     // and for existing ones write position (always) plus refreshed margin-managed
