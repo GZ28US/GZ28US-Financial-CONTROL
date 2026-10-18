@@ -218,7 +218,9 @@ const COLUNAS_NOVAS: Record<Banco, [string, string][]> = {
   // expenses.amount_usd (14/set/2026): o US$ gravado da folha do BR paga pelo GZ28US — sem ela a folha do BR não atravessa.
   BR: [['invoices', 'mirror_key'], ['invoice_expenses', 'mirror_src'], ['invoice_parts', 'mirror_src'], ['invoice_payments', 'mirror_src'], ['invoice_payments', 'amount_usd'], ['invoice_payments', 'us_income_id'], ['invoice_expenses', 'us_markup_pct'], ['expenses', 'amount_usd'],
     // fixed_cost_expenses.amount_usd (18/10/2026, MIGRATION_br_fixed_cost_amount_usd.sql): o US$ (com os 10%) do custo fixo do BR pago pelo GZ28US.
-    ['fixed_cost_expenses', 'amount_usd']],
+    ['fixed_cost_expenses', 'amount_usd'],
+    // fixed_cost_expenses.us_markup_pct (18/10/2026, MIGRATION_br_fixed_cost_us_markup.sql): vazio = 10%; 0 = custo exato.
+    ['fixed_cost_expenses', 'us_markup_pct']],
 }
 
 export type Foto = {
@@ -457,10 +459,11 @@ function regraApp(cot: Cotacoes, dia: string | null): { taxa: number; texto: str
 // O PLANO
 // ════════════════════════════════════════════════════════════════════════════
 export type Op =
-  | { tipo: 'vincular_invoice'; banco: Banco; id: string; codigo: string; como: 'ponteiro' | 'texto'; rotulo: string }
+  // de (18/10/2026): a mirror_key / o mirror_src ANTIGO que uma adoção do dono troca (ADOCAO_FIXO_BR) — o UPDATE só pega se ainda for ele.
+  | { tipo: 'vincular_invoice'; banco: Banco; id: string; codigo: string; como: 'ponteiro' | 'texto'; rotulo: string; de?: string }
   | { tipo: 'criar_invoice'; banco: Banco; serie: '006' | '085'; codigo_previsto: string; campos: Row; rotulo: string }
   | { tipo: 'ponteiro_origem'; banco: Banco; tabela: 'invoices'; id: string; campo: 'us_invoice_id' | 'br_invoice_id'; rotulo: string }
-  | { tipo: 'vincular_linha'; banco: Banco; tabela: string; id: string; mirror_src: string; elo: { campo: string; valor: string } | null; direcao: Direcao; rotulo: string }
+  | { tipo: 'vincular_linha'; banco: Banco; tabela: string; id: string; mirror_src: string; elo: { campo: string; valor: string } | null; direcao: Direcao; rotulo: string; de?: string }
   // guarda: o carimbo só pega se a linha ainda tem estes valores (o valor que o câmbio usou) — atômico.
   | { tipo: 'carimbo'; banco: Banco; tabela: string; id: string; campo: string; valor: number; regra: string; direcao: Direcao; rotulo: string; guarda: Record<string, string | number | null>; confere: Conferencia[] }
   // REAJUSTE DO IMPOSTO DA NF (17/10/2026): o espelho que o MOTOR escreveu, sem baixa própria no BR, recebe o valor novo da
@@ -498,7 +501,7 @@ const COLS = {
   inventory: ['unit_price', 'quantity', 'payment_date', 'paid_from', 'paid_to', 'source', 'source_type', 'amount_brl'],
   espelho: ['invoice_id', 'price', 'quantity', 'tax', 'extra', 'mirror_src', 'cancel_status'],
   brStaff: ['season_id', 'amount', 'amount_usd', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source', 'origin'],
-  brFixo: ['supplier_id', 'amount', 'amount_usd', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source'],
+  brFixo: ['supplier_id', 'amount', 'amount_usd', 'us_markup_pct', 'payment_date', 'expense_date', 'paid_from', 'paid_to', 'source'],
 } as const
 const colsFonte3 = (tabela: string): string[] => [...(tabela === 'invoice_expenses' ? COLS.usDespesa : tabela === 'assets' ? COLS.assets : tabela === 'assets_expenses' ? COLS.assets_expenses : tabela === 'fixed_cost_expenses' ? COLS.fixed_cost_expenses : tabela === 'inputs' ? COLS.inputs : tabela === 'inventory' ? COLS.inventory : COLS.staff_expenses)]
 
@@ -660,7 +663,7 @@ function conferirElos(m: Montador, elos: Elos, codigoDe: (invoiceId: string) => 
     if (o.tipo === 'vincular_linha') {
       if (dono && String(dono.id) !== o.id) m.conflito(`o elo ${o.mirror_src} já está na linha ${String(dono.id).slice(0, 8)} (${codigoDe(dono.invoice_id)}) — não dá para ligá-lo a outra`)
       const atual = t.porId.get(o.id)?.mirror_src
-      if (atual && atual !== o.mirror_src) m.conflito(`a linha ${o.id.slice(0, 8)} de ${o.tabela} já tem outro elo (${atual}) — o motor não troca elo`)
+      if (atual && atual !== o.mirror_src && atual !== o.de) m.conflito(`a linha ${o.id.slice(0, 8)} de ${o.tabela} já tem outro elo (${atual}) — o motor não troca elo`)
     } else if (dono) {
       m.conflito(`${o.mirror_src} já está gravado em ${o.tabela} ${String(dono.id).slice(0, 8)} na ${codigoDe(dono.invoice_id)} — a data ou o documento da origem mudou? (nada gravado nesta chave)`)
     }
@@ -1306,7 +1309,12 @@ const rotuloFixoBR = (f: Row, nome: string) => `${nome}${f.description ? ` — $
 
 // A 006.N ANTIGA DE CADA FORNECEDOR DO BR (SERVICE em texto livre, sem mirror_key). Chave = fixed_cost_suppliers.id do BR → id da
 // invoice do US. Só é adotada se ainda não tem mirror_key (o motor grava a chave nela; daí em diante vale a mirror_key).
-export const ADOCAO_FIXO_BR: Readonly<Record<string, { invoiceId: string; motivo: string }>> = {
+// chaveAntiga / srcAntigos: a mirror_key e os mirror_src que a 006.N antiga carregava de OUTRA origem (folha do BR apagada) — o motor
+// troca SÓ esses valores exatos (UPDATE guardado no valor antigo, trilha velho → novo); qualquer outro elo continua intocável.
+export const ADOCAO_FIXO_BR: Readonly<Record<string, { invoiceId: string; motivo: string; chaveAntiga?: string; srcAntigos?: string[] }>> = {
+  '382ff826-aad6-4348-aafb-e02cf710845a': { invoiceId: '7501c2c8-c92d-429b-ba9e-3883f08f009d', chaveAntiga: 'BR:season:e3cac84c-e1b1-4a08-ae47-8e5ca8182c33',
+    srcAntigos: ['BR:expenses:c9505f63-26a3-444e-8a53-96a9a3512b42', 'pendente:BR:season:e3cac84c-e1b1-4a08-ae47-8e5ca8182c33'],
+    motivo: '006.45 = metade do GZ28BR da The Tuning School (US$ 1.500 do PayPal de 2.555,84, 15/04); a linha da folha do BR (c9505f63) virou custo fixo 62375248 — SEM os 10% (Márcio 18/10: «US$ 1,500»)' },
   '57edec18-6919-4a3c-9bdc-eb0d1ee7c21c': { invoiceId: '0301236f-e414-4d33-a27a-440019731325', motivo: '006.9 «UltraMsg Annual Inscription» = o anual da UltraMsg da instância do BR (SWIFT TECH TRADING US$ 390 + ISA 11,70), AutoBook GZ28US 18/10' },
 }
 
@@ -1315,7 +1323,8 @@ function planejarFixoBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
   const us006 = foto.us.invoices.filter(i => i.client_id === US_CLIENTE_GZ28BR)
   const fornecedores = new Map(foto.br.fornecedoresFixos.map(s => [s.id, s]))
   const usdFixo = (f: Row): number | null => f.amount_usd == null || String(f.amount_usd) === '' ? null : r2(num(f.amount_usd))
-  const custoFixo = (f: Row): number | null => { const u = usdFixo(f); return u == null ? null : r2(u / MARGEM_US) }
+  // amount_usd já carrega o markup da linha (us_markup_pct: vazio = 10%, 0 = custo exato — a régua de markupDe da direção 1).
+  const custoFixo = (f: Row): number | null => { const u = usdFixo(f); return u == null ? null : r2(u / markupDe(f)) }
   const elosUS = mapaDeElos({ invoice_expenses: foto.us.despesas, invoice_items: foto.us.itens, invoice_incomes: foto.us.rendas })
   const codigoUS = (id: string) => uInv.get(id)?.invoice_code || '?'
   const balde = foto.us.despesas.filter(e => uInv.get(e.invoice_id)?.origin === 'BUCKET' && !foto.us.estornadas.has(e))
@@ -1350,7 +1359,7 @@ function planejarFixoBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
     // ── a 006.N-alvo: mirror_key → adoção do dono → texto do SERVICE ──
     const porKey = us006.filter(i => i.mirror_key === key)
     const adocao = ADOCAO_FIXO_BR[g.supplierId]
-    const adotada = adocao ? us006.find(i => i.id === adocao.invoiceId && (!i.mirror_key || i.mirror_key === key)) : null
+    const adotada = adocao ? us006.find(i => i.id === adocao.invoiceId && (!i.mirror_key || i.mirror_key === key || (!!adocao.chaveAntiga && i.mirror_key === adocao.chaveAntiga))) : null
     const porTexto = us006.filter(i => (!i.mirror_key || i.mirror_key === key) && String(i.service || '').startsWith(textoService))
     const candidatos = new Map<string, Row>()
     for (const i of [...porKey, ...(adotada ? [adotada] : []), ...porTexto]) candidatos.set(i.id, i)
@@ -1362,18 +1371,25 @@ function planejarFixoBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
     else if (cands.length === 1) {
       alvo = cands[0]
       if (alvo.is_quote) m.conflito(`a ${alvo.invoice_code} do US é QUOTE`)
-      if (alvo.mirror_key && alvo.mirror_key !== key) m.conflito(`a ${alvo.invoice_code} já é espelho de outra origem (${alvo.mirror_key})`)
+      if (alvo.mirror_key && alvo.mirror_key !== key && !(adotada && alvo.mirror_key === adocao?.chaveAntiga)) m.conflito(`a ${alvo.invoice_code} já é espelho de outra origem (${alvo.mirror_key})`)
       m.c.alvo = { id: alvo.id, codigo: alvo.invoice_code, como: porKey.length ? 'mirror_key' : adotada ? 'ponteiro' : 'texto' }
       if (adotada && !porKey.length) m.aviso(`adoção do dono: ${adocao!.motivo}`)
       if (String(alvo.live_status || '') === 'CLOSED') m.aviso(`${alvo.invoice_code} está CLOSED no US — linha nova entra numa invoice fechada`)
     } else m.c.alvo = { id: null, codigo: null, como: 'criar' }
     const invAlvo = cands.map(i => i.id)
 
-    // ── as linhas ──
-    const Etodas = foto.us.despesas.filter(e => invAlvo.includes(e.invoice_id))
-    const Itodos = foto.us.itens.filter(i => invAlvo.includes(i.invoice_id))
-    const E = Etodas.filter(e => !foto.us.estornadas.has(e)), I = Itodos.filter(i => !foto.us.estornadas.has(i))
-    const R = foto.us.rendas.filter(p => invAlvo.includes(p.invoice_id))
+    // ── as linhas ── (elo antigo da adoção do dono: a linha entra SEM elo no plano e casa por valor; a op leva o valor antigo em `de`)
+    const antigos = new Set(adotada ? adocao?.srcAntigos || [] : [])
+    const trocados = new Map<string, string>(), origem = new Map<Row, Row>()
+    const vista = (l: Row): Row => {
+      if (!adotada || l.invoice_id !== adotada.id || !l.mirror_src || !antigos.has(String(l.mirror_src))) return l
+      trocados.set(String(l.id), String(l.mirror_src)); const c = { ...l, mirror_src: null }; origem.set(c, l); return c
+    }
+    const estornada = (l: Row) => foto.us.estornadas.has(origem.get(l) || l)
+    const Etodas = foto.us.despesas.filter(e => invAlvo.includes(e.invoice_id)).map(vista)
+    const Itodos = foto.us.itens.filter(i => invAlvo.includes(i.invoice_id)).map(vista)
+    const E = Etodas.filter(e => !estornada(e)), I = Itodos.filter(i => !estornada(i))
+    const R = foto.us.rendas.filter(p => invAlvo.includes(p.invoice_id)).map(vista)
     const srcDe = (f: Row) => `BR:fixed_cost_expenses:${f.id}`
     const idDoSrc = (l: Row): string | null => { const p = parseSrc(l.mirror_src); return p?.banco === 'BR' && p.tabela === 'fixed_cost_expenses' ? p.id : null }
     const txtFonte = (f: Row) => chaveTexto(nomeDe(f.supplier_id)), txtUS = (l: Row) => chaveTexto(l.supplier || l.item || l.description)
@@ -1479,7 +1495,8 @@ function planejarFixoBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
 
     // ── a invoice: adotar (gravar a mirror_key) ou criar a próxima 006.N ──
     const temEscrita = m.c.ops.length > 0
-    if (alvo && alvo.mirror_key !== key && temEscrita) m.op({ tipo: 'vincular_invoice', banco: 'US', id: alvo.id, codigo: alvo.invoice_code, como: adotada ? 'ponteiro' : 'texto', rotulo: `adota ${alvo.invoice_code}` })
+    if (alvo && alvo.mirror_key !== key && temEscrita) m.op({ tipo: 'vincular_invoice', banco: 'US', id: alvo.id, codigo: alvo.invoice_code, como: adotada ? 'ponteiro' : 'texto', rotulo: `adota ${alvo.invoice_code}${alvo.mirror_key ? ` (troca a chave antiga ${alvo.mirror_key})` : ''}`, ...(alvo.mirror_key ? { de: String(alvo.mirror_key) } : {}) })
+    for (const o of m.c.ops) if (o.tipo === 'vincular_linha' && trocados.has(o.id)) { o.de = trocados.get(o.id); o.rotulo += ` (troca o elo antigo ${o.de})` }
     if (!alvo && temEscrita) {
       const primeira = g.fontes.map(f => ymd(f.payment_date)).filter(Boolean).sort()[0] || ymd(sup.date_entry)
       m.op({ tipo: 'criar_invoice', banco: 'US', serie: '006', codigo_previsto: '', rotulo: `nova 006.N para ${textoService}`, campos: {
@@ -2330,13 +2347,14 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
     for (const o of c.ops) {
       const db = dbDe(o.banco)
       if (o.tipo === 'vincular_invoice') {
-        const { data, error } = await db.from('invoices').update({ mirror_key: c.mirror_key }).eq('id', o.id).is('mirror_key', null).select('id')
+        const qi: any = db.from('invoices').update({ mirror_key: c.mirror_key }).eq('id', o.id)
+        const { data, error } = await (o.de ? qi.eq('mirror_key', o.de) : qi.is('mirror_key', null)).select('id')
         if (error) throw falhaDe(`vincular ${o.codigo}: ${error.message}`, error)
         if (!data?.length) {
           const { data: r, error: e2 } = await db.from('invoices').select('mirror_key').eq('id', o.id).maybeSingle()
           if (e2) throw new ErroTravessia('db', `reler ${o.codigo}: ${e2.message}`)
           if (r?.mirror_key !== c.mirror_key) throw new ErroTravessia('conflict', `${o.codigo} não aceitou a mirror_key (já tem outra, ou sumiu)`)
-        } else { escritas++; await trilha(o.banco, 'invoices', o.id, 'mirror_key', null, c.mirror_key, o.rotulo) }
+        } else { escritas++; await trilha(o.banco, 'invoices', o.id, 'mirror_key', o.de ?? null, c.mirror_key, o.rotulo) }
         alvoId = o.id
       } else if (o.tipo === 'criar_invoice') {
         const { data: ja, error: eJa } = await db.from('invoices').select('id, invoice_code').eq('mirror_key', c.mirror_key).maybeSingle()
@@ -2361,7 +2379,8 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
           if ((r as any)?.[o.campo] !== alvoId) throw new ErroTravessia('conflict', `${o.campo} da origem já aponta para outra invoice`)
         } else { escritas++; await trilha(o.banco, o.tabela, o.id, o.campo, null, alvoId, o.rotulo) }
       } else if (o.tipo === 'vincular_linha') {
-        let q: any = db.from(o.tabela).update({ mirror_src: o.mirror_src, ...(o.elo ? { [o.elo.campo]: o.elo.valor } : {}) }).eq('id', o.id).is('mirror_src', null)
+        let q: any = db.from(o.tabela).update({ mirror_src: o.mirror_src, ...(o.elo ? { [o.elo.campo]: o.elo.valor } : {}) }).eq('id', o.id)
+        q = o.de ? q.eq('mirror_src', o.de) : q.is('mirror_src', null)
         if (o.elo) q = q.is(o.elo.campo, null)
         const { data, error } = await q.select('id')
         if (error) throw falhaDe(`vincular ${o.tabela} ${o.id}: ${error.message}`, error)
@@ -2371,7 +2390,7 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
           if ((r as any)?.mirror_src !== o.mirror_src) throw new ErroTravessia('conflict', `${o.tabela} ${o.id} não aceitou o elo (já tem outro, ou sumiu)`)
         } else {
           escritas++
-          await trilha(o.banco, o.tabela, o.id, 'mirror_src', null, o.mirror_src, o.rotulo)
+          await trilha(o.banco, o.tabela, o.id, 'mirror_src', o.de ?? null, o.mirror_src, o.rotulo)
           if (o.elo) await trilha(o.banco, o.tabela, o.id, o.elo.campo, null, o.elo.valor, o.rotulo)
         }
       } else if (o.tipo === 'carimbo') {
