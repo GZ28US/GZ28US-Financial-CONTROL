@@ -1298,7 +1298,7 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
   const docUS = (i: Row | undefined) => i?.invoice_code || '?'
   // bloqueios: linha que cruza mas não pode ser gravada sem resposta do dono (sem data, valor a confirmar) —
   // trava a chave inteira, com o motivo, em vez de sumir da conta calada.
-  type Bloqueio = { tabela: 'staff_expenses' | 'fixed_cost_expenses'; linha: Row; usd: number | null; rotulo: string; motivo: string }
+  type Bloqueio = { tabela: 'staff_expenses' | 'fixed_cost_expenses' | 'inputs' | 'inventory'; linha: Row; usd: number | null; rotulo: string; motivo: string }
   const grupos = new Map<string, { tipo: 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies'; id: string; fontes: Fonte3[]; rendas: Row[]; bloqueios: Bloqueio[] }>()
   const grupo = (key: string, tipo: 'invoice' | 'season' | 'assets' | 'fixed' | 'supplies', id: string) => { let g = grupos.get(key); if (!g) { g = { tipo, id, fontes: [], rendas: [], bloqueios: [] }; grupos.set(key, g) } return g }
   const exclui = (tabela: string, l: Row, documento: string, rotulo: string, usd: number | null, brl: number | null, motivo: string, direcao: Direcao = 3) => excluidos.push({ direcao, banco: 'US', tabela, id: l.id, documento, rotulo: rotulo.slice(0, 80), usd, brl, motivo })
