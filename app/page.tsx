@@ -327,7 +327,11 @@ export default function HomePage() {
       const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
       if (flTaxAmount > 0.005 && !isValidDate(inv.fl_tax_expense_date)) {
         const m = metaFor(inv.id, inv.invoice_code)
-        tax.push({ code: inv.invoice_code, label: 'Florida Taxes', amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip })
+        // O RÓTULO É O PACK + O CARRO (Márcio, 18/10/2026: «instead of Florida Taxes, which is obvious in this frame, put Z1200sc - HellCougar»):
+        // o código Z do SERVICE da invoice e o nome do carro; o SERVICE inteiro fica no hover.
+        const zCode = String(inv.service || '').match(/^\s*(Z\s*\d{3,4}\s*(?:sc|na|tt|pc)?)(?![a-z])/i)?.[1]?.replace(/\s+/g, '') || ''
+        const label = [zCode, m.carName].filter(Boolean).join(' - ') || String(inv.service || '').trim() || m.clientName || 'Florida Taxes'
+        tax.push({ code: inv.invoice_code, label, amount: flTaxAmount, dated: false, date: null, href: m.href, tip: m.tip, labelTip: inv.service || '' })
       }
     }
     // Sort by date (ascending); for the same date — or undated rows — bigger amount first.
