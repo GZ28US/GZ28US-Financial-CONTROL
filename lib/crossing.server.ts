@@ -1551,8 +1551,17 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       // US$ DO ESPELHO ANTIGO (18/10/2026): o motor de antes gravava no espelho o US$ = R$ ÷ cotação. Quando o R$ do espelho JÁ é o
       // R$ gravado no US e só o US$ diverge, o US$ do espelho passa a ser o do US — o valor de face (Márcio, 17/10: «replique a vida
       // real»). O dinheiro em R$ não muda, então a baixa do BR não importa aqui. Despesa e item.
-      if (!ok && !reajustado && p.como === 'mirror_src' && p.f.brl != null && perto(brlBR(p.e), p.f.brl, 0.05) && !num(p.e.tax) && !num(p.e.extra)) {
+      // Sem R$ gravado no US (folha antiga): o R$ do espelho é o real (cartão do BR) e vira o amount_brl do US — o carimbo só
+      // pega campo vazio. Só nas tabelas do US que têm amount_brl.
+      const temBrlUS = ['staff_expenses', 'fixed_cost_expenses', 'invoice_expenses', 'inputs', 'inventory'].includes(p.f.tabela)
+      if (!ok && !reajustado && p.como === 'mirror_src' && (p.f.brl != null ? perto(brlBR(p.e), p.f.brl, 0.05) : temBrlUS && brlBR(p.e) > 0) && !num(p.e.tax) && !num(p.e.extra)) {
         const q = p.f.q || 1
+        if (p.f.brl == null) {
+          const brlReal = r2(brlBR(p.e))
+          m.op({ tipo: 'carimbo', banco: 'US', tabela: p.f.tabela, id: p.f.linha.id, campo: 'amount_brl', valor: brlReal, regra: `R$ real do espelho ${String(p.e.id).slice(0, 8)} na ${bInv.get(p.e.invoice_id)?.invoice_code || '085.N'}`, direcao: 3,
+            rotulo: `R$ de ${p.f.item.slice(0, 40)} carimbado no US`, guarda: {}, confere: [] })
+          p.f.brl = brlReal
+        }
         const paraE = { amount_usd: r2(p.f.usd / q) }
         m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_expenses', id: p.e.id, de: { amount_usd: p.e.amount_usd ?? null }, para: paraE, direcao: 3, rotulo: `US$ do espelho ${p.f.item.slice(0, 40)}: ${r2(Rv ?? 0)} → ${p.f.usd} (o R$ ${r2(brlBR(p.e))} fica)` })
         Object.assign(p.e, paraE)
