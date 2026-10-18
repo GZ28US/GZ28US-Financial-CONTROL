@@ -907,7 +907,18 @@ function planejarUS(foto: Foto, cot: Cotacoes, excluidos: Excluido[], correcoes:
         if (p.como === 'mirror_src' && classe === 'ok' && Rv != null) faltaItem.push({ s: p.s, e: p.e, Rv, C })
         else m.conflito(`a despesa ${limpa(p.e.item).slice(0, 40)} não tem item correspondente na ${uInv.get(p.e.invoice_id)?.invoice_code}`)
       }
-      else if (!perto(linhaItem(it), Rv)) m.conflito(`item divergente: ${limpa(it.description).slice(0, 40)} US$ ${r2(linhaItem(it))} × BR US$ ${Rv == null ? '?' : r2(Rv)}`)
+      else if (!perto(linhaItem(it), Rv)) {
+        // DESTRAVADO (18/10/2026 — Márcio: valores e câmbios reais, sem markup, nas movimentações já existentes · «unblock it»): o item
+        // ligado à PRÓPRIA linha do BR (mirror_src), com a despesa já batendo (classe ok), recebe o US$ do BR — o BR manda. Item casado só
+        // por valor/texto continua travando: aí não há certeza de que é a mesma linha.
+        const srcIt = parseSrc(it.mirror_src)
+        if (classe === 'ok' && Rv != null && srcIt?.banco === 'BR' && srcIt.tabela === 'invoice_expenses' && srcIt.id === p.s.id) {
+          const qi = num(it.quantity) || 1
+          const para = { unit_price: r2(Rv / qi) }
+          m.op({ tipo: 'reajustar', banco: 'US', tabela: 'invoice_items', id: it.id, de: { unit_price: it.unit_price ?? null }, para, direcao: 1, rotulo: `item ${limpa(it.description).slice(0, 40)}: US$ ${r2(linhaItem(it))} → ${r2(Rv)} (o US$ da linha do BR)` })
+          Object.assign(it, para)
+        } else m.conflito(`item divergente: ${limpa(it.description).slice(0, 40)} US$ ${r2(linhaItem(it))} × BR US$ ${Rv == null ? '?' : r2(Rv)}`)
+      }
       else if (num(it.base_cost) > 0 && !perto(num(it.base_cost) * (num(it.quantity) || 1), C)) m.aviso(`base_cost do item ${limpa(it.description).slice(0, 30)} (${r2(num(it.base_cost) * (num(it.quantity) || 1))}) ≠ custo ${r2(C)} — informativo`)
       if (p.e.br_expense_id && p.e.br_expense_id !== p.s.id) m.conflito(`a despesa ${limpa(p.e.item).slice(0, 40)} tem br_expense_id de outra linha`)
       else if (!p.e.mirror_src) m.op({ tipo: 'vincular_linha', banco: 'US', tabela: 'invoice_expenses', id: p.e.id, mirror_src: `BR:invoice_expenses:${p.s.id}`, elo: p.e.br_expense_id ? null : { campo: 'br_expense_id', valor: p.s.id }, direcao: 1, rotulo: `despesa ${limpa(p.e.item).slice(0, 50)} ⇄ BR ${p.s.id.slice(0, 8)} (${p.como})` })
@@ -1781,20 +1792,27 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       // real»). O dinheiro em R$ não muda, então a baixa do BR não importa aqui. Despesa e item.
       // Sem R$ gravado no US (folha antiga): o R$ do espelho é o real (cartão do BR) e vira o amount_brl do US — o carimbo só
       // pega campo vazio. Só nas tabelas do US que têm amount_brl.
+      // DESTRAVADO (18/10/2026 — Márcio: «todas as movimentações financeiras já existentes no app entre US vs BR devem estar registradas
+      // com os valores e câmbios reais, sem nenhum markup» · «unblock it»): o par ligado por mirror_src é a MESMA linha com certeza, então
+      // o US$ do US manda SEMPRE — também em ASSETS (sem amount_brl no US: o R$ do espelho fica como está), com tax/extra no espelho (o
+      // amount_usd é resolvido para que o US$ da linha inteira — preço + tax/extra pelo fator da própria linha — feche com o do US) e com
+      // R$ diferente dos dois lados (segue só o aviso «os dois gravados»; o R$ não muda em lado nenhum).
       const temBrlUS = ['staff_expenses', 'fixed_cost_expenses', 'invoice_expenses', 'inputs', 'inventory'].includes(p.f.tabela)
-      if (!ok && !reajustado && p.como === 'mirror_src' && (p.f.brl != null ? perto(brlBR(p.e), p.f.brl, 0.05) : temBrlUS && brlBR(p.e) > 0) && !num(p.e.tax) && !num(p.e.extra)) {
+      const teBR = num(p.e.tax) + num(p.e.extra), qE = num(p.e.quantity) || 1
+      const resolvivel = !teBR || num(p.e.price) > 0
+      if (!ok && !reajustado && p.como === 'mirror_src' && resolvivel) {
         const q = p.f.q || 1
-        if (p.f.brl == null) {
+        if (p.f.brl == null && temBrlUS && brlBR(p.e) > 0) {
           const brlReal = r2(brlBR(p.e))
           m.op({ tipo: 'carimbo', banco: 'US', tabela: p.f.tabela, id: p.f.linha.id, campo: 'amount_brl', valor: brlReal, regra: `R$ real do espelho ${String(p.e.id).slice(0, 8)} na ${bInv.get(p.e.invoice_id)?.invoice_code || '085.N'}`, direcao: 3,
             rotulo: `R$ de ${p.f.item.slice(0, 40)} carimbado no US`, guarda: {}, confere: [] })
           p.f.brl = brlReal
         }
-        const paraE = { amount_usd: r2(p.f.usd / q) }
+        const paraE = { amount_usd: teBR ? r4(p.f.usd / (qE + teBR / num(p.e.price))) : r2(p.f.usd / qE) }
         m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_expenses', id: p.e.id, de: { amount_usd: p.e.amount_usd ?? null }, para: paraE, direcao: 3, rotulo: `US$ do espelho ${p.f.item.slice(0, 40)}: ${r2(Rv ?? 0)} → ${p.f.usd} (o R$ ${r2(brlBR(p.e))} fica)` })
         Object.assign(p.e, paraE)
         if (pt && parseSrc(pt.mirror_src)) {
-          const paraP = { unit_price_usd: r2(p.f.usd / q) }
+          const paraP = { unit_price_usd: r2(p.f.usd / (num(pt.quantity) || q)) }
           m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_parts', id: pt.id, de: { unit_price_usd: pt.unit_price_usd ?? null }, para: paraP, direcao: 3, rotulo: `US$ do item ${p.f.item.slice(0, 40)} → ${p.f.usd}` })
           Object.assign(pt, paraP)
         }
