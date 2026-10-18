@@ -9,6 +9,7 @@ import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseli
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 import TrackSection from '@/components/TrackSection'
+import { ReportGroupPicker } from '@/components/ReportGroupPicker'
 
 // DYNO primeiro e por padrão (ordem do usuário, 17/ago/2026): dentro de um pack é a
 // página principal — é ela que diz onde o carro está e quanto falta pra meta.
@@ -162,12 +163,9 @@ async function propagaReferencia(sourceCode: string): Promise<void> {
   await empurraPerda([sourceCode, ...filhos], Number(ref.loss_pct))
 }
 
-// Every performance-page report (dyno pulls, DynoData receipt, DataSheet) goes to
-// this WhatsApp group ONLY — never the default group.
-// 10/10/2026 foi para «GZ28 & Ghost Performance»; 12/10/2026 Márcio: «return the dyno reports to the original group»;
-// 14/10/2026 Márcio: «bring back the dyno report sendings to ghost group, instead of Tcal US».
-// 18/10/2026 Márcio: «reports de performance de volta pro Tcal US, caso não esteja, now».
-const REPORTS_GROUP = 'GZ28US - Tcal'
+// O GRUPO DOS REPORTS DA PERFORMANCE (dyno, DynoData, DataSheet, pista) é ESCOLHIDO a cada envio — Tcal US ou Ghost Performance
+// (components/ReportGroupPicker.tsx, Márcio 18/10/2026). Antes era uma constante que alternava a pedido: 10/10 Ghost, 12/10 Tcal,
+// 14/10 Ghost, 18/10 Tcal.
 
 function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLoss, packName }: { rideId: string; rideCode: string; rideName: string; rideTitle: string; buildNo: number; defaultLoss: string; packName: string }) {
   const [pulls, setPulls] = useState<DynoPull[]>([])
@@ -247,6 +245,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   // After a pull is saved, ask whether to report it on WhatsApp (and optionally to the client).
   const [reportPull, setReportPull] = useState<DynoPull | null>(null)
   const [reportToClient, setReportToClient] = useState(false)
+  // o grupo escolhido no diálogo aberto (puxada ou DynoData) — começa vazio a cada abertura
+  const [reportGroup, setReportGroup] = useState('')
   const [reporting, setReporting] = useState(false)
   const [car, setCar] = useState<{ manufacturer: string | null; brand: string | null; model: string | null; version: string | null; special_edition: string | null; year: number | null } | null>(null)
   // "SEND DYNO DATA" — generate the full sheet PDF and WhatsApp it (group + optionally client).
@@ -746,8 +746,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   }
 
   // Post the report to the WhatsApp reports group. Returns true on success.
-  async function sendGroupReport(p: DynoPull): Promise<boolean> {
-    const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: REPORTS_GROUP, body: pullReport(p, 'group') }
+  async function sendGroupReport(p: DynoPull, group: string): Promise<boolean> {
+    const payload: { toGroupName: string; body: string; documentUrl?: string; filename?: string } = { toGroupName: group, body: pullReport(p, 'group') }
     if (p.document_url) { payload.documentUrl = p.document_url; payload.filename = docFilename(p) }
     try {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify(payload) })
@@ -759,14 +759,15 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
 
   // The "Report this pull?" dialog Send button.
   async function confirmReport() {
-    if (!reportPull) return
+    if (!reportPull || !reportGroup) return
     setReporting(true)
     try {
-      await sendGroupReport(reportPull)
+      await sendGroupReport(reportPull, reportGroup)
       if (reportToClient && client) await sendPull(reportPull)
     } finally {
       setReporting(false)
       setReportPull(null)
+      setReportGroup('')
     }
   }
 
@@ -953,6 +954,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
 
   // SEND DYNO DATA dialog confirm: build the PDF, upload it, WhatsApp it to the group (+ client).
   async function confirmSendDynoData() {
+    if (!reportGroup) return
+    const group = reportGroup
     setDynoSending(true)
     try {
       const blob = await buildDynoPdf()
@@ -993,9 +996,9 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       const caption = [...captionBase, ...targetLines(latest?.whp ?? null, 'group', cfOf(latest))].join('\n') + footer
       const captionClient = [...captionBase, ...targetLines(latest?.whp ?? null, 'client')].join('\n') + footer
 
-      const group = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: caption, documentUrl: url, filename }) })
-      const gd = await group.json().catch(() => ({}))
-      if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${group.status}`))); return }
+      const gres = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: group, body: caption, documentUrl: url, filename }) })
+      const gd = await gres.json().catch(() => ({}))
+      if (!gd.ok) { alert('WhatsApp send failed: ' + (gd?.detail?.error ? JSON.stringify(gd.detail.error) : (gd.error || `HTTP ${gres.status}`))); return }
 
       if (dynoSendToClient && client) {
         // Honor the client's preferred channel (SMS-only clients aren't on WhatsApp).
@@ -1027,6 +1030,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     } finally {
       setDynoSending(false)
       setDynoSendOpen(false)
+      setReportGroup('')
     }
   }
 
@@ -1106,14 +1110,15 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
             <h2 className="text-2xl font-bold">REPORT THIS PULL TO WHATSAPP?</h2>
+            <ReportGroupPicker value={reportGroup} onChange={setReportGroup} disabled={reporting} />
             <label className="flex items-center gap-3 text-lg cursor-pointer">
               <input type="checkbox" checked={reportToClient} onChange={(e) => setReportToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
               Send to the client too?
             </label>
             {reportToClient && !client && <p className="text-sm text-yellow-400">This ride has no client on file — only the group report will be sent.</p>}
             <div className="flex gap-3 pt-1">
-              <button onClick={() => setReportPull(null)} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
-              <button onClick={confirmReport} disabled={reporting} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
+              <button onClick={() => { setReportPull(null); setReportGroup('') }} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
+              <button onClick={confirmReport} disabled={reporting || !reportGroup} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
             </div>
           </div>
         </div>
@@ -1365,13 +1370,14 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
             <h2 className="text-2xl font-bold">SEND DYNO DATA TO WHATSAPP?</h2>
             <p className="text-sm text-gray-400">Generates the full dyno sheet (BoneStock + every pull + gains) as a PDF and sends it to the reports group.</p>
+            <ReportGroupPicker value={reportGroup} onChange={setReportGroup} disabled={dynoSending} />
             <label className="flex items-center gap-3 text-lg cursor-pointer">
               <input type="checkbox" checked={dynoSendToClient} onChange={(e) => setDynoSendToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
               Send to the client too?
             </label>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setDynoSendOpen(false)} disabled={dynoSending} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
-              <button onClick={confirmSendDynoData} disabled={dynoSending} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{dynoSending ? 'SENDING…' : 'SEND'}</button>
+              <button onClick={() => { setDynoSendOpen(false); setReportGroup('') }} disabled={dynoSending} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
+              <button onClick={confirmSendDynoData} disabled={dynoSending || !reportGroup} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{dynoSending ? 'SENDING…' : 'SEND'}</button>
             </div>
           </div>
         </div>
@@ -1474,6 +1480,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // SEND DATASHEET confirm dialog + "also send to the client" choice.
   const [sheetSendOpen, setSheetSendOpen] = useState(false)
   const [sheetToClient, setSheetToClient] = useState(false)
+  const [sheetGroup, setSheetGroup] = useState('')
   // The build's given name (ride_builds.name) — printed on the BuildSheet PDF header.
   const [buildName, setBuildName] = useState('')
   // o build_no da base deste carro — o rótulo «Build.0N» conta a partir dela (buildDisplayLabel)
@@ -1831,8 +1838,10 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   // WhatsApp the full build sheet to the technical group — every visible field,
   // with the MODDED values (anything not Stock / not the field's stock default) in bold.
-  async function sendSheet(alsoClient: boolean) {
+  async function sendSheet(alsoClient: boolean, group: string) {
+    if (!group) return
     setSheetSendOpen(false)
+    setSheetGroup('')
     setBsSending(true)
     try {
       // The PDF file goes ATTACHED, regenerated from the on-screen sheet so no stale file goes out.
@@ -1879,7 +1888,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         }),
         ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
       ]
-      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: REPORTS_GROUP, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
+      const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: group, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
       if (!data.ok) { alert('WhatsApp send failed: ' + (data?.detail?.error ? JSON.stringify(data.detail.error) : (data.error || `HTTP ${res.status}`))); return }
       // Optionally send the client their own copy of the DataSheet — a cópia DO CLIENTE, com a meta em BHP (LEI DA META 17/10/2026).
@@ -1916,15 +1925,15 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full">
             <h2 className="text-2xl font-bold mb-2">Send DataSheet</h2>
-            <p className="text-gray-400 mb-5">Goes to the <span className="font-bold text-gray-200">{REPORTS_GROUP}</span> group.</p>
+            <div className="mb-5"><ReportGroupPicker value={sheetGroup} onChange={setSheetGroup} disabled={bsSending} /></div>
             <label className="flex items-center gap-3 mb-2 cursor-pointer">
               <input type="checkbox" checked={sheetToClient} onChange={(e) => setSheetToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
               <span className="text-lg">Also send to the client{client?.name ? ` (${client.name})` : ''}</span>
             </label>
             {sheetToClient && !client?.phone && <p className="text-sm text-yellow-400 mb-2">This ride has no client phone on file — only the group send will go out.</p>}
             <div className="flex gap-4 mt-6">
-              <button onClick={() => setSheetSendOpen(false)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">CANCEL</button>
-              <button onClick={() => sendSheet(sheetToClient)} className="flex-1 bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">SEND</button>
+              <button onClick={() => { setSheetSendOpen(false); setSheetGroup('') }} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl font-bold">CANCEL</button>
+              <button onClick={() => sendSheet(sheetToClient, sheetGroup)} disabled={!sheetGroup} className="flex-1 bg-blue-700 hover:bg-blue-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold">SEND</button>
             </div>
           </div>
         </div>
@@ -2136,7 +2145,7 @@ export default function RidePerformancePage() {
         <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
       ) : (
         // 1/4 MILE · 1/8 MILE · 100-200 (Márcio, 10/10/2026): «same standards of the dyno page» — components/TrackSection.
-        <TrackSection key={tab} mode={tab === '1/4 MILE' ? 'QUARTER' : tab === '1/8 MILE' ? 'EIGHTH' : 'ROLL'} rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} packName={buildName} reportsGroup={REPORTS_GROUP} />
+        <TrackSection key={tab} mode={tab === '1/4 MILE' ? 'QUARTER' : tab === '1/8 MILE' ? 'EIGHTH' : 'ROLL'} rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} packName={buildName} />
       )}
     </main>
   )

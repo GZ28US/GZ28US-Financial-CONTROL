@@ -16,6 +16,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, isBaselineName } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
+import { ReportGroupPicker } from '@/components/ReportGroupPicker'
 
 export type TrackMode = 'QUARTER' | 'EIGHTH' | 'ROLL'
 
@@ -114,8 +115,9 @@ const FIELDS: Record<TrackMode, FField[]> = {
 
 type Client = { name: string | null; email: string | null; phone: string | null; country: string | null; preferred_message_method: string | null; instagram: string | null; facebook: string | null }
 
-export default function TrackSection({ mode, rideId, rideCode, rideName, rideTitle, buildNo, packName, reportsGroup }: {
-  mode: TrackMode; rideId: string; rideCode: string; rideName: string; rideTitle: string; buildNo: number; packName: string; reportsGroup: string
+// O grupo do report é ESCOLHIDO a cada envio (Tcal US ou Ghost Performance — components/ReportGroupPicker.tsx, 18/10/2026).
+export default function TrackSection({ mode, rideId, rideCode, rideName, rideTitle, buildNo, packName }: {
+  mode: TrackMode; rideId: string; rideCode: string; rideName: string; rideTitle: string; buildNo: number; packName: string
 }) {
   const [runs, setRuns] = useState<Run[]>([])
   const [loading, setLoading] = useState(true)
@@ -129,6 +131,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   const scanRef = useRef<HTMLInputElement>(null)
   const [reportRun, setReportRun] = useState<Run | null>(null)
   const [reportToClient, setReportToClient] = useState(false)
+  const [reportGroup, setReportGroup] = useState('')
   const [reporting, setReporting] = useState(false)
   const [sendOpen, setSendOpen] = useState(false)
   const [sendToClient, setSendToClient] = useState(false)
@@ -345,16 +348,17 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   }
 
   async function confirmReport() {
-    if (!reportRun) return
+    if (!reportRun || !reportGroup) return
     setReporting(true)
     try {
       const body = runReport(reportRun)
       const doc = reportRun.document_url ? { documentUrl: reportRun.document_url, filename: docName(reportRun) } : {}
-      const ok = await sendWa({ toGroupName: reportsGroup, body, ...doc })
+      const ok = await sendWa({ toGroupName: reportGroup, body, ...doc })
       if (ok && reportToClient) await sendToClientChannel(body, reportRun.document_url, doc, `${title} run`)
     } finally {
       setReporting(false)
       setReportRun(null)
+      setReportGroup('')
     }
   }
 
@@ -463,6 +467,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
   }
 
   async function confirmSendData() {
+    if (!reportGroup) return
     setSendingData(true)
     try {
       const blob = await buildPdf()
@@ -488,13 +493,14 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
           ? `${head.label}: FROM ${head.fmt(head.get(reference))} TO *${head.fmt(head.get(latest))}* - GAIN: *${(() => { const g = gainOf(head, latest, reference); return g == null ? '—' : (g > 0 ? '+' : '') + head.fmt(g) + ' s' })()}*`
           : null,
       ].filter(Boolean).join('\n') + '\n\nSent by GZ28 Control App'
-      if (!(await sendWa({ toGroupName: reportsGroup, body: lines, documentUrl: url, filename }))) return
+      if (!(await sendWa({ toGroupName: reportGroup, body: lines, documentUrl: url, filename }))) return
       if (sendToClient) await sendToClientChannel(lines, url, { documentUrl: url, filename }, `GZ28${DIALECT} ${title} RECEIPT`)
     } catch (e) {
       alert('Could not generate/send the data: ' + String(e))
     } finally {
       setSendingData(false)
       setSendOpen(false)
+      setReportGroup('')
     }
   }
 
@@ -508,6 +514,7 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
             <h2 className="text-2xl font-bold">REPORT THIS RUN TO WHATSAPP?</h2>
+            <ReportGroupPicker value={reportGroup} onChange={setReportGroup} disabled={reporting} />
             <pre className="text-xs text-gray-400 whitespace-pre-wrap bg-black/40 rounded-xl p-3 max-h-60 overflow-y-auto">{runReport(reportRun).replace(/\*/g, '')}</pre>
             <label className="flex items-center gap-3 text-lg cursor-pointer">
               <input type="checkbox" checked={reportToClient} onChange={(e) => setReportToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
@@ -515,8 +522,8 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
             </label>
             {reportToClient && !client && <p className="text-sm text-yellow-400">This ride has no client on file — only the group report will be sent.</p>}
             <div className="flex gap-3 pt-1">
-              <button onClick={() => setReportRun(null)} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
-              <button onClick={confirmReport} disabled={reporting} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
+              <button onClick={() => { setReportRun(null); setReportGroup('') }} disabled={reporting} className="flex-1 bg-gray-700 hover:bg-gray-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">SKIP</button>
+              <button onClick={confirmReport} disabled={reporting || !reportGroup} className="flex-1 bg-green-700 hover:bg-green-600 disabled:opacity-50 px-5 py-3 rounded-2xl font-bold text-lg">{reporting ? 'SENDING…' : 'SEND'}</button>
             </div>
           </div>
         </div>
@@ -648,13 +655,14 @@ export default function TrackSection({ mode, rideId, rideCode, rideName, rideTit
           <div className="bg-gray-900 border border-gray-700 rounded-3xl p-6 w-full max-w-md flex flex-col gap-5">
             <h2 className="text-2xl font-bold">SEND {title} DATA TO WHATSAPP?</h2>
             <p className="text-sm text-gray-400">Generates the {title} sheet (every run + best + gains) as a PDF, saves it in the car&apos;s Dropbox Performance folder and sends it to the reports group.</p>
+            <ReportGroupPicker value={reportGroup} onChange={setReportGroup} disabled={sendingData} />
             <label className="flex items-center gap-3 text-lg cursor-pointer">
               <input type="checkbox" checked={sendToClient} onChange={(e) => setSendToClient(e.target.checked)} className="w-5 h-5 accent-green-600" />
               Send to the client too?
             </label>
             <div className="flex gap-3 justify-end">
-              <button onClick={() => setSendOpen(false)} disabled={sendingData} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
-              <button onClick={confirmSendData} disabled={sendingData} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{sendingData ? 'SENDING…' : 'SEND'}</button>
+              <button onClick={() => { setSendOpen(false); setReportGroup('') }} disabled={sendingData} className="bg-gray-600 hover:bg-gray-500 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">SKIP</button>
+              <button onClick={confirmSendData} disabled={sendingData || !reportGroup} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold">{sendingData ? 'SENDING…' : 'SEND'}</button>
             </div>
           </div>
         </div>
