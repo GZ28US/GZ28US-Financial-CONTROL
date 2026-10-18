@@ -72,11 +72,12 @@ export type CrossingWarning =
   | { kind: 'br_converted_by_invoice_rate'; lines: number }
 
 // counted = false: item estornado/cancelado (lib/estorno.ts) — aparece riscado e fica fora de parts/total.
-export type UsItemLine = { id: string; description: string; unitPrice: number; quantity: number; usd: number; cancelStatus: CancelStatus | null; counted: boolean }
+// day (17/10/2026): o dia do dinheiro da linha — a tela GZ FLOW separa as eras (até 31/12/2025 × 2026 em diante) por ele.
+export type UsItemLine = { id: string; description: string; unitPrice: number; quantity: number; usd: number; cancelStatus: CancelStatus | null; counted: boolean; day: string | null }
 export type UsServiceLine = { id: string; description: string; usd: number }
 export type UsIncomeLine = { id: string; description: string; usd: number; paidAt: string | null; paymentDate: string | null; counted: boolean }
 export type UsInvoice = {
-  id: string; code: string; path: string; label: string; status: string | null
+  id: string; code: string; path: string; label: string; status: string | null; day: string | null   // day: a data da invoice (fallback da era)
   counted: boolean; reason: NotCountedReason | null
   parts: number; services: number; flTaxPct: number; discountPct: number
   total: number; received: number; open: number
@@ -84,10 +85,10 @@ export type UsInvoice = {
   items: UsItemLine[]; serviceLines: UsServiceLine[]; incomes: UsIncomeLine[]
 }
 export type UsdFrom = 'recorded' | 'invoice_usd_rate' | 'none'
-export type BrPartLine = { id: string; description: string; brl: number; usd: number; usdFrom: UsdFrom }
+export type BrPartLine = { id: string; description: string; brl: number; usd: number; usdFrom: UsdFrom; day: string | null }
 export type BrPaymentLine = { id: string; description: string; brl: number; usd: number; usdFrom: UsdFrom; paidAt: string | null; paymentDate: string | null; counted: boolean }
 export type BrInvoice = {
-  id: string; code: string; url: string; label: string; usdRate: number | null
+  id: string; code: string; url: string; label: string; usdRate: number | null; day: string | null
   counted: boolean; reason: NotCountedReason | null
   totalBrl: number; totalUsd: number; receivedBrl: number; receivedUsd: number; open: number
   pendingBrl: number; convertedByInvoiceRate: number
@@ -209,13 +210,13 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
     const pend = inc.filter(p => !p.paid_at)
     const counted = countsOnUsSide(inv)
     return {
-      id: inv.id, code: String(inv.invoice_code || '?'), path: ownerPath(inv),
+      id: inv.id, code: String(inv.invoice_code || '?'), path: ownerPath(inv), day: String(inv.hiring_date || inv.created_at || '').slice(0, 10) || null,
       label: [rideLabel(usRides, inv), String(inv.service || '').trim()].filter(Boolean).join(' · '), status: inv.live_status ?? null,
       counted, reason: counted ? null : inv.is_quote ? 'QUOTE' : 'CAR_INVOICE',   // carro: a régua do motor conta só as 006.N sem ride
       parts: r2(g.base), services: r2(g.serv), flTaxPct: num(inv.florida_taxes), discountPct: num(inv.global_discount),
       total: r2(g.grand), received: r2(received), open: r2(g.grand - received),
       pending: r2(pend.reduce((s, p) => s + num(p.amount), 0)), pendingN: pend.length,
-      items: (allItemsBy.get(inv.id) || []).map(i => ({ id: i.id, description: String(i.description || ''), unitPrice: num(i.unit_price), quantity: qty(i), usd: r2(lineValue(i)), cancelStatus: cancelOf(i), counted: !itemFora.has(i) })),
+      items: (allItemsBy.get(inv.id) || []).map(i => ({ id: i.id, description: String(i.description || ''), unitPrice: num(i.unit_price), quantity: qty(i), usd: r2(lineValue(i)), cancelStatus: cancelOf(i), counted: !itemFora.has(i), day: i.payment_date ? String(i.payment_date).slice(0, 10) : null })),
       serviceLines: serv.map(x => ({ id: x.id, description: String(x.description || ''), usd: r2(num(x.price)) })),
       incomes: inc.map(p => ({ id: p.id, description: String(p.description || ''), usd: r2(num(p.amount)), paidAt: p.paid_at ?? null, paymentDate: p.payment_date ?? null, counted: counted && !!p.paid_at })),
     }
@@ -248,7 +249,7 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
     const totalUsd = parts.reduce((s, p) => s + partUsd(p, rate), 0)
     const receivedUsd = paid.reduce((s, p) => s + payUsd(p, rate), 0)
     return {
-      id: inv.id, code: String(inv.invoice_code || '?'), url: BR_APP_BASE + ownerPath(inv),
+      id: inv.id, code: String(inv.invoice_code || '?'), url: BR_APP_BASE + ownerPath(inv), day: String(inv.created_at || '').slice(0, 10) || null,
       label: [rideLabel(brRides, inv), String(inv.service || '').trim()].filter(Boolean).join(' · '), usdRate: rate > 0 ? rate : null,
       counted, reason: counted ? null : 'QUOTE',
       totalBrl: r2(parts.reduce((s, p) => s + lineValue(p), 0)), totalUsd: r2(totalUsd),
@@ -256,7 +257,7 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
       pendingBrl: r2(pays.filter(p => !p.paid_at).reduce((s, p) => s + num(p.amount), 0)),
       convertedByInvoiceRate: parts.filter(p => !recorded(p.unit_price_usd)).length + paid.filter(p => !recorded(p.amount_usd)).length,
       servicesBrl: r2((bServBy.get(inv.id) || []).reduce((s, x) => s + num(x.price), 0)), flTaxPct: num(inv.florida_taxes), discountPct: num(inv.global_discount),
-      lines: parts.map(p => ({ id: p.id, description: String(p.description || ''), brl: r2(lineValue(p)), usd: r2(partUsd(p, rate)), usdFrom: from(recorded(p.unit_price_usd), rate) })),
+      lines: parts.map(p => ({ id: p.id, description: String(p.description || ''), brl: r2(lineValue(p)), usd: r2(partUsd(p, rate)), usdFrom: from(recorded(p.unit_price_usd), rate), day: p.payment_date ? String(p.payment_date).slice(0, 10) : null })),
       payments: pays.map(p => ({ id: p.id, description: String(p.description || ''), brl: r2(num(p.amount)), usd: r2(payUsd(p, rate)), usdFrom: from(recorded(p.amount_usd), rate), paidAt: p.paid_at ?? null, paymentDate: p.payment_date ?? null, counted: counted && !!p.paid_at })),
     }
   }

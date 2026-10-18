@@ -65,8 +65,8 @@ async function readByIds(db: SupabaseClient, label: string, table: string, colum
 export async function readCrossingRows(dbs: CrossingDbs): Promise<CrossingRows> {
   const readAt = new Date().toISOString()
   const [usInvoices, brInvoices] = await Promise.all([
-    readAll(dbs.us, 'US', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, service, florida_taxes, global_discount, live_status', q => q.eq('client_id', US_CLIENT_GZ28BR)),
-    readAll(dbs.br, 'BR', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, usd_rate, service, florida_taxes, global_discount', q => q.eq('client_id', BR_CLIENT_GZ28US)),
+    readAll(dbs.us, 'US', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, service, florida_taxes, global_discount, live_status, hiring_date, created_at', q => q.eq('client_id', US_CLIENT_GZ28BR)),
+    readAll(dbs.br, 'BR', 'invoices', 'id, invoice_code, client_id, ride_id, is_quote, usd_rate, service, florida_taxes, global_discount, created_at', q => q.eq('client_id', BR_CLIENT_GZ28US)),
   ])
   const usIds = usInvoices.map(i => i.id), brIds = brInvoices.map(i => i.id)
   const usRideIds = [...new Set(usInvoices.map(i => i.ride_id).filter(Boolean))] as string[]
@@ -74,11 +74,11 @@ export async function readCrossingRows(dbs: CrossingDbs): Promise<CrossingRows> 
   const pend = pendingIds()
   const [usItems, usServices, usIncomes, usRides, brParts, brServices, brPayments, brRides, usOrigins, brExpenses] = await Promise.all([
     // cancel_status: o item estornado sai da conta (lib/estorno.ts). A coluna nasce na MIGRATION_invoice_items_cancel_status.sql.
-    readByInvoice(dbs.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, cancel_status', usIds),
+    readByInvoice(dbs.us, 'US', 'invoice_items', 'id, invoice_id, description, unit_price, quantity, cancel_status, payment_date', usIds),
     readByInvoice(dbs.us, 'US', 'invoice_services', 'id, invoice_id, description, price', usIds),
     readByInvoice(dbs.us, 'US', 'invoice_incomes', 'id, invoice_id, amount, payment_date, paid_at, description', usIds),
     readByIds(dbs.us, 'US', 'rides', 'id, project_code, project_name', usRideIds),
-    readByInvoice(dbs.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, unit_price_usd', brIds),
+    readByInvoice(dbs.br, 'BR', 'invoice_parts', 'id, invoice_id, description, unit_price, quantity, unit_price_usd, payment_date', brIds),
     readByInvoice(dbs.br, 'BR', 'invoice_services', 'id, invoice_id, description, price', brIds),
     readByInvoice(dbs.br, 'BR', 'invoice_payments', 'id, invoice_id, amount, amount_usd, payment_date, paid_at, description', brIds),
     readByIds(dbs.br, 'BR', 'rides', 'id, project_code, project_name', brRideIds),
