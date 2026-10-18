@@ -1376,7 +1376,7 @@ function planejarFixoBR(foto: Foto, excluidos: Excluido[]): ChavePlano[] {
     const R = foto.us.rendas.filter(p => invAlvo.includes(p.invoice_id))
     const srcDe = (f: Row) => `BR:fixed_cost_expenses:${f.id}`
     const idDoSrc = (l: Row): string | null => { const p = parseSrc(l.mirror_src); return p?.banco === 'BR' && p.tabela === 'fixed_cost_expenses' ? p.id : null }
-    const txtFonte = () => chaveTexto(nome), txtUS = (l: Row) => chaveTexto(l.supplier || l.item || l.description)
+    const txtFonte = (f: Row) => chaveTexto(nomeDe(f.supplier_id)), txtUS = (l: Row) => chaveTexto(l.supplier || l.item || l.description)
     const pares: { s: Row; e: Row; como: Par['como'] }[] = []
     let SS = [...g.fontes], EE = [...E]
     for (const e of E) {
