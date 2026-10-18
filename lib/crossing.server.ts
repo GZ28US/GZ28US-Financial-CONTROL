@@ -476,6 +476,9 @@ export type Op =
   | { tipo: 'pendente_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; rotulo: string }
   // ESPELHO ÓRFÃO (01/10/2026): a renda do BR que originou esta renda do US não existe mais — a cópia sai junto.
   | { tipo: 'espelho_apagar'; banco: Banco; tabela: string; id: string; de: number; mirror_src: string; origem_id: string; rotulo: string }
+  // MOVER O ESPELHO (18/10/2026): a linha de origem MUDOU DE INVOICE (ex.: o kit comando da US.009.1 foi para a US.007.1). O espelho
+  // que mora na shopping invoice velha vai para a nova, com tudo o que tem (valor, baixa, recibo) — nada é apagado e recriado.
+  | { tipo: 'mover_linha'; banco: Banco; tabela: string; id: string; de_invoice: string; mirror_src: string; rotulo: string }
   // COMPROVANTE DE ENTRADA NO BR (17/10/2026): o BR_ENTRY da renda do US entra no receipt_url do pagamento espelho. Só ACRESCENTA
   // (nunca tira arquivo do BR); `de` = o receipt_url lido no plano, guarda do update.
   | { tipo: 'anexar_comprovante'; banco: Banco; tabela: string; id: string; de: string | null; urls: string[]; direcao: Direcao; rotulo: string }
@@ -586,7 +589,7 @@ class Montador {
   }
   fechar(): ChavePlano {
     const c = this.c
-    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'reajustar', 'espelho_apagar', 'criar_linha', 'anexar_comprovante', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
+    const ORDEM: Op['tipo'][] = ['vincular_invoice', 'criar_invoice', 'ponteiro_origem', 'vincular_linha', 'carimbo', 'reajustar', 'espelho_apagar', 'criar_linha', 'mover_linha', 'anexar_comprovante', 'pendente_criar', 'pendente_atualizar', 'pendente_apagar']
     const PAPEL = { despesa: 0, item: 1, renda: 2 } as const
     c.ops.sort((a, b) => ORDEM.indexOf(a.tipo) - ORDEM.indexOf(b.tipo) || (a.tipo === 'criar_linha' && b.tipo === 'criar_linha' ? PAPEL[a.papel] - PAPEL[b.papel] : 0))
     if (c.conflitos.length) { c.status = 'conflito'; c.ops = [] }
@@ -655,7 +658,8 @@ function mapaDeElos(tabelas: Record<string, Row[]>): Elos {
   return out
 }
 function conferirElos(m: Montador, elos: Elos, codigoDe: (invoiceId: string) => string) {
-  for (const o of m.c.ops) {
+  for (let i = 0; i < m.c.ops.length; i++) {
+    const o = m.c.ops[i]
     if (o.tipo !== 'criar_linha' && o.tipo !== 'pendente_criar' && o.tipo !== 'vincular_linha') continue
     const t = elos.get(o.tabela)
     if (!t) continue
@@ -664,6 +668,10 @@ function conferirElos(m: Montador, elos: Elos, codigoDe: (invoiceId: string) => 
       if (dono && String(dono.id) !== o.id) m.conflito(`o elo ${o.mirror_src} já está na linha ${String(dono.id).slice(0, 8)} (${codigoDe(dono.invoice_id)}) — não dá para ligá-lo a outra`)
       const atual = t.porId.get(o.id)?.mirror_src
       if (atual && atual !== o.mirror_src && atual !== o.de) m.conflito(`a linha ${o.id.slice(0, 8)} de ${o.tabela} já tem outro elo (${atual}) — o motor não troca elo`)
+    } else if (dono && o.tipo === 'criar_linha' && String(dono.mirror_src) === o.mirror_src && String(dono.invoice_id) !== String(m.c.alvo.id || '')) {
+      // A origem é DESTA chave agora e o espelho dela mora em outra shopping invoice: ele MUDA de invoice, não nasce de novo.
+      m.c.ops[i] = { tipo: 'mover_linha', banco: o.banco, tabela: o.tabela, id: String(dono.id), de_invoice: String(dono.invoice_id), mirror_src: o.mirror_src,
+        rotulo: `${o.tabela === 'invoice_payments' || o.tabela === 'invoice_incomes' ? 'renda' : o.tabela === 'invoice_expenses' ? 'despesa' : 'item'} ${String(dono.id).slice(0, 8)} sai da ${codigoDe(dono.invoice_id)} e vem para esta (a origem mudou de invoice)` }
     } else if (dono) {
       m.conflito(`${o.mirror_src} já está gravado em ${o.tabela} ${String(dono.id).slice(0, 8)} na ${codigoDe(dono.invoice_id)} — a data ou o documento da origem mudou? (nada gravado nesta chave)`)
     }
@@ -1915,7 +1923,13 @@ function planejarBR(foto: Foto, cot: Cotacoes, excluidos: Excluido[]): ChavePlan
       const ja = jaElo || (() => { const c = PgPagos.filter(p => !p.mirror_src && !p.us_income_id && ymd(p.payment_date) === dia && (perto(num(p.amount_usd), usd) || perto(num(p.amount), brl, 0.05))); return c.length === 1 ? c[0] : null })()
       if (ja) {
         PgPagos = PgPagos.filter(p => p !== ja)
-        const ok = ja.amount_usd != null ? perto(num(ja.amount_usd), usd) : perto(num(ja.amount), brl, 0.05)
+        let ok = ja.amount_usd != null ? perto(num(ja.amount_usd), usd) : perto(num(ja.amount), brl, 0.05)
+        // US$ DO ESPELHO DA RENDA (18/10/2026, a mesma regra do «US$ DO ESPELHO ANTIGO» da direção 3): ligado por mirror_src, o R$ do
+        // pagamento no BR é o R$ da renda do US e só o US$ diverge → o US$ do US manda; o R$ (e a baixa) não mudam.
+        if (!ok && ja.mirror_src === src && perto(num(ja.amount), brl, 0.05)) {
+          m.op({ tipo: 'reajustar', banco: 'BR', tabela: 'invoice_payments', id: ja.id, de: { amount_usd: ja.amount_usd ?? null }, para: { amount_usd: r2(usd) }, direcao: 4, rotulo: `US$ do pagamento espelho ${String(s.description || 'renda').slice(0, 40)}: ${num(ja.amount_usd)} → ${r2(usd)} (o R$ ${r2(num(ja.amount))} fica)` })
+          ja.amount_usd = r2(usd); ok = true
+        }
         m.c.pares.push({ direcao: 4, fonte_tabela: 'invoice_incomes', fonte_id: s.id, alvo_tabela: 'invoice_payments', alvo_id: ja.id, alvo_invoice: bInv.get(ja.invoice_id)?.invoice_code || '?', como: ja.mirror_src === src ? 'mirror_src' : ja.us_income_id === s.id ? 'elo' : 'valor', classe: ok ? 'ok' : 'divergente', usd_fonte: usd, usd_alvo: ja.amount_usd == null ? null : num(ja.amount_usd), rotulo: String(s.description || '').slice(0, 80) })
         if (!ok) m.conflito(`renda espelhada com valor divergente: ${String(s.description || '').slice(0, 30)}`)
         else {
@@ -2049,6 +2063,7 @@ export function simular(foto: Foto, chaves: ChavePlano[]): Foto {
       else if (o.tipo === 'reajustar') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, ...o.para } : r)) }
       else if (o.tipo === 'pendente_atualizar') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, amount: o.para, mirror_src: o.mirror_src } : r)) }
       else if (o.tipo === 'pendente_apagar' || o.tipo === 'espelho_apagar') { const t = tab(o.banco, o.tabela); t.set(t.get().filter(r => r.id !== o.id)) }
+      else if (o.tipo === 'mover_linha') { const t = tab(o.banco, o.tabela); t.set(t.get().map(r => r.id === o.id ? { ...r, invoice_id: alvoId } : r)) }
     }
   }
   return f
@@ -2442,6 +2457,14 @@ async function executarChave(b: Bancos, c: ChavePlano): Promise<Omit<ResultadoCh
         if (error || !ins) throw falhaDe(`criar ${o.tabela} (${o.mirror_src}): ${error?.message || 'sem linha'}`, error)
         escritas++
         await trilha(o.banco, o.tabela, ins.id, '(linha criada)', null, o.mirror_src, o.rotulo)
+      } else if (o.tipo === 'mover_linha') {
+        // Guarda: a linha ainda mora na invoice velha com o MESMO elo; mudou = conflito, a próxima rodada refaz.
+        if (!alvoId) throw new ErroTravessia('conflict', `mover ${o.tabela} ${o.id.slice(0, 8)}: a invoice-alvo ainda não existe`)
+        const { data, error } = await db.from(o.tabela).update({ invoice_id: alvoId }).eq('id', o.id).eq('invoice_id', o.de_invoice).eq('mirror_src', o.mirror_src).select('id')
+        if (error) throw falhaDe(`mover ${o.tabela} ${o.id}: ${error.message}`, error)
+        if (data?.length !== 1) throw new ErroTravessia('conflict', `${o.tabela} ${o.id.slice(0, 8)} mudou antes da mudança de invoice — nada movido`)
+        escritas++
+        await trilha(o.banco, o.tabela, o.id, 'invoice_id', o.de_invoice, alvoId, o.rotulo)
       } else if (o.tipo === 'anexar_comprovante') {
         // Guarda: o receipt_url tem de estar como o plano leu. Alguém anexou no meio = conflito; a próxima rodada refaz.
         const para = gravarRecibo([...urlsDoRecibo(o.de), ...o.urls])
