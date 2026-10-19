@@ -65,15 +65,41 @@ function todayET(): Date {
   return new Date(s + 'T00:00:00Z')
 }
 
-export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: string[] }> {
+// A PREVISÃO DEPOIS DA SAÍDA SAI SOZINHA (Márcio, 18/10/2026 — Eliel US.001 sai 26/10, 27 sextas previstas até abr/2027: «Delete, keep
+// the trail», e daqui pra frente do mesmo jeito). Season com date_conclusion: a folha DELA (WEEKLY/DAILY/MONTHLY) SEM pagamento e com
+// data DEPOIS do último dia é apagada, com a linha inteira em data_fixes ('season-fim-previsao-apagada'). Linha paga ou casada com o
+// banco nunca sai. Lei da saída: [[staff-departure-law]] — a data de saída é a única fonte da verdade.
+async function pruneAfterEnd(db: SupabaseClient): Promise<string[]> {
+  const out: string[] = []
+  const { data: fechadas } = await db.from('seasons').select('id, season_code, date_conclusion').not('date_conclusion', 'is', null)
+  for (const se of (fechadas || []) as { id: string; season_code: string | null; date_conclusion: string }[]) {
+    const { data: rows } = await db.from('staff_expenses').select('*').eq('season_id', se.id).is('payment_date', null)
+      .gt('expense_date', se.date_conclusion).in('type', ['WEEKLY', 'DAILY', 'MONTHLY'])
+    if (!rows?.length) continue
+    const { data: bt } = await db.from('bank_transactions').select('matched_id').eq('matched_table', 'staff_expenses').in('matched_id', rows.map((r: { id: string }) => r.id))
+    const ligadas = new Set((bt || []).map((b: { matched_id: string }) => b.matched_id))
+    for (const r of rows as { id: string; amount: number; expense_date: string }[]) {
+      if (ligadas.has(r.id)) continue
+      const { error: eF } = await db.from('data_fixes').insert({ check_key: 'season-fim-previsao-apagada', table_name: 'staff_expenses', row_id: r.id, field: '(linha apagada)',
+        old_value: JSON.stringify(r), new_value: null, label: `${se.season_code || se.id.slice(0, 6)}: previsão de folha ${r.expense_date} depois do último dia (${se.date_conclusion})` })
+      if (eF) continue // sem trilha, nada sai
+      const { data: del } = await db.from('staff_expenses').delete().eq('id', r.id).is('payment_date', null).select('id')
+      if (del?.length) out.push(`${se.season_code || se.id.slice(0, 6)} ${r.expense_date} -$${r.amount}`)
+    }
+  }
+  return out
+}
+
+export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: string[]; pruned: string[] }> {
   const created: string[] = []
+  const pruned = await pruneAfterEnd(db)
   const today = todayET()
   const hoje = ymd(today)
   // SEASON COM FIM MARCADO NO FUTURO (18/10/2026 — Eliel US.001 sai seg 26/10): ela paga até o último dia, não para no dia em que a
   // data de saída é gravada. Fechada = date_conclusion ANTES de hoje (Orlando).
   const { data } = await db.from('seasons').select('*').or(`date_conclusion.is.null,date_conclusion.gte.${hoje}`).not('pay_type', 'is', null)
   const seasons = (data as Season[]) || []
-  if (!seasons.length) return { created }
+  if (!seasons.length) return { created, pruned }
 
   for (const s of seasons) {
     const rate = Number(s.pay_rate) || 0
@@ -133,5 +159,5 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
     })
     if (!error) created.push(`${s.season_code || s.id.slice(0, 6)} ${periodo} $${usd}`)
   }
-  return { created }
+  return { created, pruned }
 }
