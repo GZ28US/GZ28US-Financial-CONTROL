@@ -78,15 +78,17 @@ async function ensureFixedCostPayments() {
 // funcionário está na casa o custo é infinito: o que fecha a conta não é uma data
 // de fim, é a janela de 6 meses.
 async function ensureStaffPayments() {
+  // Season com saída marcada no FUTURO continua prevista ATÉ o último dia (18/10/2026 — Eliel sai 26/10); nada depois dele.
+  const hojeYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
   const { data: seasons } = await supabase.from('seasons')
     .select('id, staff_id, date_entry, date_conclusion, pay_type, pay_rate, pay_currency, pay_day')
-    .is('date_conclusion', null).not('pay_type', 'is', null)
+    .or(`date_conclusion.is.null,date_conclusion.gte.${hojeYmd}`).not('pay_type', 'is', null)
   if (!seasons || seasons.length === 0) return
   const { data: existing } = await supabase.from('staff_expenses').select('season_id, type, expense_date')
   const has = new Set((existing || []).map((e: any) => `${e.season_id}|${e.type}|${e.expense_date}`))
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const limit = horizonEnd()
+  const horizonte = horizonEnd()
   // Taxa em reais vira dólar UMA vez, na cotação de hoje, para a previsão não
   // ficar mentindo com câmbio velho. A linha guarda os dois valores.
   // A MOEDA NÃO DIZ QUEM PAGA (Márcio, 26/ago/2026) — a previsão nasce sem
@@ -102,6 +104,9 @@ async function ensureStaffPayments() {
   for (const s of seasons as any[]) {
     const rate = Number(s.pay_rate) || 0
     if (rate <= 0) continue
+    // O horizonte desta season acaba no último dia dela, se tiver.
+    const fim = s.date_conclusion ? new Date(String(s.date_conclusion) + 'T00:00:00') : null
+    const limit = fim && fim < horizonte ? fim : horizonte
     // Sem cotação não se inventa número: a season em BRL fica fora da previsão
     // desta rodada em vez de entrar com um valor fabricado.
     const emBRL = (s.pay_currency || 'USD') === 'BRL'

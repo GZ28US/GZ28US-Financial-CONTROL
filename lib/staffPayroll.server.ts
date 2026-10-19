@@ -67,12 +67,13 @@ function todayET(): Date {
 
 export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: string[] }> {
   const created: string[] = []
-  const { data } = await db.from('seasons').select('*').is('date_conclusion', null).not('pay_type', 'is', null)
-  const seasons = (data as Season[]) || []
-  if (!seasons.length) return { created }
-
   const today = todayET()
   const hoje = ymd(today)
+  // SEASON COM FIM MARCADO NO FUTURO (18/10/2026 — Eliel US.001 sai seg 26/10): ela paga até o último dia, não para no dia em que a
+  // data de saída é gravada. Fechada = date_conclusion ANTES de hoje (Orlando).
+  const { data } = await db.from('seasons').select('*').or(`date_conclusion.is.null,date_conclusion.gte.${hoje}`).not('pay_type', 'is', null)
+  const seasons = (data as Season[]) || []
+  if (!seasons.length) return { created }
 
   for (const s of seasons) {
     const rate = Number(s.pay_rate) || 0
@@ -96,6 +97,8 @@ export async function runStaffPayroll(db: SupabaseClient): Promise<{ created: st
       periodo = hoje
     }
     if (!periodo) continue
+    // Nada depois do último dia da season.
+    if (s.date_conclusion && periodo > s.date_conclusion) continue
 
     const { data: dup } = await db.from('staff_expenses').select('id')
       .eq('season_id', s.id).eq('type', s.pay_type).eq('expense_date', periodo).limit(1)
