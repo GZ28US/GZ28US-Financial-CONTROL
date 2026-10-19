@@ -58,9 +58,16 @@ const DUTY_PRIORITY_RANK: Record<string, number> = { '0': 0, '1': 1, '2': 2, '3'
 // Ordering rule: PRIORITY first (P1 → StandBy); WITHIN the same priority, every duty of
 // the SAME CAR stays together (grouped by carLabel), then by description for a stable
 // order. So on a P1 (urgent) band, all of one car's duties show back-to-back.
+const filaDe = (desc: string): { nome: string; n: number } | null => { const m = /FILA DO ([^:]+):\s*(\d+)/i.exec(desc || ''); return m ? { nome: m[1].trim().toUpperCase(), n: parseInt(m[2], 10) } : null }
 function dutyOrder(a: { priority: string; carLabel: string; description: string }, b: { priority: string; carLabel: string; description: string }): number {
   const pr = (DUTY_PRIORITY_RANK[a.priority] ?? 0) - (DUTY_PRIORITY_RANK[b.priority] ?? 0)
   if (pr !== 0) return pr
+  // A FILA DITADA (Márcio, 19/10/2026: «fix it»): duty com «· FILA DO <NOME>: Nº» segue o Nº da fila dela, por cima do carro. Na mesma
+  // prioridade, as de fila vêm primeiro, agrupadas por nome e na ordem do Nº; o resto segue carro → descrição (ordem total, sem ciclo).
+  const fa = filaDe(a.description), fb = filaDe(b.description)
+  if (fa && !fb) return -1
+  if (!fa && fb) return 1
+  if (fa && fb) { const nome = fa.nome.localeCompare(fb.nome); if (nome !== 0) return nome; if (fa.n !== fb.n) return fa.n - fb.n }
   const car = (a.carLabel || '').localeCompare(b.carLabel || '')
   if (car !== 0) return car
   return (a.description || '').localeCompare(b.description || '')
