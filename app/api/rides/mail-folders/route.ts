@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
-import { ensureRideMailFolders, repatriateRideMail, empresaDoCodigo, CAIXAS_DA_EMPRESA, type RideMailCar, type Empresa, type EnsureSlotReport } from '@/lib/rideMailFolders.server'
+import { ensureRideMailFolders, repatriateRideMail, mergeMailFolder, empresaDoCodigo, CAIXAS_DA_EMPRESA, type RideMailCar, type Empresa, type EnsureSlotReport } from '@/lib/rideMailFolders.server'
 
 // A PASTA DE E-MAIL DO CARRO É SAGRADA (Márcio, 05/out/2026): «all the folders there must be 100% synced with the app».
 // E CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (ele, no mesmo dia): «gz28 both hotmail and gmais should have US cars /
@@ -73,6 +73,14 @@ export async function POST(req: NextRequest) {
     } catch (e) {
       return NextResponse.json({ ok: false, error: String((e as Error)?.message || e).slice(0, 300) }, { status: 500 })
     }
+  }
+  // { action: 'merge', fromSlot, fromPath, toSlot, toPath, dryRun?, limit? } — funde uma pasta de QUALQUER caixa numa pasta de outra
+  // (20/10/2026, caso Mustard → SpeedLight BR.512). Mesmo rito do repatriate. Só por pedido explícito.
+  if (b.action === 'merge') {
+    const fromSlot = Number(b.fromSlot), toSlot = Number(b.toSlot), fromPath = String(b.fromPath || ''), toPath = String(b.toPath || '')
+    if (!fromSlot || !toSlot || !fromPath.trim() || !toPath.trim()) return NextResponse.json({ error: 'fromSlot, fromPath, toSlot e toPath obrigatórios' }, { status: 400 })
+    const rep = await mergeMailFolder(streamDb(), { fromSlot, fromPath, toSlot, toPath }, { dryRun: !!b.dryRun, limit: Number(b.limit) || undefined })
+    return NextResponse.json({ ok: !rep.failed.length, dryRun: !!b.dryRun, folder: rep })
   }
   const code = String(b.code || '').trim(), name = String(b.name || '').trim()
   if (!code) return NextResponse.json({ error: 'code obrigatório' }, { status: 400 })

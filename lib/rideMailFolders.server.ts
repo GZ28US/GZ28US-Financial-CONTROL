@@ -350,67 +350,19 @@ async function graphJson(url: string, init: RequestInit): Promise<{ ok: boolean;
   return { ok: r.ok, status: r.status, j }
 }
 
-export async function repatriateRideMail(
-  db: SupabaseClient, frotas: Record<Empresa, RideMailCar[]>, opts: { dryRun?: boolean; folder?: string; limit?: number } = {},
-): Promise<RepatriateFolderReport[]> {
-  const out: RepatriateFolderReport[] = []
-  const tokens = new Map<number, { token: string; account: string; provider: string } | null>()
-  const caixa = async (slot: number) => {
-    if (tokens.has(slot)) return tokens.get(slot)!
-    const auth = await getMailAuth(db, slot)
-    const token = auth?.refresh_token ? await freshAccessToken(db, auth) : null
-    const v = auth && token ? { token, account: String(auth.account || ''), provider: mailProvider(auth) } : null
-    tokens.set(slot, v)
-    return v
-  }
-  const arvores = new Map<number, Awaited<ReturnType<typeof graphAll>>>()
-  const arvore = async (slot: number, token: string) => { if (!arvores.has(slot)) arvores.set(slot, await graphAll(token)); return arvores.get(slot)! }
-  const filhasDeRides = (todas: Awaited<ReturnType<typeof graphAll>>) => {
-    const pai = todas.find(f => !f.parentId && String(f.displayName).trim().toLowerCase() === 'rides')
-    return pai ? todas.filter(f => f.parentId === pai.id) : []
-  }
-  const tipo = (a: any) => String(a?.['@odata.type'] || '').split('.').pop() || 'anexo'
-  const ENDERECO = /^[^\s@<>"]+@[^\s@<>"]+$/
-  const comEndereco = (l: any) => (Array.isArray(l) ? l : []).filter((x: any) => ENDERECO.test(String(x?.emailAddress?.address || '').trim()))
-  const kb = (a: any) => Math.round(Number(a?.size) / 1024)
-  let restam = opts.limit && opts.limit > 0 ? opts.limit : Infinity
+const tipo = (a: any) => String(a?.['@odata.type'] || '').split('.').pop() || 'anexo'
+const ENDERECO = /^[^\s@<>"]+@[^\s@<>"]+$/
+const comEndereco = (l: any) => (Array.isArray(l) ? l : []).filter((x: any) => ENDERECO.test(String(x?.emailAddress?.address || '').trim()))
+const kb = (a: any) => Math.round(Number(a?.size) / 1024)
 
-  for (const slotOrigem of [...CAIXAS_DA_EMPRESA.US, ...CAIXAS_DA_EMPRESA.BR]) {
-    const casa = empresaDaCaixa(slotOrigem)!
-    const o = await caixa(slotOrigem)
-    if (!o) { out.push({ from: `caixa ${slotOrigem}`, to: '', total: 0, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: ['caixa sem conexão'], note: '' }); continue }
-    if (o.provider === 'gmail') continue   // Gmail como origem ainda não é atendido; a auditoria (`foreign`) continua acusando se aparecer
-    const HO = { Authorization: `Bearer ${o.token}`, 'Content-Type': 'application/json' }
-    const deFora = filhasDeRides(await arvore(slotOrigem, o.token)).filter(f => CARA_DE_CODIGO.test(f.displayName.trim()) && empresaDoCodigo(f.displayName) !== casa)
-    const removeSeVazia = async (id: string) => {
-      const info = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}?$select=id,totalItemCount,childFolderCount`, { headers: HO })
-      if (!info.ok || info.j.totalItemCount || info.j.childFolderCount) return false
-      return (await comFolego(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}`, { method: 'DELETE', headers: HO })).ok
-    }
-    for (const pasta of deFora) {
-      if (opts.folder && pasta.displayName.trim() !== opts.folder.trim()) continue
-      const dono = empresaDoCodigo(pasta.displayName)
-      const rep: RepatriateFolderReport = { from: `${o.account} · Rides/${pasta.displayName}`, to: '', total: pasta.itens, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: [], note: '' }
-      out.push(rep)
-      try {
-        // Pasta vazia de carro de fora: só a casca. Sai.
-        if (!pasta.itens) {
-          if (!opts.dryRun) rep.folderRemoved = await removeSeVazia(pasta.id)
-          rep.note = 'vazia' + (opts.dryRun ? ' — seria removida' : rep.folderRemoved ? ' — removida' : ' — não saiu')
-          continue
-        }
-        // O carro desta pasta: mesmo código E mesmo nome. Código de um, nome de outro = não é dele; gente decide.
-        const car = frotas[dono].find(c => daPasta(pasta.displayName, limpa(c.code), limpa(c.name)))
-        if (!car) { rep.note = `nenhum carro do ${dono} com este código e este nome — nada feito`; continue }
-        const slotDestino = CAIXA_PRINCIPAL[dono]
-        const d = await caixa(slotDestino)
-        if (!d || d.provider === 'gmail') { rep.failed.push(`caixa ${slotDestino} (destino) sem conexão`); continue }
-        const HD = { Authorization: `Bearer ${d.token}`, 'Content-Type': 'application/json' }
-        const alvo = alvoDe(car)
-        const destino = filhasDeRides(await arvore(slotDestino, d.token)).find(f => f.displayName.trim() === alvo)
-        rep.to = `${d.account} · Rides/${alvo}`
-        if (!destino) { rep.failed.push('a pasta do carro ainda não existe na caixa de destino — rode a sincronização primeiro'); continue }
-
+// A CÓPIA CONFERIDA, mensagem por mensagem (saiu de dentro do repatriateRideMail em 20/10/2026 para servir também ao mergeMailFolder):
+// cópia no destino com data, remetente e anexos (marca GZ28Origem = idempotente), conferida, e só então o original vai para o Arquivo
+// morto da caixa de ORIGEM. Devolve quantas ainda cabem nesta chamada (o limite).
+async function copiarMensagens(a: { HO: Record<string, string>; HD: Record<string, string>; origemId: string; destinoId: string; rep: RepatriateFolderReport; dryRun: boolean; restam: number }): Promise<number> {
+  const { HO, HD, rep } = a
+  let restam = a.restam
+  const opts = { dryRun: a.dryRun }
+  const pasta = { id: a.origemId }, destino = { id: a.destinoId }
         // As mensagens da pasta (todas as páginas), mais antigas primeiro.
         const msgs: any[] = []
         let next: string | null = `${GRAPH}/me/mailFolders/${encodeURIComponent(pasta.id)}/messages?$top=25&$orderby=receivedDateTime asc&$select=id,subject,from,sender,toRecipients,ccRecipients,bccRecipients,replyTo,body,receivedDateTime,sentDateTime,internetMessageId,importance,isRead,isDraft,categories`
@@ -482,6 +434,67 @@ export async function repatriateRideMail(
             rep.failed.push(`${rotulo}: ${String((e as Error)?.message || e).slice(0, 220)}`)
           }
         }
+  return restam
+}
+
+export async function repatriateRideMail(
+  db: SupabaseClient, frotas: Record<Empresa, RideMailCar[]>, opts: { dryRun?: boolean; folder?: string; limit?: number } = {},
+): Promise<RepatriateFolderReport[]> {
+  const out: RepatriateFolderReport[] = []
+  const tokens = new Map<number, { token: string; account: string; provider: string } | null>()
+  const caixa = async (slot: number) => {
+    if (tokens.has(slot)) return tokens.get(slot)!
+    const auth = await getMailAuth(db, slot)
+    const token = auth?.refresh_token ? await freshAccessToken(db, auth) : null
+    const v = auth && token ? { token, account: String(auth.account || ''), provider: mailProvider(auth) } : null
+    tokens.set(slot, v)
+    return v
+  }
+  const arvores = new Map<number, Awaited<ReturnType<typeof graphAll>>>()
+  const arvore = async (slot: number, token: string) => { if (!arvores.has(slot)) arvores.set(slot, await graphAll(token)); return arvores.get(slot)! }
+  const filhasDeRides = (todas: Awaited<ReturnType<typeof graphAll>>) => {
+    const pai = todas.find(f => !f.parentId && String(f.displayName).trim().toLowerCase() === 'rides')
+    return pai ? todas.filter(f => f.parentId === pai.id) : []
+  }
+  let restam = opts.limit && opts.limit > 0 ? opts.limit : Infinity
+
+  for (const slotOrigem of [...CAIXAS_DA_EMPRESA.US, ...CAIXAS_DA_EMPRESA.BR]) {
+    const casa = empresaDaCaixa(slotOrigem)!
+    const o = await caixa(slotOrigem)
+    if (!o) { out.push({ from: `caixa ${slotOrigem}`, to: '', total: 0, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: ['caixa sem conexão'], note: '' }); continue }
+    if (o.provider === 'gmail') continue   // Gmail como origem ainda não é atendido; a auditoria (`foreign`) continua acusando se aparecer
+    const HO = { Authorization: `Bearer ${o.token}`, 'Content-Type': 'application/json' }
+    const deFora = filhasDeRides(await arvore(slotOrigem, o.token)).filter(f => CARA_DE_CODIGO.test(f.displayName.trim()) && empresaDoCodigo(f.displayName) !== casa)
+    const removeSeVazia = async (id: string) => {
+      const info = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}?$select=id,totalItemCount,childFolderCount`, { headers: HO })
+      if (!info.ok || info.j.totalItemCount || info.j.childFolderCount) return false
+      return (await comFolego(`${GRAPH}/me/mailFolders/${encodeURIComponent(id)}`, { method: 'DELETE', headers: HO })).ok
+    }
+    for (const pasta of deFora) {
+      if (opts.folder && pasta.displayName.trim() !== opts.folder.trim()) continue
+      const dono = empresaDoCodigo(pasta.displayName)
+      const rep: RepatriateFolderReport = { from: `${o.account} · Rides/${pasta.displayName}`, to: '', total: pasta.itens, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: [], note: '' }
+      out.push(rep)
+      try {
+        // Pasta vazia de carro de fora: só a casca. Sai.
+        if (!pasta.itens) {
+          if (!opts.dryRun) rep.folderRemoved = await removeSeVazia(pasta.id)
+          rep.note = 'vazia' + (opts.dryRun ? ' — seria removida' : rep.folderRemoved ? ' — removida' : ' — não saiu')
+          continue
+        }
+        // O carro desta pasta: mesmo código E mesmo nome. Código de um, nome de outro = não é dele; gente decide.
+        const car = frotas[dono].find(c => daPasta(pasta.displayName, limpa(c.code), limpa(c.name)))
+        if (!car) { rep.note = `nenhum carro do ${dono} com este código e este nome — nada feito`; continue }
+        const slotDestino = CAIXA_PRINCIPAL[dono]
+        const d = await caixa(slotDestino)
+        if (!d || d.provider === 'gmail') { rep.failed.push(`caixa ${slotDestino} (destino) sem conexão`); continue }
+        const HD = { Authorization: `Bearer ${d.token}`, 'Content-Type': 'application/json' }
+        const alvo = alvoDe(car)
+        const destino = filhasDeRides(await arvore(slotDestino, d.token)).find(f => f.displayName.trim() === alvo)
+        rep.to = `${d.account} · Rides/${alvo}`
+        if (!destino) { rep.failed.push('a pasta do carro ainda não existe na caixa de destino — rode a sincronização primeiro'); continue }
+
+        restam = await copiarMensagens({ HO, HD, origemId: pasta.id, destinoId: destino.id, rep, dryRun: !!opts.dryRun, restam })
         if (!opts.dryRun && !rep.failed.length && !rep.note) rep.folderRemoved = await removeSeVazia(pasta.id)
       } catch (e) {
         rep.failed.push(String((e as Error)?.message || e).slice(0, 220))
@@ -489,4 +502,45 @@ export async function repatriateRideMail(
     }
   }
   return out
+}
+
+
+// FUNDIR UMA PASTA DE E-MAIL EM OUTRA, ENTRE CAIXAS (20/10/2026 — Márcio, caso Mustard → SpeedLight BR.512: «merge … delete the old one,
+// all around, emails, everywhere»). O repatriate só cobre pasta de carro de fora nas caixas 1/2/3/4; este pega QUALQUER pasta (pelo
+// caminho, ex.: «Arquivo Morto/108 - Mustard») de QUALQUER caixa Outlook e funde numa pasta de destino (ex.: «Rides/BR.512 - SpeedLight»)
+// de outra caixa — o mesmo rito: cópia conferida, original no Arquivo morto da origem, casca vazia removida. Nada é apagado.
+export async function mergeMailFolder(
+  db: SupabaseClient, a: { fromSlot: number; fromPath: string; toSlot: number; toPath: string }, opts: { dryRun?: boolean; limit?: number } = {},
+): Promise<RepatriateFolderReport> {
+  const conecta = async (slot: number) => {
+    const auth = await getMailAuth(db, slot)
+    const token = auth?.refresh_token ? await freshAccessToken(db, auth) : null
+    return auth && token ? { token, account: String(auth.account || ''), provider: mailProvider(auth) } : null
+  }
+  const igual = (x: string, y: string) => x.trim().replace(/\s*\/\s*/g, '/').toLowerCase() === y.trim().replace(/\s*\/\s*/g, '/').toLowerCase()
+  const rep: RepatriateFolderReport = { from: `caixa ${a.fromSlot} · ${a.fromPath}`, to: `caixa ${a.toSlot} · ${a.toPath}`, total: 0, copied: 0, alreadyThere: 0, archived: 0, folderRemoved: false, failed: [], note: '' }
+  try {
+    const o = await conecta(a.fromSlot), d = await conecta(a.toSlot)
+    if (!o) { rep.failed.push(`caixa ${a.fromSlot} sem conexão`); return rep }
+    if (!d) { rep.failed.push(`caixa ${a.toSlot} sem conexão`); return rep }
+    if (o.provider === 'gmail' || d.provider === 'gmail') { rep.failed.push('Gmail ainda não é atendido por esta fusão (só Outlook)'); return rep }
+    rep.from = `${o.account} · ${a.fromPath}`; rep.to = `${d.account} · ${a.toPath}`
+    const origem = (await graphAll(o.token)).filter(f => igual(f.path, a.fromPath))
+    const destino = (await graphAll(d.token)).filter(f => igual(f.path, a.toPath))
+    if (origem.length !== 1) { rep.failed.push(`pasta de origem «${a.fromPath}»: ${origem.length} encontrada(s) — precisa ser exatamente 1`); return rep }
+    if (destino.length !== 1) { rep.failed.push(`pasta de destino «${a.toPath}»: ${destino.length} encontrada(s) — precisa ser exatamente 1`); return rep }
+    if (a.fromSlot === a.toSlot && origem[0].id === destino[0].id) { rep.failed.push('origem e destino são a mesma pasta'); return rep }
+    rep.total = origem[0].itens
+    const HO = { Authorization: `Bearer ${o.token}`, 'Content-Type': 'application/json' }
+    const HD = { Authorization: `Bearer ${d.token}`, 'Content-Type': 'application/json' }
+    if (rep.total) await copiarMensagens({ HO, HD, origemId: origem[0].id, destinoId: destino[0].id, rep, dryRun: !!opts.dryRun, restam: opts.limit && opts.limit > 0 ? opts.limit : Infinity })
+    if (!opts.dryRun && !rep.failed.length && !rep.note) {
+      const info = await graphJson(`${GRAPH}/me/mailFolders/${encodeURIComponent(origem[0].id)}?$select=id,totalItemCount,childFolderCount`, { headers: HO })
+      if (info.ok && !info.j.totalItemCount && !info.j.childFolderCount) rep.folderRemoved = (await comFolego(`${GRAPH}/me/mailFolders/${encodeURIComponent(origem[0].id)}`, { method: 'DELETE', headers: HO })).ok
+      else rep.note = 'a pasta de origem ainda tem itens ou subpastas — ficou'
+    }
+  } catch (e) {
+    rep.failed.push(String((e as Error)?.message || e).slice(0, 220))
+  }
+  return rep
 }
