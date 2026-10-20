@@ -152,6 +152,24 @@ for (const [re, porque] of PROIBIDO) {
   if (re.test(semComentario)) morre('este SQL toca em algo que eu não executo, nem com --confirmo:\n    ' + porque)
 }
 
+// TABELA NOVA LEVA O GRANT NA MESMA MIGRATION (Supabase, «Final notice», recebido 20/10/2026): a partir de 30/10/2026 tabela NOVA no
+// schema public deixa de ganhar GRANT automático da Data API — o app (supabase-js/PostgREST) recebe «permission denied» até alguém
+// rodar o grant. Vale para os dois projetos, US e BR. Então `create table` sem o grant dela no MESMO arquivo não roda: o erro já
+// entrega as três linhas. As tabelas que já existem não mudam.
+{
+  const novas = [...semComentario.matchAll(/\bcreate\s+table\s+(?:if\s+not\s+exists\s+)?(?:"?public"?\.)?"?([a-z_][a-z0-9_]*)"?/gi)].map(m => m[1].toLowerCase())
+  const semGrant = [...new Set(novas)].filter(t => !new RegExp(`\\bgrant\\b[^;]*\\bon\\s+(?:table\\s+)?(?:"?public"?\\.)?"?${t}"?\\b[^;]*\\bto\\b[^;]*\\bauthenticated\\b`, 'i').test(semComentario))
+  if (semGrant.length) morre([
+    `tabela nova sem GRANT: ${semGrant.join(', ')}. Desde 30/10/2026 o Supabase não dá mais o grant sozinho, e o app não enxerga a tabela.`,
+    'Ponha no MESMO arquivo, depois do create table:',
+    ...semGrant.flatMap(t => [
+      `  grant select on public.${t} to anon;`,
+      `  grant select, insert, update, delete on public.${t} to authenticated;`,
+      `  grant select, insert, update, delete on public.${t} to service_role;`,
+    ]),
+  ].join('\n    '))
+}
+
 const APAGA = [
   [/\bdrop\s+table\b/i, 'drop table'],
   [/\bdrop\s+schema\b/i, 'drop schema'],
