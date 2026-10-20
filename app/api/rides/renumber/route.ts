@@ -4,6 +4,16 @@ import { requireUser, cronOk, readKeyOk, selfCallHeaders } from '@/lib/apiAuth.s
 import { supabaseBRService } from '@/lib/supabaseBR.server'
 import { streamDb } from '@/lib/stream.server'
 import { ROOTS, sanitize, dbxAccessToken, dbx, findFolderByCode, ensureSubfolders, pathExists, recodeTree, recodeName } from '@/lib/dropboxRides.server'
+
+// Quote e SHP não têm pasta de carro (mesma regra do passo 2h do e-mail).
+const naoTemPasta = (code: string) => /^(US\.QT|BR\.QT|SHP)\./.test(code)
+// Cria a pasta (já existir = serve) e garante as subpastas.
+async function nascePasta(token: string, path: string): Promise<{ ok: boolean; erro?: string }> {
+  const r = await dbx(token, 'files/create_folder_v2', { path, autorename: false })
+  if (!r.ok && !r.text.includes('conflict')) return { ok: false, erro: r.text.slice(0, 200) }
+  await ensureSubfolders(token, path)
+  return { ok: true }
+}
 import { renameRideMailFolders, ensureRideMailFolders } from '@/lib/rideMailFolders.server'
 import { parseRideCode, checkRideCode, scaleOf } from '@/lib/rideCodes'
 import { renumeraCarroBR } from '@/lib/renumberBR.server'
@@ -113,7 +123,7 @@ export async function POST(req: NextRequest) {
       token = await dbxAccessToken()
       usFrom = await findFolderByCode(token, ROOTS.US, sanitize(oldCode), sanitize(oldName) || undefined)
       if (usFrom && usFrom !== usTarget && await pathExists(token, `${ROOTS.US}/${usTarget}`)) bloqueios.push(`Dropbox US: já existe a pasta «${usTarget}».`)
-      plano.push({ passo: 'dropbox-us (plano)', ok: true, detalhe: usFrom ? `${usFrom} → ${usTarget}` : `sem pasta «${oldCode}${oldName ? ' - ' + oldName : ''}» — nada a mover` })
+      plano.push({ passo: 'dropbox-us (plano)', ok: true, detalhe: usFrom ? `${usFrom} → ${usTarget}` : naoTemPasta(newCode) ? `sem pasta «${oldCode}${oldName ? ' - ' + oldName : ''}» — e o código novo não tem pasta` : `sem pasta «${oldCode}${oldName ? ' - ' + oldName : ''}» — a pasta NASCE: «${usTarget}»` })
       if (usFrom && mudaCodigo) {
         const r = await recodeTree(token, `${ROOTS.US}/${usFrom}`, oldCode, newCode, true)
         plano.push({ passo: 'dropbox-us recode (plano)', ok: true, detalhe: `${r.planned} nome(s) com ${oldCode} dentro da pasta` })
@@ -121,7 +131,7 @@ export async function POST(req: NextRequest) {
       if (brRide) {
         brFrom = await findFolderByCode(token, ROOTS.BR, sanitize(oldCode), sanitize(brName) || undefined)
         if (brFrom && brFrom !== brTarget && await pathExists(token, `${ROOTS.BR}/${brTarget}`)) bloqueios.push(`Dropbox BR: já existe a pasta «${brTarget}».`)
-        plano.push({ passo: 'dropbox-br (plano)', ok: true, detalhe: brFrom ? `${brFrom} → ${brTarget}` : `sem pasta BR «${oldCode}${brName ? ' - ' + brName : ''}» — nada a mover` })
+        plano.push({ passo: 'dropbox-br (plano)', ok: true, detalhe: brFrom ? `${brFrom} → ${brTarget}` : naoTemPasta(newCode) ? `sem pasta BR «${oldCode}${brName ? ' - ' + brName : ''}» — e o código novo não tem pasta` : `sem pasta BR «${oldCode}${brName ? ' - ' + brName : ''}» — a pasta NASCE: «${brTarget}»` })
       }
     } catch (e) {
       bloqueios.push('Dropbox: ' + String((e as Error)?.message || e).slice(0, 200))
@@ -207,8 +217,17 @@ export async function POST(req: NextRequest) {
     await ensureSubfolders(token, `${ROOTS.US}/${usTarget}`)
     passos.push({ passo: 'dropbox-us: pasta', ok: true, detalhe: `${usFrom} → ${usTarget}` })
   }
-  const usPasta = usFrom ? usTarget : null
-  if (usPasta && mudaCodigo) {
+  // QUOTE PROMOVIDA A CARRO (RECADO 10/10, US.QT.017 → US.047): não havia pasta para mover — e ninguém criava. Agora a pasta NASCE aqui,
+  // com as subpastas, e o passo dos recibos (2e) roda nela. O cron /api/rides/dropbox-folders é a rede para qualquer outro caminho.
+  let usNasceu = false
+  if (!usFrom && !naoTemPasta(newCode)) {
+    const r = await nascePasta(token, `${ROOTS.US}/${usTarget}`)
+    if (!r.ok) return para('dropbox-us: pasta nova', `${usTarget}: ${r.erro}`)
+    usNasceu = true
+    passos.push({ passo: 'dropbox-us: pasta', ok: true, detalhe: `pasta NASCEU: ${usTarget}` })
+  }
+  const usPasta = usFrom || usNasceu ? usTarget : null
+  if (usPasta && mudaCodigo && !usNasceu) {
     const r = await recodeTree(token, `${ROOTS.US}/${usPasta}`, oldCode, newCode)
     if (r.conflicts.length || r.failures.length) return para('dropbox-us: recode', r)
     passos.push({ passo: 'dropbox-us: recode', ok: true, detalhe: `${r.renamed.length} nome(s)` })
@@ -221,8 +240,15 @@ export async function POST(req: NextRequest) {
     await ensureSubfolders(token, `${ROOTS.BR}/${brTarget}`)
     passos.push({ passo: 'dropbox-br: pasta', ok: true, detalhe: `${brFrom} → ${brTarget}` })
   }
-  const brPasta = brFrom ? brTarget : null
-  if (brPasta && mudaCodigo) {
+  let brNasceu = false
+  if (brRide && !brFrom && !naoTemPasta(newCode)) {
+    const r = await nascePasta(token, `${ROOTS.BR}/${brTarget}`)
+    if (!r.ok) return para('dropbox-br: pasta nova', `${brTarget}: ${r.erro}`)
+    brNasceu = true
+    passos.push({ passo: 'dropbox-br: pasta', ok: true, detalhe: `pasta NASCEU: ${brTarget}` })
+  }
+  const brPasta = brFrom || brNasceu ? brTarget : null
+  if (brPasta && mudaCodigo && !brNasceu) {
     const r = await recodeTree(token, `${ROOTS.BR}/${brPasta}`, oldCode, newCode)
     if (r.conflicts.length || r.failures.length) return para('dropbox-br: recode', r)
     passos.push({ passo: 'dropbox-br: recode', ok: true, detalhe: `${r.renamed.length} nome(s)` })

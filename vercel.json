@@ -59,6 +59,10 @@
     {
       "path": "/ca/api/rides/mail-folders",
       "schedule": "11 * * * *"
+    },
+    {
+      "path": "/ca/api/rides/dropbox-folders",
+      "schedule": "29 * * * *"
     }
   ]
 }
