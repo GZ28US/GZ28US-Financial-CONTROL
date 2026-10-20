@@ -42,7 +42,8 @@ async function pastasDaRaiz(token: string, root: string): Promise<string[]> {
   const nomes: string[] = []
   let cursor: string | null = null
   do {
-    const r = cursor ? await dbx(token, 'files/list_folder/continue', { cursor }) : await dbx(token, 'files/list_folder', { path: root, recursive: false, limit: 2000 })
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const r: any = cursor ? await dbx(token, 'files/list_folder/continue', { cursor }) : await dbx(token, 'files/list_folder', { path: root, recursive: false, limit: 2000 })
     if (!r.ok) throw new Error('list_folder ' + root + ': ' + r.text.slice(0, 200))
     for (const e of r.data.entries || []) if (e['.tag'] === 'folder') nomes.push(String(e.name))
     cursor = r.data.has_more ? r.data.cursor : null
