@@ -95,7 +95,7 @@ export async function listBlind(db: SupabaseClient): Promise<{ orders: BlindOrde
 
 // ── A LEITURA ───────────────────────────────────────────────────────────────
 // state é a resposta da loja reduzida ao que importa AQUI:
-//   DELIVERED  → chegou (delivered_at = delivered_on, ou agora se a loja não deu data)
+//   DELIVERED  → chegou (delivered_at = delivered_on — obrigatório: sem a data da loja não grava)
 //   MOVING     → despachado / a caminho / atrasado
 //   WAITING    → pedido feito, ainda não despachado
 //   PROBLEM    → cancelado, devolvido, "não entregue", disputa — NÃO mexe em
@@ -129,6 +129,9 @@ export async function applyReading(db: SupabaseClient, rd: StoreReading): Promis
   if (!String(rd.order_number || '').trim()) return { ...out, ok: false, error: 'order_number missing' }
   if (!STATES.has(rd.state)) return { ...out, ok: false, error: `state must be one of ${[...STATES].join(', ')}` }
   if (rd.delivered_on && !DAY.test(rd.delivered_on)) return { ...out, ok: false, error: 'delivered_on must be YYYY-MM-DD' }
+  // Entrega sem a data da loja não entra: «agora» numa compra de março seria
+  // data inventada. Loja que diz entregue e não diz quando → PROBLEM, e gente vê.
+  if (rd.state === 'DELIVERED' && !rd.delivered_on) return { ...out, ok: false, error: 'DELIVERED needs delivered_on (the date the store shows)' }
   if (rd.eta && !DAY.test(rd.eta)) return { ...out, ok: false, error: 'eta must be YYYY-MM-DD' }
 
   const { orders, error } = await listBlind(db)
@@ -146,7 +149,11 @@ export async function applyReading(db: SupabaseClient, rd: StoreReading): Promis
     const { data: cur, error: e1 } = await db.from(l.table).select('id, delivered_at, tracking_number, carrier, eta, last_event').eq('id', l.id).maybeSingle()
     if (e1 || !cur) { out.skipped.push(`${l.table}/${l.id}: ${e1?.message || 'sumiu'}`); continue }
     const patch: Record<string, unknown> = { store_checked_at: now }
-    if (rd.state !== 'UNREADABLE' && text !== cur.last_event) patch.last_event = text
+    // UNREADABLE sem texto só carimba; com texto (ex.: pedido velho da Amazon que
+    // já não mostra entrega, só «Return window closed») a linha diz POR QUE ficou
+    // sem leitura — e quem decide a entrega é gente, não inferência.
+    const said = String(rd.status_text || '').trim()
+    if ((rd.state !== 'UNREADABLE' || said) && text !== cur.last_event) patch.last_event = text
     if (rd.eta && rd.eta !== cur.eta && rd.state !== 'DELIVERED') patch.eta = rd.eta
     const trk = String(rd.tracking_number || '').trim()
     if (trk && !String(cur.tracking_number || '').trim()) {
@@ -154,7 +161,7 @@ export async function applyReading(db: SupabaseClient, rd: StoreReading): Promis
       if (rd.carrier && !String(cur.carrier || '').trim()) patch.carrier = String(rd.carrier).trim()
     }
     if (rd.state === 'DELIVERED' && !cur.delivered_at) {
-      patch.delivered_at = rd.delivered_on ? new Date(noonOrlando(rd.delivered_on)).toISOString() : now
+      patch.delivered_at = new Date(noonOrlando(rd.delivered_on!)).toISOString()
       patch.last_event_at = patch.delivered_at
     }
     const { error: e2 } = await db.from(l.table).update(patch).eq('id', l.id).is('delivered_at', null)

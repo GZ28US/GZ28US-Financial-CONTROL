@@ -43,7 +43,7 @@ Se a página não abre pelo link direto: abrir a lista de pedidos da loja e proc
 
 | state | quando |
 |---|---|
-| `DELIVERED` | a loja diz entregue → mandar `delivered_on` (YYYY-MM-DD) |
+| `DELIVERED` | a loja diz entregue, COM data → `delivered_on` (YYYY-MM-DD) é obrigatório. Atenção ao eBay: «Delivered — Upcoming step» NÃO é entregue |
 | `MOVING` | despachado / a caminho / atrasado / saiu para entrega → `eta` se houver |
 | `WAITING` | pedido feito, ainda não despachado → `eta` se houver |
 | `PROBLEM` | cancelado, devolvido, reembolsado, não entregue, extraviado — a rota **não** mexe em `cancel_status` (isso é fato de humano); o caso vai no relato ao Márcio / AutoBook |
