@@ -66,7 +66,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD, formatShortDate } from '@/lib/utils'
-import { EXPENSE_ITEM_GATE, DELIVER_COLUMNS } from '@/lib/deliverStatus'
+import { EXPENSE_ITEM_GATE, DELIVER_COLUMNS, isBlindTracking, blindStore } from '@/lib/deliverStatus'
 import { needsNature } from '@/lib/itemNature'
 import { DeliverChip, OrderChip, deriveDeliverStatus, type DeliverChipRow, type DeliverStatus } from '@/components/DeliverChip'
 
@@ -93,6 +93,8 @@ type BaseRow = DeliverChipRow & {
   order_number: string | null
   shipped_at: string | null
   last_event_at: string | null
+  // RASTREIO CEGO (LIVRO 13.10): quando o robô leu a página do pedido na loja.
+  store_checked_at: string | null
 }
 type InvoiceExpenseRow = BaseRow & { invoice_id: string | null; item: string | null; price: number | null; quantity: number | null; stock_source_type: string | null }
 type InputRow = BaseRow & { description: string | null; unit_price: number | null; quantity: number | null; source_type: string | null }
@@ -129,6 +131,9 @@ type StreamItem = {
   // perder o código quando o rótulo passa a ser o carro/cliente (ordem (a)).
   sourceNote?: string
   href: string | null
+  // RASTREIO CEGO (LIVRO 13.10): BOUGHT com pedido e sem rastreio — quem sabe
+  // dela é a loja. Derivado (isBlindTracking), nunca coluna.
+  blind: boolean
 }
 
 // O SELECT SAI DA CONSTANTE, NÃO DE UMA CÓPIA. DELIVER_COLUMNS
@@ -139,7 +144,7 @@ type StreamItem = {
 // SOMA o que a cascata não pede e a linha desenha: payment_date (o degrau
 // "pagou?", que DELIVER_COLUMNS deliberadamente não traz), supplier e
 // order_number. Coluna nova da cascata passa a chegar aqui sozinha.
-const DELIVER_SELECT = `${DELIVER_COLUMNS}, payment_date, supplier, order_number`
+const DELIVER_SELECT = `${DELIVER_COLUMNS}, payment_date, supplier, order_number, store_checked_at`
 
 // LEI DO RELÓGIO (AGENTS.md): data nenhuma sai da cabeça, e o fuso segue o
 // ASSUNTO — esta tela é o galpão de Orlando. `new Date().toISOString()` daria a
@@ -236,6 +241,41 @@ function EtaChip({ eta, today }: { eta: string | null; today: string }) {
   )
 }
 
+// ── RASTREIO CEGO (LIVRO 13.10, Márcio, 19/10/2026) ─────────────────────────
+//   "o robô tem que entrar na Amazon e checar a order, mas não pode
+//    "abandonar" o caso, info is power"
+// A linha BOUGHT com número de pedido e sem número de rastreio não tem
+// transportadora a quem perguntar. O chip diz de que loja ela é e QUANDO o robô
+// leu a página do pedido pela última vez — «never checked» em letra dura quando
+// ninguém leu, que é o caso abandonado que a regra proíbe. A leitura em si (o que
+// a loja dizia) aparece embaixo do fornecedor. Quem grava: /api/items/store-check.
+// Hora no fuso do ASSUNTO (Orlando) e só por Intl — lei do relógio (AGENTS.md).
+const fmtChecked = (iso: string) =>
+  new Intl.DateTimeFormat('pt-BR', { timeZone: 'America/New_York', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(iso)).replace(',', '')
+
+function BlindChip({ store, supplier, checkedAt }: { store: string | null; supplier: string; checkedAt: string | null }) {
+  const where = store || (supplier ? supplier.split(/\s+[—-]\s+/)[0].toUpperCase() : 'LOJA?')
+  // Loja que o robô ainda não lê (Titan, HHP, HP Tuners…): o chip continua — o
+  // caso não some —, mas tracejado e sem «never checked», que seria cobrança de
+  // um robô que não existe para ela.
+  if (!store && !checkedAt) {
+    return (
+      <span
+        title="Sem número de rastreio, e o robô ainda não lê esta loja — alguém tem de olhar o pedido ou pedir o tracking ao fornecedor (LIVRO 13.10)."
+        className="px-2.5 py-0.5 rounded-lg text-xs font-bold border border-dashed border-violet-800 bg-gray-900 text-violet-300/80 whitespace-nowrap"
+      >RASTREIO CEGO · {where} · no store robot</span>
+    )
+  }
+  return (
+    <span
+      title={store
+        ? `Sem número de rastreio: o robô lê o status na página do pedido ${store} (LIVRO 13.10).`
+        : 'Sem número de rastreio, e o robô ainda não lê esta loja — alguém tem de olhar o pedido (LIVRO 13.10).'}
+      className={`px-2.5 py-0.5 rounded-lg text-xs font-bold border whitespace-nowrap ${checkedAt ? 'bg-violet-950 text-violet-300 border-violet-800' : 'bg-amber-950 text-amber-300 border-amber-700'}`}
+    >RASTREIO CEGO · {where} · {checkedAt ? `last checked ${fmtChecked(checkedAt)}` : 'never checked'}</span>
+  )
+}
+
 export default function StreamPage() {
   const [items, setItems] = useState<StreamItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -310,7 +350,7 @@ export default function StreamPage() {
         const client = String(inv?.clients?.name || '').trim()
         const who = car || client
         list.push({
-          key: `ie-${r.id}`, status, row: r,
+          key: `ie-${r.id}`, status, row: r, blind: false,
           name: r.item || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.price != null ? r.price * (r.quantity || 1) : null,
           paymentDate: r.payment_date || '',
@@ -334,7 +374,7 @@ export default function StreamPage() {
         const status = deriveDeliverStatus(r)
         if (!status) continue
         list.push({
-          key: `in-${r.id}`, status, row: r,
+          key: `in-${r.id}`, status, row: r, blind: false,
           name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
           paymentDate: r.payment_date || '',
@@ -345,7 +385,7 @@ export default function StreamPage() {
         const status = deriveDeliverStatus(r)
         if (!status) continue
         list.push({
-          key: `iv-${r.id}`, status, row: r,
+          key: `iv-${r.id}`, status, row: r, blind: false,
           name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
           paymentDate: r.payment_date || '',
@@ -357,7 +397,7 @@ export default function StreamPage() {
         const status = deriveDeliverStatus(r)
         if (!status) continue
         list.push({
-          key: `gd-${r.id}`, status, row: r,
+          key: `gd-${r.id}`, status, row: r, blind: false,
           name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.unit_price != null ? r.unit_price * (r.quantity || 1) : null,
           paymentDate: r.payment_date || '',
@@ -368,7 +408,7 @@ export default function StreamPage() {
         const status = deriveDeliverStatus(r)
         if (!status) continue
         list.push({
-          key: `ge-${r.id}`, status, row: r,
+          key: `ge-${r.id}`, status, row: r, blind: false,
           name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.amount,
           paymentDate: r.payment_date || '',
@@ -386,7 +426,7 @@ export default function StreamPage() {
         const person = season?.staff_id ? staffById.get(season.staff_id) : undefined
         const who = person?.name ? ` · ${person.name}` : ''
         list.push({
-          key: `ex-${r.id}`, status, row: r,
+          key: `ex-${r.id}`, status, row: r, blind: false,
           name: r.description || '—', supplier: r.supplier || '', order: r.order_number || '',
           amount: r.amount,
           paymentDate: r.payment_date || r.expense_date || '',
@@ -396,6 +436,9 @@ export default function StreamPage() {
             : `${BASE_PATH}/staff`,
         })
       }
+      // RASTREIO CEGO: o mesmo predicado do servidor (lib/deliverStatus.ts), com o
+      // valor da linha para cortar o estorno (negativo não é caixa a caminho).
+      for (const it of list) it.blind = isBlindTracking({ ...it.row, supplier: it.supplier, order_number: it.order, amount: it.amount })
       setItems(list)
     } catch (e) {
       setErr(e instanceof Error ? e.message : String(e))
@@ -415,6 +458,8 @@ export default function StreamPage() {
   // mesma lista que a tela desenha), nunca de estimativa — e é o número que
   // mede o tamanho da fila do /adm/check visto daqui.
   const toClassify = useMemo(() => items.filter(it => needsNature(it.row.nature)).length, [items])
+  const blindCount = useMemo(() => items.filter(it => it.blind).length, [items])
+  const blindNever = useMemo(() => items.filter(it => it.blind && blindStore(it.supplier, it.order) && !it.row.store_checked_at).length, [items])
 
   // Seções na ordem do dono, cada uma do mais recente pro mais antigo
   // (payment_date desc; linha sem data — estorno limpou — vai pro fim).
@@ -490,6 +535,16 @@ export default function StreamPage() {
         </p>
       )}
 
+      {/* RASTREIO CEGO (LIVRO 13.10): quantas compras pagas só a loja sabe onde
+          estão, e quantas ninguém leu ainda. O número sai da mesma lista. */}
+      {blindCount > 0 && (
+        <p className="-mt-4 mb-8 text-sm text-gray-500">
+          <button onClick={() => { setChip('BOUGHT'); setSearch('') }} className="font-bold text-violet-300 hover:text-white underline">{blindCount} RASTREIO CEGO</button>
+          {' '}— paid, with an order number and no tracking number: the robot reads the order page at the store (Amazon / eBay / Temu).
+          {blindNever > 0 && <span className="text-amber-300"> {blindNever} never checked.</span>}
+        </p>
+      )}
+
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
       ) : err ? (
@@ -530,6 +585,7 @@ export default function StreamPage() {
                             data quando existe e diz que NÃO existe quando não existe,
                             que é o que faz alguém ligar para a transportadora. */}
                         {it.status === 'SHIPPED' && <EtaChip eta={it.row.eta} today={today} />}
+                        {it.blind && <BlindChip store={blindStore(it.supplier, it.order)} supplier={it.supplier} checkedAt={it.row.store_checked_at} />}
                         {/* (c) A CLASSIFICAR. Rótulo em PORTUGUÊS mesmo no app US:
                             o vocabulário de natureza é de quem classifica, e quem
                             classifica é a casa (está escrito em lib/itemNature.ts —
@@ -545,6 +601,8 @@ export default function StreamPage() {
                       </div>
                       <p className="text-xl font-bold mt-2 break-words">{it.name}</p>
                       <p className="text-gray-400 mt-0.5">{it.supplier || '—'}</p>
+                      {/* A última leitura da loja (ou de quem olhou), na própria linha. */}
+                      {it.blind && it.row.last_event && <p className="text-violet-300/80 text-sm mt-0.5 break-words">Last reading: {it.row.last_event}{it.row.eta ? ` · ETA ${formatShortDate(it.row.eta)}` : ''}</p>}
                     </div>
                     <div className="text-right shrink-0">
                       <p className="text-xl font-bold">{it.amount != null ? formatUSD(it.amount) : '—'}</p>

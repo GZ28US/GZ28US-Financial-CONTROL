@@ -271,3 +271,62 @@ export function pickedUpFromScan(input: { supplier?: string | null; shipTo?: str
   if (String(input.shipTo || '').trim()) return false       // a nota traz endereço = é entrega
   return isCounterStore(supplier)                           // balcão + sem endereço = peguei na mão
 }
+
+// ── RASTREIO CEGO (LIVRO 13.10, Márcio, 19/10/2026) ─────────────────────────
+//   "o robô tem que entrar na Amazon e checar a order, mas não pode
+//    "abandonar" o caso, info is power"
+//
+// Compra paga, com número de PEDIDO e sem número de RASTREIO, não tem a quem o
+// 17TRACK perguntar — Amazon com transportadora própria, eBay sem tracking
+// postado, Temu. Ela ficava BOUGHT para sempre, e foi assim que o volante Shift
+// Craft (Amazon 111-9840614-1537067, US.026.2) chegou e o app nunca soube.
+//
+// «Cego» NÃO é coluna — é derivação, como o badge (lei de 30/ago/2026): sai dos
+// mesmos fatos da cascata. O que se GUARDA é só a leitura: `store_checked_at`
+// (quando o robô olhou a loja), `last_event` (o que a loja dizia), `eta` e, se
+// chegou, `delivered_at`. Quem olha é a rotina da loja (docs/ROBO-RASTREIO-CEGO.md)
+// e quem grava é /api/items/store-check.
+export const BLIND_STORES = ['AMAZON', 'EBAY', 'TEMU'] as const
+export type BlindStore = (typeof BLIND_STORES)[number]
+
+// A loja que o robô sabe ler. O FORMATO do pedido manda sobre o nome do
+// fornecedor (o nome é texto livre: «eBay — racercentre», «Amazon — Shift Craft»).
+export function blindStore(supplier: string | null | undefined, order: string | null | undefined): BlindStore | null {
+  const o = String(order || '').trim().toUpperCase()
+  if (/^\d{3}-\d{7}-\d{7}$/.test(o)) return 'AMAZON'
+  if (/^\d{2}-\d{5}-\d{5}$/.test(o)) return 'EBAY'
+  if (/^PO-\d{3}-\d{8,}$/.test(o)) return 'TEMU'
+  const s = String(supplier || '').toLowerCase()
+  if (s.includes('amazon')) return 'AMAZON'
+  if (s.includes('ebay')) return 'EBAY'
+  if (s.includes('temu')) return 'TEMU'
+  return null
+}
+
+// A página do pedido, na conta logada do Chrome do Márcio. Só LEITURA.
+export function storeOrderUrl(store: BlindStore, order: string): string {
+  const o = encodeURIComponent(String(order).trim())
+  if (store === 'AMAZON') return `https://www.amazon.com/gp/your-account/order-details?orderID=${o}`
+  if (store === 'EBAY') return `https://order.ebay.com/ord/show?orderId=${o}#/`
+  return `https://www.temu.com/bgt_order_detail.html?parent_order_sn=${o}`
+}
+
+export type BlindRow = DeliverRow & { order_number?: string | null; amount?: number | null }
+
+// É cego? = BOUGHT de verdade (pago, viva, viaja, sem balcão, sem entrega, sem
+// rastreio) + tem pedido + não é linha de ESTORNO (valor negativo é o dinheiro
+// voltando, não caixa a caminho) + não é loja de balcão (AutoZone/Wawa com
+// número de nota é compra pega na mão que ninguém marcou PICKUP — outro furo,
+// não rastreio).
+export function isBlindTracking(row: BlindRow | null | undefined): boolean {
+  if (!row) return false
+  if (deriveDeliverStatus(row) !== 'BOUGHT') return false
+  const order = String(row.order_number || '').trim()
+  if (!order) return false
+  // «bank:<uuid>» é a chave que a regra do Bank Link carimba em compra de
+  // balcão (BP, Seabra, Bravo) — não é número de pedido de loja nenhuma.
+  if (/^bank:/i.test(order)) return false
+  if (row.amount != null && Number(row.amount) < 0) return false
+  if (isCounterStore(String(row.supplier || ''))) return false
+  return true
+}
