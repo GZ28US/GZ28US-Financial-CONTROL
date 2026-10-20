@@ -20,7 +20,7 @@ export const dynamic = 'force-dynamic'
 export const maxDuration = 300
 
 type Car = { code: string; name: string }
-type Relatorio = { zone: Empresa; frota: number; ok: number; criadas: string[]; legado: { carro: string; pasta: string }[]; erros: string[] }
+type Relatorio = { zone: Empresa; frota: number; existentes: number; criadas: string[]; legado: { carro: string; pasta: string }[]; erros: string[] }
 
 async function frota(empresa: Empresa): Promise<Car[]> {
   const cars: Car[] = []
@@ -53,12 +53,12 @@ async function pastasDaRaiz(token: string, root: string): Promise<string[]> {
 
 async function garantir(token: string, zone: Empresa, cars: Car[], aplicar: boolean): Promise<Relatorio> {
   const root = ROOTS[zone]
-  const rel: Relatorio = { zone, frota: cars.length, ok: 0, criadas: [], legado: [], erros: [] }
+  const rel: Relatorio = { zone, frota: cars.length, existentes: 0, criadas: [], legado: [], erros: [] }
   const nomes = await pastasDaRaiz(token, root)
   for (const c of cars) {
     const code = sanitize(c.code)
     const dele = nomes.find(n => n === code || n.startsWith(code + ' '))
-    if (dele) { rel.ok++; continue }
+    if (dele) { rel.existentes++; continue }
     // número legado: «377 - HellDog MPVI2 455» — o NOME depois do primeiro « - » bate com o nome do carro
     const alvoNome = nomeNu(c.name)
     const legado = alvoNome.length >= 3 ? nomes.find(n => { const i = n.indexOf(' - '); return i > 0 && nomeNu(n.slice(i + 3)).startsWith(alvoNome) }) : undefined
@@ -85,7 +85,7 @@ export async function GET(req: NextRequest) {
     const out: Relatorio[] = []
     for (const zone of zonas) {
       try { out.push(await garantir(token, zone, await frota(zone), !dryRun)) }
-      catch (e) { out.push({ zone, frota: 0, ok: 0, criadas: [], legado: [], erros: [String((e as Error)?.message || e).slice(0, 300)] }) }
+      catch (e) { out.push({ zone, frota: 0, existentes: 0, criadas: [], legado: [], erros: [String((e as Error)?.message || e).slice(0, 300)] }) }
     }
     if (out.some(r => r.criadas.length || r.erros.length)) console.log('[dropbox-folders]', JSON.stringify(out.map(r => ({ zone: r.zone, criadas: r.criadas, erros: r.erros }))))
     return NextResponse.json({ ok: out.every(r => !r.erros.length), dryRun, zonas: out })
