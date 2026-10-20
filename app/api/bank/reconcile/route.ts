@@ -558,6 +558,13 @@ export async function POST(req: NextRequest) {
   const action = String(body.action || '')
   const db = bankDb()
   try {
+    // LINHA PENDENTE DO PLAID NÃO SE CASA (LIVRO 14.29 · RECADO da AutoBook GZ28US, 10/10/2026). A pendente e a postada são DUAS linhas com
+    // transaction_id diferente: quando a compra liquida, o Plaid devolve a pendente em `removed` e o casamento dela vira REMOVED — morre
+    // calado. O motor automático já pula pendente (buildPlan filtra); aqui fecha o caminho à mão (tela, Data Checker, script): espere postar.
+    if (['match', 'rematch', 'match_wire', 'match_adjust', 'match_mixed'].includes(action) && body.bank_id) {
+      const { data: pl } = await db.from('bank_transactions').select('pending, date, amount').eq('id', String(body.bank_id)).maybeSingle()
+      if (pl?.pending) return NextResponse.json({ error: `esta linha ainda está PENDENTE no banco (${pl.date}, US$ ${pl.amount}) — quando ela liquidar, o Plaid troca por outra linha e o casamento se perderia. Lance a despesa/renda pelo e-mail e case depois que ela POSTAR (LIVRO 14.29).`, pending: true }, { status: 409 })
+    }
     /* ── ações de lote (motores) ── */
     if (action === 'auto') {
       // Sem a migration o motor não roda (revisão #17): sonda barata antes de qualquer escrita.
