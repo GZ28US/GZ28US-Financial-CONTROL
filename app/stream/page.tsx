@@ -120,7 +120,7 @@ type InvoiceRef = { id: string; invoice_code: string; ride_id: string | null; cl
 type StreamItem = {
   key: string
   status: DeliverStatus
-  row: DeliverChipRow
+  row: BaseRow
   name: string
   supplier: string
   order: string
