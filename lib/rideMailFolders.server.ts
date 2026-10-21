@@ -617,6 +617,9 @@ export async function migrarPastasPorNome(db: SupabaseClient, frota: FrotaComNom
   const NOME = /^\s*(?:[A-Za-z]{2,3}\.)?(?:\d{1,4}|X{2,3})\s*-\s*(.+?)\s*$/
   const porNome = (nome: string) => frota.filter(c => nomeNu(c.name) === nomeNu(nome))
   const porAntigo = (nome: string) => frota.filter(c => c.former.some(f => nomeNu(f) === nomeNu(nome)))
+  // 1º o plano inteiro: DUAS pastas velhas para o MESMO carro (números antigos diferentes, mesmo nome — podem ser dois carros que
+  // usaram o nome) não se fundem por palpite: vão para «ambiguas», com as duas.
+  const plano: { f: (typeof candidatas)[number]; onde: string; car: FrotaComNomes[number] }[] = []
   for (const f of candidatas) {
     const m = f.displayName.match(NOME)
     if (!m) continue
@@ -625,7 +628,13 @@ export async function migrarPastasPorNome(db: SupabaseClient, frota: FrotaComNom
     if (!cars.length) cars = porAntigo(nome)
     if (!cars.length) { rel.semCarro.push(`${onde} (${f.itens} msg)`); continue }
     if (cars.length > 1) { rel.ambiguas.push(`${onde} → ${cars.map(c => c.code).join(' / ')}`); continue }
-    const car = cars[0], alvo = `${raizDoCodigo(car.code)}/${alvoDe(car)}`
+    plano.push({ f, onde, car: cars[0] })
+  }
+  const vezes = new Map<string, number>()
+  for (const x of plano) vezes.set(x.car.code, (vezes.get(x.car.code) || 0) + 1)
+  for (const x of plano) if ((vezes.get(x.car.code) || 0) > 1) rel.ambiguas.push(`${x.onde} → ${x.car.code} (mais de uma pasta velha para o mesmo carro: ${plano.filter(y => y.car.code === x.car.code).map(y => y.onde).join(' + ')})`)
+  for (const { f, onde, car } of plano.filter(x => (vezes.get(x.car.code) || 0) === 1)) {
+    const alvo = `${raizDoCodigo(car.code)}/${alvoDe(car)}`
     if (a.dryRun) { rel.movidas.push(`${onde} (${f.itens} msg) → ${alvo}`); continue }
     try {
       const ja = await pastaDoCarro({ token, gmail: false }, car, { criar: false })
