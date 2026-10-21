@@ -28,10 +28,13 @@ const H = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'appli
 type Rel = { slot: number; account: string; dryRun: boolean; lidas: number; porPedido: number; porConversa: number; jaNoLugar: number; falhas: string[]; exemplos: string[]; next: string | null }
 
 async function j(url: string, init: RequestInit = {}): Promise<any> {
-  for (let i = 0; i < 3; i++) {
+  for (let i = 0; i < 4; i++) {
     const r = await fetch(url, init)
-    if (r.status === 429 || r.status === 503) { await new Promise(ok => setTimeout(ok, Math.min(20, Number(r.headers.get('retry-after')) || 3) * 1000)); continue }
-    return { ok: r.ok, status: r.status, body: await r.json().catch(() => null) }
+    // O Gmail avisa o limite por usuário com 403 (rateLimitExceeded / userRateLimitExceeded), não com 429.
+    const body = await r.json().catch(() => null)
+    const limite = r.status === 429 || r.status === 503 || (r.status === 403 && /rate ?limit/i.test(JSON.stringify(body?.error || '')))
+    if (limite) { await new Promise(ok => setTimeout(ok, Math.min(30, Number(r.headers.get('retry-after')) || 5 * (i + 1)) * 1000)); continue }
+    return { ok: r.ok, status: r.status, body }
   }
   return { ok: false, status: 429, body: null }
 }
