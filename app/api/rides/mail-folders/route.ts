@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
-import { ensureRideMailFolders, repatriateRideMail, mergeMailFolder, empresaDoCodigo, type RideMailCar, type Empresa } from '@/lib/rideMailFolders.server'
+import { ensureRideMailFolders, repatriateRideMail, mergeMailFolder, migrarPastasPorNome, type FrotaComNomes, empresaDoCodigo, type RideMailCar, type Empresa } from '@/lib/rideMailFolders.server'
 
 // A PASTA DE E-MAIL DO CARRO É SAGRADA (Márcio, 05/out/2026): «all the folders there must be 100% synced with the app».
 // E CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (ele, no mesmo dia): «gz28 both hotmail and gmais should have US cars /
@@ -71,6 +71,22 @@ export async function POST(req: NextRequest) {
   }
   // { action: 'merge', fromSlot, fromPath, toSlot, toPath, dryRun?, limit? } — funde uma pasta de QUALQUER caixa numa pasta de outra
   // (20/10/2026, caso Mustard → SpeedLight BR.512). Mesmo rito do repatriate. Só por pedido explícito.
+  // { action: 'migrar-por-nome', slot, dryRun? } — pastas de carro ANTIGAS (raiz e Arquivo Morto) casadas pelo NOME do carro de hoje
+  // (Márcio, 21/10/2026, caixa 7: «Migrate by car name»). Ver migrarPastasPorNome.
+  if (b.action === 'migrar-por-nome') {
+    const slot = Number(b.slot)
+    if (!slot) return NextResponse.json({ error: 'slot obrigatório' }, { status: 400 })
+    const frotaNomes: FrotaComNomes = []
+    const { data: us } = await streamDb().from('rides').select('project_code, project_name, is_quote').range(0, 4999)
+    for (const r of us || []) if (r.project_code && !r.is_quote && !/\.QT\./.test(String(r.project_code))) frotaNomes.push({ code: String(r.project_code), name: String(r.project_name || ''), former: [] })
+    const br = supabaseBRService()
+    if (br) {
+      const { data: rb } = await br.from('rides').select('project_code, project_name, former_names, is_quote').range(0, 4999)
+      for (const r of rb || []) if (r.project_code && !r.is_quote && !/\.QT\./.test(String(r.project_code)) && !frotaNomes.some(c => c.code === r.project_code)) frotaNomes.push({ code: String(r.project_code), name: String(r.project_name || ''), former: Array.isArray(r.former_names) ? r.former_names.map(String) : [] })
+    }
+    const rel = await migrarPastasPorNome(streamDb(), frotaNomes, { slot, dryRun: !!b.dryRun })
+    return NextResponse.json({ ok: !rel.erros.length, dryRun: !!b.dryRun, ...rel })
+  }
   if (b.action === 'merge') {
     const fromSlot = Number(b.fromSlot), toSlot = Number(b.toSlot), fromPath = String(b.fromPath || ''), toPath = String(b.toPath || '')
     if (!fromSlot || !toSlot || !fromPath.trim() || !toPath.trim()) return NextResponse.json({ error: 'fromSlot, fromPath, toSlot e toPath obrigatórios' }, { status: 400 })

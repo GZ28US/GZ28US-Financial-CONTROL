@@ -11,7 +11,7 @@
 //   • colisão não sobrescreve: vira conflito relatado.
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { getMailAuth, freshAccessToken, mailProvider, listMailAuths } from '@/lib/streamMail.server'
-import { RAIZ_DA_EMPRESA, raizDoCodigo, comecaComCodigo } from '@/lib/carMailFolder.server'
+import { RAIZ_DA_EMPRESA, raizDoCodigo, comecaComCodigo, pastaDoCarro } from '@/lib/carMailFolder.server'
 
 const nomeNu = (s: string) => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '')
 const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, (c) => String.fromCharCode(92) + c)
@@ -591,4 +591,62 @@ export async function mergeMailFolder(
     rep.failed.push(String((e as Error)?.message || e).slice(0, 220))
   }
   return rep
+}
+
+// ── PASTAS DE CARRO ANTIGAS, PELO NOME (21/10/2026 — Márcio: caixa 7 «Migrate by car name») ─────────────────────────────
+// A caixa 7 (gz28tuning) tem as pastas do João na RAIZ com a numeração VELHA («US.002 - Colossus» é a US.003 de hoje, «166 -
+// GhostRider») e ~150 do BR em «Arquivo Morto/NNN - Nome». O NÚMERO não serve; o NOME serve: cada pasta é casada com o carro de
+// hoje pelo nome atual (e, se nenhum bater, pelos nomes antigos que o app do BR guarda em former_names). Exatamente UM carro →
+// as mensagens vão para «GZ28US Rides|GZ28BR Rides/<código atual> - <nome atual>» (a pasta inteira se a do carro ainda não existe;
+// senão uma a uma) e a casca vazia sai. Zero ou mais de um carro → só relata. Nada é apagado.
+export type FrotaComNomes = { code: string; name: string; former: string[] }[]
+export async function migrarPastasPorNome(db: SupabaseClient, frota: FrotaComNomes, a: { slot: number; dryRun?: boolean }) {
+  const rel = { slot: a.slot, account: '', movidas: [] as string[], semCarro: [] as string[], ambiguas: [] as string[], erros: [] as string[] }
+  const auth = await getMailAuth(db, a.slot)
+  if (!auth?.refresh_token) { rel.erros.push('caixa sem conexão'); return rel }
+  rel.account = String(auth.account || '')
+  if (mailProvider(auth) === 'gmail') { rel.erros.push('Gmail não atendido aqui'); return rel }
+  const token = await freshAccessToken(db, auth)
+  if (!token) { rel.erros.push('token não renovou'); return rel }
+  const HG = { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }
+  const G0 = 'https://graph.microsoft.com/v1.0'
+  const todas = await graphAll(token)
+  const arq: any = await comFolego(`${G0}/me/mailFolders/archive?$select=id`, { headers: HG }).then(x => x.json()).catch(() => null)
+  const raizesCarro = new Set(todas.filter(f => !f.parentId && Object.values(RAIZ_DA_EMPRESA).some(r => r.toLowerCase() === f.displayName.trim().toLowerCase())).map(f => f.id))
+  const candidatas = todas.filter(f => (!f.parentId || (arq?.id && f.parentId === arq.id)) && !raizesCarro.has(f.id))
+  const NOME = /^\s*(?:[A-Za-z]{2,3}\.)?(?:\d{1,4}|X{2,3})\s*-\s*(.+?)\s*$/
+  const porNome = (nome: string) => frota.filter(c => nomeNu(c.name) === nomeNu(nome))
+  const porAntigo = (nome: string) => frota.filter(c => c.former.some(f => nomeNu(f) === nomeNu(nome)))
+  for (const f of candidatas) {
+    const m = f.displayName.match(NOME)
+    if (!m) continue
+    const nome = m[1], onde = f.parentId ? `Arquivo Morto/${f.displayName}` : f.displayName
+    let cars = porNome(nome)
+    if (!cars.length) cars = porAntigo(nome)
+    if (!cars.length) { rel.semCarro.push(`${onde} (${f.itens} msg)`); continue }
+    if (cars.length > 1) { rel.ambiguas.push(`${onde} → ${cars.map(c => c.code).join(' / ')}`); continue }
+    const car = cars[0], alvo = `${raizDoCodigo(car.code)}/${alvoDe(car)}`
+    if (a.dryRun) { rel.movidas.push(`${onde} (${f.itens} msg) → ${alvo}`); continue }
+    try {
+      const ja = await pastaDoCarro({ token, gmail: false }, car, { criar: false })
+      if (!ja) {
+        // a pasta inteira muda de pai e ganha o nome atual
+        const raizId = (await pastaDoCarro({ token, gmail: false }, car, { criar: true }))!.id
+        // pastaDoCarro criou a pasta do carro; mover as mensagens para ela (mantém a regra de uma pasta por carro)
+        await moverMensagens(G0, HG, f.id, raizId, rel, onde)
+      } else await moverMensagens(G0, HG, f.id, ja.id, rel, onde)
+      const info: any = await comFolego(`${G0}/me/mailFolders/${encodeURIComponent(f.id)}?$select=totalItemCount,childFolderCount`, { headers: HG }).then(x => x.json()).catch(() => null)
+      if (info && !info.totalItemCount && !info.childFolderCount) await comFolego(`${G0}/me/mailFolders/${encodeURIComponent(f.id)}`, { method: 'DELETE', headers: HG })
+      rel.movidas.push(`${onde} (${f.itens} msg) → ${alvo}${info?.totalItemCount ? ` — ficaram ${info.totalItemCount}` : ''}`)
+    } catch (e) { rel.erros.push(`${onde}: ${String((e as Error)?.message || e).slice(0, 160)}`) }
+  }
+  return rel
+}
+async function moverMensagens(G0: string, HG: Record<string, string>, de: string, para: string, rel: { erros: string[] }, onde: string) {
+  const ids: string[] = []
+  let next: string | null = `${G0}/me/mailFolders/${encodeURIComponent(de)}/messages?$top=100&$select=id`
+  while (next) { const r: any = await comFolego(next, { headers: HG }).then(x => x.json()).catch(() => null); ids.push(...(r?.value || []).map((m: any) => String(m.id))); next = r?.['@odata.nextLink'] || null }
+  let falhas = 0
+  for (const id of ids) { const mv = await comFolego(`${G0}/me/messages/${encodeURIComponent(id)}/move`, { method: 'POST', headers: HG, body: JSON.stringify({ destinationId: para }) }); if (!mv.ok) falhas++ }
+  if (falhas) rel.erros.push(`${onde}: ${falhas} mensagem(ns) não passaram`)
 }
