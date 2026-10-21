@@ -250,6 +250,12 @@ async function migraGraph(token: string, cars: RideMailCar[], rep: EnsureSlotRep
       const raiz = raizDoCodigo(nome.split(' ')[0]), rid = raizId[raiz]
       const code = nome.split(/\s/)[0]
       const ja = rid ? filhasDe(rid).find(x => comecaComCodigo(x.displayName, code)) : undefined
+      // VAZIA (sem mensagem, sem subpasta): não migra — sai. A pasta do carro só existe onde há e-mail dele (Márcio, 21/10/2026).
+      if (!f.itens && !filhasDe(f.id).length) {
+        if (!dryRun) { const d = await comFolego(`${G0}/me/mailFolders/${encodeURIComponent(f.id)}`, { method: 'DELETE', headers: HG }); if (!d.ok) { rep.errors.push(`remover Rides/${nome} (vazia): HTTP ${d.status}`); continue } f.parentId = '__movida' }
+        rep.renamed.push(`Rides/${nome} (vazia) removida`)
+        continue
+      }
       if (dryRun) { rep.renamed.push(`Rides/${nome} → ${raiz}/${ja ? ja.displayName + ' (fundir ' + f.itens + ' msg)' : nome}`); continue }
       if (!rid) continue
       if (!ja) {
@@ -320,6 +326,11 @@ async function migraGmail(token: string, cars: RideMailCar[], rep: EnsureSlotRep
     if (!CARA_DE_CODIGO.test(nome)) { rep.extras.push(`${l.name} — não é pasta de carro, ficou`); continue }
     const raiz = raizDoCodigo(nome.split(' ')[0]), code = nome.split(/\s/)[0]
     const ja = dentro(raiz).find(x => comecaComCodigo(x.name.slice(raiz.length + 1), code))
+    const det: any = await fetch(`${GM0}/labels/${encodeURIComponent(l.id)}`, { headers: HG }).then(x => x.json()).catch(() => null)
+    if (det && !Number(det.messagesTotal)) {
+      if (!dryRun) { const d = await fetch(`${GM0}/labels/${encodeURIComponent(l.id)}`, { method: 'DELETE', headers: HG }); if (!d.ok) { rep.errors.push(`remover ${l.name} (vazia): HTTP ${d.status}`); continue } }
+      l.name = '__removida'; rep.renamed.push(`Rides/${nome} (vazia) removida`); continue
+    }
     if (dryRun) { rep.renamed.push(`${l.name} → ${raiz}/${ja ? ja.name.slice(raiz.length + 1) + ' (fundir)' : nome}`); continue }
     if (!ja) {
       const p = await fetch(`${GM0}/labels/${encodeURIComponent(l.id)}`, { method: 'PATCH', headers: HG, body: JSON.stringify({ name: `${raiz}/${nome}` }) })
