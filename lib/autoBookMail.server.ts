@@ -973,7 +973,7 @@ async function arquiva(
     if (!caixa.podeArquivarCarro) return
     const origensOk = new Set([caixa.pastas.get(DESTINO_FINAL), caixa.pastas.get(String(vendor).trim().toLowerCase())].filter(Boolean) as string[])
     const r = await arquivaNoCarro({ slot: caixa.slot, token, gmail: caixa.gmail, inboxId: caixa.inbox, origensOk }, msg, carros)
-    if (r.feito) out.arquivados.push(`Rides/${r.onde} ← ${msg.subject.slice(0, 55)}`)
+    if (r.feito) out.arquivados.push(`${r.onde} ← ${msg.subject.slice(0, 55)}`)
     else if (r.motivo && !/já está na pasta|pasta que alguém escolheu/.test(r.motivo)) out.semPasta.push(`${vendor} — "${msg.subject.slice(0, 50)}" (${r.motivo})`)
     return
   }
@@ -1022,10 +1022,12 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
   // Só o Graph tem o mapa de pastas aqui, e só caixa com auto_sweep ligado é
   // varrida por robô ([[email-multi-account]]).
   const podeArquivar = !gmail && maySweep(auth)
-  const pastas = podeArquivar ? await folderMap(token) : new Map<string, string>()
-  const inbox = podeArquivar ? await inboxFolderId(token) : null
-  // A pasta do CARRO vale também no Gmail (label Rides/…, 17/10/2026) — só com auto_sweep ligado, como o resto.
-  return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs, token, pastas, inbox, podeArquivar, gmail, podeArquivarCarro: maySweep(auth) }
+  // A PASTA DO CARRO VALE EM TODA CAIXA (LEI de 20/10/2026 — «GZ28US Rides / GZ28BR Rides» nas 8 caixas): o e-mail do carro sai da
+  // inbox (ou de Purchases / da pasta do fornecedor) para a pasta do carro em QUALQUER caixa conectada, com ou sem auto_sweep. O resto
+  // da cascata (fornecedor → Purchases) continua só com auto_sweep ligado.
+  const pastas = !gmail ? await folderMap(token) : new Map<string, string>()
+  const inbox = !gmail ? await inboxFolderId(token) : null
+  return { nome: `${nome}:${msgs.length}`, slot: auth.id || 0, msgs, token, pastas, inbox, podeArquivar, gmail, podeArquivarCarro: true }
 }
 
 // ── PROVA DE VIDA ──────────────────────────────────────────────────────────

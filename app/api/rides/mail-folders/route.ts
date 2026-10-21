@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireUser, cronOk, readKeyOk } from '@/lib/apiAuth.server'
 import { streamDb } from '@/lib/stream.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
-import { ensureRideMailFolders, repatriateRideMail, mergeMailFolder, empresaDoCodigo, CAIXAS_DA_EMPRESA, type RideMailCar, type Empresa, type EnsureSlotReport } from '@/lib/rideMailFolders.server'
+import { ensureRideMailFolders, repatriateRideMail, mergeMailFolder, empresaDoCodigo, type RideMailCar, type Empresa } from '@/lib/rideMailFolders.server'
 
 // A PASTA DE E-MAIL DO CARRO É SAGRADA (Márcio, 05/out/2026): «all the folders there must be 100% synced with the app».
 // E CADA CAIXA SÓ CARREGA OS CARROS DA SUA EMPRESA (ele, no mesmo dia): «gz28 both hotmail and gmais should have US cars /
@@ -41,22 +41,14 @@ async function frota(empresa: Empresa): Promise<RideMailCar[]> {
 export async function GET(req: NextRequest) {
   if (!cronOk(req) && !readKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const dryRun = req.nextUrl.searchParams.get('dryRun') === '1'
-  const qual = (req.nextUrl.searchParams.get('company') || '').toUpperCase()
-  const empresas: Empresa[] = qual === 'US' || qual === 'BR' ? [qual] : ['US', 'BR']
-  // Uma empresa não derruba a outra: banco do BR fora do ar não pode parar a conferência das caixas do US.
-  const partes = await Promise.all(empresas.map(async empresa => {
-    try {
-      const cars = await frota(empresa)
-      const slots = await ensureRideMailFolders(streamDb(), cars, { dryRun, audit: true, slots: CAIXAS_DA_EMPRESA[empresa] })
-      return { empresa, cars: cars.length, slots, error: '' }
-    } catch (e) {
-      return { empresa, cars: 0, slots: [] as EnsureSlotReport[], error: String((e as Error)?.message || e).slice(0, 300) }
-    }
-  }))
-  const slots = partes.flatMap(p => p.slots)
-  const erros = partes.filter(p => p.error).map(p => `${p.empresa}: ${p.error}`)
+  // LEI de 20/10/2026: TODAS as caixas conectadas, com as duas frotas (cada carro na raiz da empresa do código). Uma frota que não
+  // carrega não derruba a outra: o nome dos carros dela só não é sincronizado nesta rodada.
+  const erros: string[] = []
+  const frotas = await Promise.all((['US', 'BR'] as Empresa[]).map(async empresa => { try { return await frota(empresa) } catch (e) { erros.push(`${empresa}: ${String((e as Error)?.message || e).slice(0, 300)}`); return [] as RideMailCar[] } }))
+  const slotsQuery = (req.nextUrl.searchParams.get('slot') || '').split(',').map(Number).filter(Boolean)
+  const slots = await ensureRideMailFolders(streamDb(), frotas.flat(), { dryRun, audit: true, ...(slotsQuery.length ? { slots: slotsQuery } : {}) })
   const falhou = erros.length > 0 || slots.some(s => s.errors.length)
-  return NextResponse.json({ ok: !falhou, dryRun, cars: Object.fromEntries(partes.map(p => [p.empresa, p.cars])), errors: erros, slots }, { status: falhou ? 502 : 200 })
+  return NextResponse.json({ ok: !falhou, dryRun, cars: { US: frotas[0].length, BR: frotas[1].length }, errors: erros, slots }, { status: falhou ? 502 : 200 })
 }
 
 export async function POST(req: NextRequest) {
@@ -66,6 +58,9 @@ export async function POST(req: NextRequest) {
   // (Márcio, 05/out/2026: «Remove empty, move the mail»). Cópia conferida no destino, original para o Arquivo morto da
   // origem, casca vazia removida; nada é apagado. Só roda por este pedido explícito — o cron (GET) nunca faz isto.
   if (b.action === 'repatriate') {
+    // APOSENTADO (21/10/2026): a LEI de 20/10 manda o e-mail do carro ficar NA CAIXA ONDE ESTÁ, na pasta do carro dentro de
+    // «GZ28US Rides» / «GZ28BR Rides». Levar para a caixa da empresa é exatamente o que ela proíbe. Fusão pontual: action 'merge'.
+    if (!b.force) return NextResponse.json({ ok: false, error: 'repatriate aposentado pela lei de 20/10/2026 (e-mail do carro fica na caixa onde está, em GZ28US Rides / GZ28BR Rides). Para fundir uma pasta numa outra caixa, use action merge.' }, { status: 410 })
     try {
       const [us, br] = await Promise.all([frota('US'), frota('BR')])
       const folders = await repatriateRideMail(streamDb(), { US: us, BR: br }, { dryRun: !!b.dryRun, folder: b.folder ? String(b.folder) : undefined, limit: Number(b.limit) || undefined })

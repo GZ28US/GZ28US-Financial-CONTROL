@@ -495,7 +495,9 @@ export async function fetchInbox(accessToken: string): Promise<InboxMsg[]> {
 export async function rideFolderMap(accessToken: string): Promise<Map<string, { id: string; name: string }>> {
   const out = new Map<string, { id: string; name: string }>()
   const top = await fetch(`https://graph.microsoft.com/v1.0/me/mailFolders?$top=100`, { headers: graphH(accessToken) }).then(r => r.json()).catch(() => null)
-  const rides = (top?.value || []).find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
+  // LEI de 20/10/2026: a raiz dos carros do US é «GZ28US Rides» (a «Rides» velha só enquanto a migração não passou nesta caixa).
+  const vals = top?.value || []
+  const rides = vals.find((f: any) => String(f.displayName).trim().toLowerCase() === 'gz28us rides') || vals.find((f: any) => String(f.displayName).trim().toLowerCase() === 'rides')
   if (!rides) return out
   let next: string | null = `https://graph.microsoft.com/v1.0/me/mailFolders/${rides.id}/childFolders?$top=100`
   while (next) {

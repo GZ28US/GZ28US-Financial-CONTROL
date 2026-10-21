@@ -10,12 +10,14 @@
 //   ou a linha que o robô acabou de lançar/achar → invoice (de verdade: sem quote, sem o balde A ATRIBUIR) → ride.
 // Vale para TODA carta do pedido (confirmação, PayPal, envio, entrega, conversa) — quem chama é o robô do AutoBook (hora em
 // hora) e a ponte e-mail → item do rastreio (mail-poll, 5 em 5 min).
+// 21/10/2026 — LEI NOVA (Márcio, 20/10): a pasta é «GZ28US Rides/<código> - <nome>» ou «GZ28BR Rides/…» em QUALQUER caixa, na caixa
+// onde a carta está, e nasce quando falta (lib/carMailFolder.server.ts). Acabou o «só nas caixas da empresa».
 // Compra de 2 carros: CÓPIA na pasta dos extras e MOVE na última (como o /api/stream/mail-file). Carta que já está numa pasta
 // que NÃO é de carro mas é de compra (Purchases, a do fornecedor) também vai; qualquer outra pasta foi escolha de gente e fica.
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
-import { empresaDoCodigo, empresaDaCaixa } from '@/lib/rideMailFolders.server'
+import { pastaDoCarro, esqueceCachePastasDeCarro } from '@/lib/carMailFolder.server'
 import type { MailMsg } from '@/lib/streamMail.server'
 
 export type CarroDaCarta = { code: string; name: string }
@@ -104,54 +106,27 @@ export type CaixaCarro = { slot: number; token: string; gmail: boolean; inboxId:
 export type ResultadoCarro = { feito: boolean; onde: string; motivo?: string }
 
 const gh = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
-const pastasCache = new Map<string, Map<string, string>>()   // por token: código → id da pasta/label
-// Lambda quente reaproveita o módulo: cada rodada começa com o mapa limpo (pasta de carro nova nasce de hora em hora).
-export const esqueceCachePastas = () => pastasCache.clear()
+// Lambda quente reaproveita o módulo: cada rodada começa com o mapa limpo.
+export const esqueceCachePastas = () => esqueceCachePastasDeCarro()
 
-async function pastasDeCarroGraph(token: string): Promise<Map<string, string>> {
-  const hit = pastasCache.get(token); if (hit) return hit
-  const out = new Map<string, string>()
-  const top: any = await fetch(`${G}/me/mailFolders?$top=100&$select=id,displayName`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
-  const rides = (top?.value || []).find((f: any) => String(f.displayName || '').trim().toLowerCase() === 'rides')
-  let next: string | null = rides ? `${G}/me/mailFolders/${rides.id}/childFolders?$top=100&$select=id,displayName` : null
-  while (next) {
-    const kids: any = await fetch(next, { headers: gh(token) }).then(r => r.json()).catch(() => null)
-    for (const f of kids?.value || []) { const m = String(f.displayName || '').match(/^((?:US|SC|WV|PO|BR|GM)\.\d+)(?![\d.])/i); if (m) out.set(m[1].toUpperCase(), String(f.id)) }
-    next = kids?.['@odata.nextLink'] || null
-  }
-  pastasCache.set(token, out)
-  return out
-}
-async function pastasDeCarroGmail(token: string): Promise<Map<string, string>> {
-  const hit = pastasCache.get(token); if (hit) return hit
-  const out = new Map<string, string>()
-  const all: any = await fetch(`${GM}/labels`, { headers: gh(token) }).then(r => r.json()).catch(() => null)
-  for (const l of all?.labels || []) { const m = String(l.name || '').match(/^Rides\/((?:US|SC|WV|PO|BR|GM)\.\d+)(?![\d.])/i); if (m) out.set(m[1].toUpperCase(), String(l.id)) }
-  pastasCache.set(token, out)
-  return out
-}
-
-// A carta vai para a pasta de cada carro DA EMPRESA DESTA CAIXA. Extras = cópia; último = move (sai da inbox / Purchases).
+// A carta vai para a pasta de cada carro, NESTA caixa (a pasta nasce quando falta). Extras = cópia; último = move.
 export async function arquivaNoCarro(cx: CaixaCarro, msg: MailMsg, carros: CarroDaCarta[]): Promise<ResultadoCarro> {
   if (!msg.id) return { feito: false, onde: '', motivo: 'carta sem id' }
-  const casa = empresaDaCaixa(cx.slot)
-  if (!casa) return { feito: false, onde: '', motivo: 'caixa sem empresa (só 1–4 têm pastas de carro)' }
-  const meus = carros.filter(c => empresaDoCodigo(c.code) === casa)
-  if (!meus.length) return { feito: false, onde: '', motivo: `carro de outra empresa (${carros.map(c => c.code).join(', ')}) — a pasta dele não mora nesta caixa` }
+  const meus = carros
+  if (!meus.length) return { feito: false, onde: '', motivo: 'sem carro' }
+  let pastas: { c: CarroDaCarta; id: string; caminho: string }[]
+  try { pastas = await Promise.all(meus.map(async c => { const p = await pastaDoCarro({ token: cx.token, gmail: cx.gmail }, c, { criar: true }); return { c, id: p!.id, caminho: p!.caminho } })) }
+  catch (e) { return { feito: false, onde: '', motivo: 'pasta do carro falhou: ' + String((e as Error)?.message || e).slice(0, 160) } }
+  const onde = pastas.map(p => p.caminho).join(' + ')
   if (cx.gmail) {
     const labels = (msg.folderId || '').split(',').filter(Boolean)
-    const pastas = await pastasDeCarroGmail(cx.token)
-    const ids = meus.map(c => pastas.get(c.code.toUpperCase())).filter(Boolean) as string[]
-    if (ids.length !== meus.length) return { feito: false, onde: '', motivo: `sem label Rides/ de ${meus.filter(c => !pastas.get(c.code.toUpperCase())).map(c => c.code).join(', ')}` }
+    const ids = pastas.map(p => p.id)
     if (ids.every(id => labels.includes(id)) && !labels.includes('INBOX')) return { feito: false, onde: '', motivo: 'já está na pasta do carro' }
     if (!labels.includes('INBOX') && !labels.some(l => cx.origensOk.has(l))) return { feito: false, onde: '', motivo: 'fora da inbox, numa pasta que alguém escolheu' }
     const r = await fetch(`${GM}/messages/${encodeURIComponent(msg.id)}/modify`, { method: 'POST', headers: gh(cx.token), body: JSON.stringify({ addLabelIds: ids, removeLabelIds: ['INBOX', ...labels.filter(l => cx.origensOk.has(l))] }) })
-    return r.ok ? { feito: true, onde: meus.map(c => c.code).join(' + ') } : { feito: false, onde: '', motivo: 'Gmail recusou (HTTP ' + r.status + ')' }
+    return r.ok ? { feito: true, onde } : { feito: false, onde: '', motivo: 'Gmail recusou (HTTP ' + r.status + ')' }
   }
-  const pastas = await pastasDeCarroGraph(cx.token)
-  const alvos = meus.map(c => ({ c, id: pastas.get(c.code.toUpperCase()) }))
-  const falta = alvos.filter(a => !a.id).map(a => a.c.code)
-  if (falta.length) return { feito: false, onde: '', motivo: `sem pasta Rides/ de ${falta.join(', ')} nesta caixa` }
+  const alvos = pastas
   const aqui = msg.folderId || ''
   if (alvos.some(a => a.id === aqui)) return { feito: false, onde: '', motivo: 'já está na pasta do carro' }
   if (aqui !== cx.inboxId && !cx.origensOk.has(aqui)) return { feito: false, onde: '', motivo: 'fora da inbox, numa pasta que alguém escolheu' }
@@ -161,5 +136,5 @@ export async function arquivaNoCarro(cx: CaixaCarro, msg: MailMsg, carros: Carro
   }
   const last = alvos[alvos.length - 1]
   const mv = await fetch(`${G}/me/messages/${encodeURIComponent(msg.id)}/move`, { method: 'POST', headers: gh(cx.token), body: JSON.stringify({ destinationId: last.id }) })
-  return mv.ok ? { feito: true, onde: meus.map(c => `${c.code} - ${c.name}`).join(' + ') } : { feito: false, onde: '', motivo: `move para ${last.c.code} falhou (HTTP ${mv.status})` }
+  return mv.ok ? { feito: true, onde } : { feito: false, onde: '', motivo: `move para ${last.c.code} falhou (HTTP ${mv.status})` }
 }

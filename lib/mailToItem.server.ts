@@ -53,7 +53,7 @@
 
 import type { SupabaseClient } from '@supabase/supabase-js'
 import {
-  listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail, maySweep, inboxFolderId, folderMap,
+  listMailAuths, mailProvider, freshAccessToken, fetchRecentMessages, fetchRecentGmail, inboxFolderId, folderMap,
   extractTrackings, carrierFromText, isPurchaseConfirmation, type MailMsg, type MailAuth,
 } from './streamMail.server'
 import { ITEM_TABLES, EXPENSE_ITEM_GATE, type ItemTable } from './itemTracking.server'
@@ -268,9 +268,10 @@ async function lerCaixa(db: SupabaseClient, auth: MailAuth, desde: string): Prom
   if (!token) return { nome: nome + ':sem-token', msgs: [], carro: null }
   const gmail = mailProvider(auth) === 'gmail'
   const msgs = gmail ? await fetchRecentGmail(token, desde) : await fetchRecentMessages(token, desde)
-  // PASTA DO CARRO (17/10/2026): só caixa com auto_sweep ligado; no Graph, a inbox e «Purchases» são as origens de onde se tira.
+  // PASTA DO CARRO (17/10/2026; em TODA caixa desde a LEI de 20/10/2026 — «GZ28US Rides / GZ28BR Rides» nas 8 caixas): no Graph, a
+  // inbox e «Purchases» são as origens de onde se tira.
   let carro: CaixaCarro | null = null
-  if (maySweep(auth) && msgs.length) {
+  if (msgs.length) {
     const inboxId = gmail ? null : await inboxFolderId(token)
     const purchases = gmail ? undefined : (await folderMap(token)).get('purchases')
     carro = { slot: auth.id || 0, token, gmail, inboxId, origensOk: new Set(purchases ? [purchases] : []) }
@@ -303,7 +304,7 @@ export async function runMailToItem(db: SupabaseClient, dias = 3): Promise<MailT
         if (carros.length) {
           try {
             const r = await arquivaNoCarro(caixa.carro, msg, carros)
-            if (r.feito) out.arquivados!.push(`Rides/${r.onde} ← ${msg.subject.slice(0, 55)}`)
+            if (r.feito) out.arquivados!.push(`${r.onde} ← ${msg.subject.slice(0, 55)}`)
             else if (r.motivo && /sem pasta|sem label|falhou|recusou/.test(r.motivo)) out.duvidas.push(`pasta do carro: "${msg.subject.slice(0, 50)}" — ${r.motivo}`)
           } catch (e) { out.duvidas.push('pasta do carro: ' + String((e as Error).message || e).slice(0, 120)) }
         }
