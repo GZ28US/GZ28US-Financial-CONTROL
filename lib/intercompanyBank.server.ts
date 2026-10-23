@@ -19,10 +19,10 @@ export type ResultadoCasamento = { conferidas: number; casadas: { code: string; 
 export async function casarTransferenciasComRegions(us: SupabaseClient, opts: { gravar?: boolean } = {}): Promise<ResultadoCasamento> {
   const gravar = opts.gravar !== false
   const out: ResultadoCasamento = { conferidas: 0, casadas: [], ambiguas: [], sem_par: 0 }
-  const { data: trs, error } = await us.from('intercompany_transfers').select('id, code, direction, arrived_on, arrived_amount, arrived_currency, status, bank_transaction_id').eq('direction', 'BR_TO_US').is('bank_transaction_id', null).in('status', ['ARRIVED', 'SENT']).not('arrived_on', 'is', null)
+  const { data: trs, error } = await us.from('intercompany_transfers').select('id, code, via, direction, arrived_on, arrived_amount, arrived_currency, status, bank_transaction_id').eq('direction', 'BR_TO_US').is('bank_transaction_id', null).in('status', ['ARRIVED', 'SENT']).not('arrived_on', 'is', null)
   if (error) return { ...out, erro: error.message }
   for (const t of (trs || []) as Row[]) {
-    if (t.arrived_currency !== 'USD' || !(num(t.arrived_amount) > 0)) continue
+    if (t.arrived_currency !== 'USD' || !(num(t.arrived_amount) > 0) || String(t.via || '').toUpperCase() === 'CASH') continue
     out.conferidas++
     const usd = Math.round(num(t.arrived_amount) * 100) / 100
     const de = addDias(String(t.arrived_on).slice(0, 10), -5), ate = addDias(String(t.arrived_on).slice(0, 10), 5)

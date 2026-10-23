@@ -364,7 +364,8 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
   for (const t of transfers) {
     if (t.status === 'SENT') looseEnds.push({ kind: 'TRANSFERENCIA_EM_TRANSITO', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — saiu ${t.sent_on || '?'} e ainda não chegou`, usd: t.usd, href: '/gz-flow', external: false })
     if (t.needs_review) looseEnds.push({ kind: 'TRANSFERENCIA_A_REVISAR', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — ${t.description || ''} (falta o lado ${t.brl == null ? 'R$' : 'US$'} / o comprovante)`, usd: t.usd, href: '/gz-flow', external: false })
-    if (t.direction === 'BR_TO_US' && t.status !== 'SENT' && !t.bank_transaction_id) looseEnds.push({ kind: 'TRANSFERENCIA_SEM_REGIONS', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — chegada sem linha da Regions casada`, usd: t.usd, href: '/gz-flow', external: false })
+    // Saque em espécie (via CASH) nunca passa na Regions: não é ponta solta sem linha do banco.
+    if (t.direction === 'BR_TO_US' && t.status !== 'SENT' && !t.bank_transaction_id && String(t.via || '').toUpperCase() !== 'CASH') looseEnds.push({ kind: 'TRANSFERENCIA_SEM_REGIONS', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — chegada sem linha da Regions casada`, usd: t.usd, href: '/gz-flow', external: false })
   }
 
   // ── a conta ──
