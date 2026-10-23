@@ -153,13 +153,16 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
   const usFixedName = new Map(usFixedSup.map(s => [s.id, s.company || s.description || '']))
 
   // ── BR ──
-  const [brInvoices, brExp, brStaff, brFixed, brFixedSup, brPayments] = await Promise.all([
+  const [brInvoices, brExp, brStaff, brFixed, brFixedSup, brPayments, brInputs, brInventory] = await Promise.all([
     readAll(br, 'BR', 'invoices', 'id, invoice_code, ride_id, client_id, is_quote, usd_rate, service'),
     readAll(br, 'BR', 'invoice_expenses', 'id, invoice_id, item, supplier, price, quantity, tax, extra, amount_usd, expense_date, payment_date, paid_from, paid_to, source, receipt_url, cancel_status, order_number, nature', q => q.or(citaUS)),
     readAll(br, 'BR', 'expenses', 'id, season_id, staff_id, type, description, supplier, amount, amount_usd, expense_date, payment_date, paid_from, paid_to, source, origin, receipt_url', q => q.or(citaUS)),
     readAll(br, 'BR', 'fixed_cost_expenses', 'id, supplier_id, description, amount, amount_usd, expense_date, payment_date, paid_from, paid_to, source, receipt_url', q => q.or(citaUS)),
     readAll(br, 'BR', 'fixed_cost_suppliers', 'id, company, description, cost_type'),
     readAll(br, 'BR', 'invoice_payments', 'id, invoice_id, amount, amount_usd, payment_date, paid_at, paid_to, paid_from, description, receipt_url, mirror_src', q => q.ilike('paid_to', 'gz28us')),
+    // SUPPLIES e ESTOQUE do BR pagos pelo US (AutoBook BR, 23/10: frete dos motores Maurão, tie downs Ace) — amount_usd por unidade (MIGRATION_inputs_inventory_amount_usd.sql no BR)
+    readAll(br, 'BR', 'inputs', 'id, description, supplier, unit_price, quantity, amount_usd, purchase_date, payment_date, paid_from, paid_to, source, receipt_url, cancel_status, order_number', q => q.or(citaUS)),
+    readAll(br, 'BR', 'inventory', 'id, description, supplier, source_type, unit_price, quantity, amount_usd, purchase_date, payment_date, paid_from, paid_to, source, receipt_url, cancel_status, order_number', q => q.or(citaUS)),
   ])
   const brInvById = new Map(brInvoices.map(i => [i.id, i]))
   const brRideIds = [...new Set(brInvoices.map(i => i.ride_id).filter(Boolean))] as string[]
@@ -186,6 +189,8 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     if (inv && inv.ride_id) return `${BR_APP_BASE}/rides/${inv.ride_id}/invoices/${inv.id}`
     if (table === 'expenses') return row.staff_id ? `${BR_APP_BASE}/staff/${row.staff_id}/expenses` : `${BR_APP_BASE}/staff`
     if (table === 'fixed_cost_expenses') return row.supplier_id ? `${BR_APP_BASE}/costs/fixed/${row.supplier_id}` : `${BR_APP_BASE}/costs/fixed`
+    if (table === 'inputs') return `${BR_APP_BASE}/inputs`
+    if (table === 'inventory') return `${BR_APP_BASE}/inventory`
     return null
   }
   const usCode = (inv: Row | undefined) => { if (!inv) return null; const r = inv.ride_id ? usRides.get(inv.ride_id) : null; return `${inv.invoice_code}${r ? ' · ' + r.project_name : ''}` }
@@ -263,9 +268,11 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     { table: 'invoice_expenses', rows: brExp, brl: valorDespesa, usdRec: usdBR, dia: r => ymd(r.expense_date) || ymd(r.payment_date), label: r => [r.supplier, r.item].filter(Boolean).join(' · '), grupo: r => r.invoice_id },
     { table: 'expenses', rows: brStaff, brl: r => num(r.amount), usdRec: r => (num(r.amount_usd) > 0 ? r2(num(r.amount_usd)) : null), dia: r => ymd(r.payment_date) || ymd(r.expense_date), label: r => `FOLHA · ${brStaffName.get(r.staff_id) || ''} · ${r.description || r.type || ''}` },
     { table: 'fixed_cost_expenses', rows: brFixed, brl: r => num(r.amount), usdRec: r => (num(r.amount_usd) > 0 ? r2(num(r.amount_usd)) : null), dia: r => ymd(r.payment_date) || ymd(r.expense_date), label: r => `FIXO · ${brFixedName.get(r.supplier_id) || ''} · ${r.description || ''}` },
+    { table: 'inputs', rows: brInputs, brl: valorItem, usdRec: r => (num(r.amount_usd) > 0 ? r2(num(r.amount_usd) * (num(r.quantity) || 1)) : null), dia: r => ymd(r.payment_date) || ymd(r.purchase_date), label: r => `SUPPLY · ${[r.supplier, r.description].filter(Boolean).join(' · ')}` },
+    { table: 'inventory', rows: brInventory.filter(r => r.source_type !== 'DONATED'), brl: valorItem, usdRec: r => (num(r.amount_usd) > 0 ? r2(num(r.amount_usd) * (num(r.quantity) || 1)) : null), dia: r => ymd(r.payment_date) || ymd(r.purchase_date), label: r => `STOCK · ${[r.supplier, r.description].filter(Boolean).join(' · ')}` },
   ]
   for (const src of brSources) {
-    const fora = src.table === 'invoice_expenses' ? foraDoDinheiro(src.rows, src.brl, src.grupo) : new Set<Row>()
+    const fora = src.table === 'invoice_expenses' || src.table === 'inputs' || src.table === 'inventory' ? foraDoDinheiro(src.rows, src.brl, src.grupo) : new Set<Row>()
     for (const r of src.rows) {
       const key = `BR:${src.table}:${r.id}`
       const inv = src.table === 'invoice_expenses' ? brInvById.get(r.invoice_id) : undefined
