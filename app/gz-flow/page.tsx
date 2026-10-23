@@ -29,7 +29,7 @@ const LOOSE_LABEL: Record<string, string> = {
   SEM_DATA: 'No payment date — not counted until it has one',
   SEM_CAMBIO: 'No exchange rate for the day — counted as $0',
   CREDITO_A_DECIDIR: 'BR credit against US (FL tax charged wrongly) — decision pending, not counted',
-  RENDA_NO_BR_SEM_REMESSA: 'US income received in Brazil with no transfer covering it (30+ days)',
+  RENDA_NO_BR_SEM_REMESSA: 'INFO · US income received in Brazil that no transfer declares as covered (30+ days) — in 2025 the BR spent that money paying US bills directly, which is already in the account',
   TRANSFERENCIA_EM_TRANSITO: 'Transfer sent, not arrived yet',
   TRANSFERENCIA_A_REVISAR: 'Transfer missing one leg or its receipt',
   TRANSFERENCIA_SEM_REGIONS: 'Transfer arrived with no Regions line matched',

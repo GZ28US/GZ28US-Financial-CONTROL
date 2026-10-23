@@ -149,7 +149,7 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
   const usInvById = new Map(usInvoices.map(i => [i.id, i]))
   const usRideIds = [...new Set(usInvoices.map(i => i.ride_id).filter(Boolean))] as string[]
   const usRides = new Map((await readByIds(us, 'US', 'rides', 'id, project_code, project_name', usRideIds)).map(r => [r.id, r]))
-  const usSeasons = new Map((await readByIds(us, 'US', 'staff_seasons', 'id, season_code, staff_id', [...new Set(usStaff.map(s => s.season_id).filter(Boolean))] as string[]).catch(() => [] as Row[])).map(s => [s.id, s]))
+  const usSeasons = new Map((await readByIds(us, 'US', 'seasons', 'id, season_code, staff_id', [...new Set(usStaff.map(s => s.season_id).filter(Boolean))] as string[]).catch(() => [] as Row[])).map(s => [s.id, s]))
   const usFixedName = new Map(usFixedSup.map(s => [s.id, s.company || s.description || '']))
 
   // ── BR ──
@@ -361,7 +361,9 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
   const covered = new Set(transfers.flatMap(t => t.covers.map(c => `${c.app}:${c.table}:${c.id}`)))
   const hoje = new Date().toISOString().slice(0, 10)
   for (const e of entries) {
-    if (e.kind === 'INCOME' && e.app === 'US' && !covered.has(e.key) && e.date && addDias(e.date, 30) < hoje) looseEnds.push({ kind: 'RENDA_NO_BR_SEM_REMESSA', key: e.key, label: `${e.code ? e.code + ' · ' : ''}${e.label} — recebida no BR em ${e.date}, nenhuma transferência a cobre`, usd: e.usd, href: e.href, external: e.external })
+    // AVISO, não erro (AutoBook US, 23/10): em 2025 o BR gastou esse dinheiro pagando conta do US direto (cartões, folha, SEMA) — isso já
+    // está na conta como despesa PAID BY GZ28BR. Só vira transferência o que de fato foi ao Allan. A lista mostra o que ainda não tem cobertura.
+    if (e.kind === 'INCOME' && e.app === 'US' && !covered.has(e.key) && e.date && addDias(e.date, 30) < hoje) looseEnds.push({ kind: 'RENDA_NO_BR_SEM_REMESSA', key: e.key, label: `${e.code ? e.code + ' · ' : ''}${e.label} — recebida no BR em ${e.date}; nenhuma transferência declara cobri-la (pode ter sido gasta pelo BR pagando conta do US)`, usd: e.usd, href: e.href, external: e.external })
   }
   for (const t of transfers) {
     if (t.status === 'SENT' && (t.usd > 0 || (t.brl || 0) > 0)) looseEnds.push({ kind: 'TRANSFERENCIA_EM_TRANSITO', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — saiu ${t.sent_on || '?'} e ainda não chegou (fora do número até chegar)`, usd: t.usd, href: '/gz-flow', external: false })
