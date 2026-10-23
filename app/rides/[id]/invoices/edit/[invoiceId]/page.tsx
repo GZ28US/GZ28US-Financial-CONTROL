@@ -3256,7 +3256,7 @@ export default function EditInvoicePage() {
                       </select>
                     </div>
                     <div className="flex-1">
-                      <label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                      <label className="block mb-1 text-sm text-gray-400">RECEIVED BY</label>
                       <select value={p.paid_to || 'GZ28US'} onChange={(e) => { const a = [...scannedPayments]; a[i] = { ...a[i], paid_to: e.target.value }; setScannedPayments(a) }} className={`${selectClass} w-full`}>
                         {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                         {p.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(p.paid_to) && <option value={p.paid_to}>{p.paid_to}</option>}
@@ -4368,7 +4368,7 @@ export default function EditInvoicePage() {
                   {newPayment.source && !methodsFor(newPayment.paid_to).includes(newPayment.source) && <option value={newPayment.source}>{newPayment.source}</option>}
                 </select>
               </div>
-              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+              <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">RECEIVED BY</label>
                 <select value={newPayment.paid_to || 'GZ28US'} onChange={(e) => setNewPayment({ ...newPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
                   {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                   {newPayment.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(newPayment.paid_to) && <option value={newPayment.paid_to}>{newPayment.paid_to}</option>}
@@ -4434,7 +4434,7 @@ export default function EditInvoicePage() {
                                 {editingPayment.source && !methodsFor(editingPayment.paid_to).includes(editingPayment.source) && <option value={editingPayment.source}>{editingPayment.source}</option>}
                               </select>
                             </div>
-                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">PAID TO</label>
+                            <div className="flex-1 min-w-[8rem]"><label className="block mb-1 text-sm text-gray-400">RECEIVED BY</label>
                               <select value={editingPayment.paid_to || 'GZ28US'} onChange={(e) => setEditingPayment({ ...editingPayment, paid_to: e.target.value })} className={`${selectClass} w-full`}>
                                 {PAID_TO_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                                 {editingPayment.paid_to && !(PAID_TO_OPTIONS as readonly string[]).includes(editingPayment.paid_to) && <option value={editingPayment.paid_to}>{editingPayment.paid_to}</option>}
@@ -4489,7 +4489,7 @@ export default function EditInvoicePage() {
                                 })}
                               </div>
                             )}
-                            {editingPayment.paid_to === 'GZ28BR' && <p className="mt-1 text-xs text-amber-300">PAID TO GZ28BR: tag the PIX/TED that landed in Brazil as BR entry — the app copies it to the BR mirror and swaps it for the Regions entry when the remittance arrives.</p>}
+                            {editingPayment.paid_to === 'GZ28BR' && <p className="mt-1 text-xs text-amber-300">RECEIVED BY GZ28BR: tag the PIX/TED that landed in Brazil as BR entry — the app copies it to the BR mirror and swaps it for the Regions entry when the remittance arrives.</p>}
                             {isShoppingInvoice && <p className="mt-1 text-xs text-amber-300">006.N: tag the wire/Zelle that landed at Regions as Regions entry — on a remittance piece only that file crosses to the covered incomes; untyped files never cross.</p>}
                           </div>
                           <div className="flex gap-3">

@@ -166,7 +166,7 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
       )}
       {showTo && (
         <div>
-          <label className="block mb-2 text-lg font-bold">PAID TO</label>
+          <label className="block mb-2 text-lg font-bold">RECEIVED BY</label>
           <select value={value.paidTo} onChange={(e) => set({ paidTo: e.target.value })} className={selectClass + (!value.paidTo ? ' border-amber-500 text-amber-300' : '')}>
             {!value.paidTo && <option value="">— de quem é a conta? —</option>}
             {PAID_TO_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -175,7 +175,7 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
         </div>
       )}
       {offRule(rule.paidFrom, value.paidFrom, 'PAID FROM')}
-      {offRule(rule.paidTo, value.paidTo, 'PAID TO')}
+      {offRule(rule.paidTo, value.paidTo, 'RECEIVED BY')}
       {!hidePaidToggle && (
         <div className="sm:col-span-full flex items-start gap-4 flex-wrap">
           {/* Invisible label keeps the button on the same line as the date selects
