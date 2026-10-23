@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireUser } from '@/lib/apiAuth.server'
 import { supabaseBRService } from '@/lib/supabaseBR.server'
+import { ESPELHO_ENCERRADO } from '@/lib/crossing.server'
 
 // ── ESTE ARQUIVO ESCREVE NO BANCO DO BR, QUE NÃO FOI RENOMEADO (onda 2, 11/set/2026) ─
 // Os cinco renames (invoice_payments→invoice_incomes, invoice_parts→invoice_items,
@@ -26,6 +27,9 @@ const falha = (status: number, kind: string, error: string) => NextResponse.json
 
 export async function POST(req: NextRequest) {
   if (!(await requireUser(req))) return falha(401, 'auth', 'Sessão do app ausente ou vencida — entre de novo.')
+  // ESPELHO ENCERRADO (Márcio, 23/10/2026): a baixa de uma 006.N não espelha mais nada no BR — a conta BR↔US é calculada
+  // (lib/intercompanyLedger.server.ts) e o pagamento do BR ao US é uma TRANSFERÊNCIA (intercompany_transfers). Resposta, não falha.
+  if (ESPELHO_ENCERRADO) return NextResponse.json({ ok: true, mirrored: false, encerrado: true })
   const br = supabaseBRService()
   if (!br) return falha(503, 'service-key', 'SUPABASE_BR_SERVICE_ROLE_KEY não está no ambiente do servidor do US — o PAID não pode ser espelhado no BR.')
 

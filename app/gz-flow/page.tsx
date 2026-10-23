@@ -42,7 +42,6 @@ export default function GzFlowPage() {
   const [tick, setTick] = useState(0)
   useEffect(() => {
     let alive = true
-    setS({ state: 'loading' })
     ;(async () => {
       try {
         const r = await fetch(`${BASE_PATH}/api/intercompany/ledger`, { headers: await sessionHeaders(), cache: 'no-store' })
@@ -65,7 +64,7 @@ export default function GzFlowPage() {
             <p className="font-bold text-red-300">Balance NOT computed — no number is shown rather than a wrong one.</p>
             <p className="text-sm text-red-200 mt-1 break-words">{s.error}</p>
           </div>
-        ) : <Body data={s.data} reload={() => setTick(t => t + 1)} />}
+        ) : <Body data={s.data} reload={() => { setS({ state: 'loading' }); setTick(t => t + 1) }} />}
     </main>
   )
 }

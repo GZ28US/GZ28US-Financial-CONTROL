@@ -2153,6 +2153,7 @@ async function rodarChaves(b: Bancos, lista: ChavePlano[], o: { t0: number; limi
 export async function applyPlan(b: Bancos, plano: Plano, opcoes: { confirm: boolean; keys?: string[]; impressoes?: Record<string, string>; limiteMs?: number }): Promise<ResultadoAplicacao> {
   const t0 = Date.now()
   if (opcoes?.confirm !== true) throw new ErroTravessia('bad-request', 'applyPlan sem confirm:true não escreve nada.')
+  if (ESPELHO_ENCERRADO) throw new ErroTravessia('bad-request', 'ESPELHO ENCERRADO (23/10/2026): a conta BR↔US é calculada (GZ-FLOW); o motor não grava mais.')
   const fresco = await planCrossings(b)
   if (!fresco.migrado.US || !fresco.migrado.BR) throw faltaMigracao(fresco)
   const pedidas = opcoes.keys?.length ? new Set(opcoes.keys) : null
@@ -2192,7 +2193,11 @@ export type ResultadoSincronia = ResultadoAplicacao & {
 }
 
 /** A trava de emergência das escritas automáticas: TRAVESSIA_PAUSADA=1 no ambiente do servidor do US. */
-export const travessiaPausada = () => /^(1|true|sim|on)$/i.test(String(process.env.TRAVESSIA_PAUSADA || '').trim())
+// ESPELHO ENCERRADO (Márcio, 23/10/2026): a conta corrente BR↔US passou a ser CALCULADA (lib/intercompanyLedger.server.ts) dos
+// PAID BY / RECEIVED BY de cada app + intercompany_transfers. As 006.N/085.N são histórico só-leitura. O motor continua
+// PLANEJANDO (o Legacy check do GZ-FLOW lê o plano e o saldo velho) e NUNCA mais grava — nem editor, nem cron, nem manual.
+export const ESPELHO_ENCERRADO = true
+export const travessiaPausada = () => ESPELHO_ENCERRADO || /^(1|true|sim|on)$/i.test(String(process.env.TRAVESSIA_PAUSADA || '').trim())
 
 /**
  * Planeja UMA vez e grava as chaves com escrita, em ordem do plano (a mesma que numera as 085.N/006.N
@@ -2207,7 +2212,7 @@ export async function sincronizar(b: Bancos, opcoes: OpcoesSincronia = {}): Prom
   const plano = await planCrossings(b)
   if (!plano.migrado.US || !plano.migrado.BR) throw faltaMigracao(plano)
   const pedidas = opcoes.keys?.length ? new Set(opcoes.keys) : null
-  const pausada = (opcoes.origem === 'editor' || opcoes.origem === 'cron') && travessiaPausada()
+  const pausada = ESPELHO_ENCERRADO || ((opcoes.origem === 'editor' || opcoes.origem === 'cron') && travessiaPausada())
   const out: ResultadoChave[] = []
   if (pedidas) for (const k of pedidas) if (!plano.chaves.some(c => c.mirror_key === k)) out.push({ mirror_key: k, resultado: 'pulada', motivo: 'sem travessia: nada nesta invoice cruza entre as empresas', codigo: null, escritas: 0 })
   const lista = pedidas ? plano.chaves.filter(c => pedidas.has(c.mirror_key)) : plano.chaves

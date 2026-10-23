@@ -9,6 +9,9 @@
 // exibição (espelha o preço de venda nos car deals) e não entra em conta nenhuma.
 import { supabase } from '@/lib/supabase'
 import { foraDoDinheiro } from '@/lib/estorno'
+import { sessionHeaders } from '@/lib/sessionHeaders'
+import { BASE_PATH } from '@/lib/utils'
+import { US_CLIENT_GZ28BR } from '@/lib/crossingBalance'
 
 const num = (v: unknown) => parseFloat(String(v)) || 0
 const okDate = (d: string | null | undefined) => !!d && /^\d{4}-\d{2}-\d{2}/.test(d)
@@ -69,6 +72,9 @@ export type FinData = {
   financingEvents: any[] | null
   cashBalances: any[] | null
   ledgersReady: boolean
+  // A CONTA CORRENTE BR↔US CALCULADA (23/10/2026, rota /api/intercompany/ledger): os lançamentos do app BR (despesa PAID BY GZ28US,
+  // renda RECEIVED BY GZ28US) e as transferências — o DFC lê daqui a linha FUND_BR que não nasce em tabela do US. null = rota fora.
+  intercompany: { entries: any[]; transfers: any[] } | null
 }
 
 // Igual ao fetchAll, mas devolve null se a tabela ainda não existe (os livros
@@ -127,10 +133,11 @@ export async function loadFinancials(): Promise<FinData> {
     fetchAll('rides', '*'),
     fetchAll('clients', 'id, name, country'),
   ])
-  const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes] = await Promise.all([
+  const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes, intercompany] = await Promise.all([
     fetchOpt('capital_events', '*'), fetchOpt('financing', '*'),
     fetchOpt('financing_events', '*'), fetchOpt('cash_balances', '*'),
     fetchOpt('data_fixes', '*'),
+    (async () => { try { const r = await fetch(BASE_PATH + '/api/intercompany/ledger', { headers: await sessionHeaders(), cache: 'no-store' }); const j = await r.json(); return r.ok && j.ok ? { entries: j.entries || [], transfers: j.transfers || [] } : null } catch { return null } })(),
   ])
   // ── ESTORNO: a linha que não conta dinheiro sai AQUI, uma vez, para todo mundo (régua em lib/estorno.ts) ──
   // Despesa e item casam a negativa sem pedido DENTRO da invoice; as tabelas soltas só pelo pedido. Custo fixo não tem
@@ -174,7 +181,7 @@ export async function loadFinancials(): Promise<FinData> {
     invoiceById: new Map(real.map((i: any) => [i.id, i])),
     estornadas,
     dataFixes,
-    capitalEvents, financing: financingRows, financingEvents, cashBalances,
+    capitalEvents, financing: financingRows, financingEvents, cashBalances, intercompany,
     ledgersReady: !!(capitalEvents && financingRows && financingEvents && cashBalances),
   }
 }
@@ -363,8 +370,12 @@ export function buildCashEvents(d: FinData): CashEvent[] {
 
   // Recebimentos — só o que TEM paid_at (agendado ainda não é caixa). Recebido
   // pela GZ28BR (2025) é linha própria: é receita nossa que virou saldo lá.
+  // SHOPPING INVOICE 006.N (cliente GZ28BR): o dinheiro que entrava nela era o BR pagando a conta corrente — desde 23/10/2026 isso é
+  // TRANSFERÊNCIA (intercompany_transfers), lançada abaixo em FUND_BR. A renda da 006.N fica como história e sai do caixa aqui.
+  const shoppingInv = new Set(d.invoices.filter((i: any) => i.client_id === US_CLIENT_GZ28BR).map((i: any) => i.id))
   for (const p of d.payments) {
     if (!p.paid_at) continue
+    if (shoppingInv.has(p.invoice_id)) continue
     // ESPELHO NÃO É CAIXA. Renda nascida de despesa paga pelo cliente não era
     // dinheiro entrando. A máquina que criava essas linhas saiu do app US em
     // 11/set e nunca gravou nenhuma (0 de 220 com o elo, medido); o corte fica
@@ -381,6 +392,17 @@ export function buildCashEvents(d: FinData): CashEvent[] {
     // Recebeu na GZ28BR = o dinheiro ficou LÁ: espelho negativo na conta corrente.
     if (p.paid_to === 'GZ28BR') push(cd, 'FIN', 'FUND_BR', -num(p.amount), 'FUNDED',
       'GZ28BR (conta corrente) · recebeu por nós — ' + (m.car || p.description || ''), '/adm/check')
+  }
+  // A CONTA CORRENTE BR↔US (23/10/2026): o que só existe no app BR ou em transferência. FUND_BR + = a GZ28BR bancou/pagou a conta
+  // corrente (dinheiro dela entrou na Regions ou pagou conta nossa); − = o US bancou conta do BR ou o dinheiro nosso ficou lá.
+  //   · despesa do BR PAID BY GZ28US → saiu da Regions por conta do BR → FUND_BR −
+  //   · renda do BR RECEIVED BY GZ28US → cliente do BR pagou na Regions → FUND_BR +
+  //   · transferência BR→US chegada → FUND_BR + ; US→BR → FUND_BR −
+  // (as linhas do app US — despesa PAID BY GZ28BR e renda RECEIVED BY GZ28BR — já entram acima por fund() e pela renda.)
+  for (const e of d.intercompany?.entries || []) {
+    if (e.app === 'BR' && e.kind === 'EXPENSE') push(e.date, 'FIN', 'FUND_BR', -num(e.usd), 'FUNDED', `GZ28US bancou conta do BR — ${e.code || ''} ${e.label || ''}`.trim(), '/gz-flow')
+    else if (e.app === 'BR' && e.kind === 'INCOME') push(e.date, 'FIN', 'FUND_BR', num(e.usd), 'FUNDED', `cliente do BR pagou na Regions — ${e.code || ''} ${e.label || ''}`.trim(), '/gz-flow')
+    else if (e.kind === 'TRANSFER' && !String(e.flags || []).includes('EM_TRANSITO')) push(e.date, 'FIN', 'FUND_BR', e.side === 'US_OWES' ? num(e.usd) : -num(e.usd), 'FUNDED', `transferência ${e.code || ''} — ${e.label || ''}`.trim(), '/gz-flow')
   }
   // Compras a atribuir: saída operacional sem dono — linha BUCKET dentro da
   // contribuição dos projetos; esvazia conforme a fila atribui. Nunca CAR_BUY.

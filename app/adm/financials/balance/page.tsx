@@ -140,7 +140,7 @@ export default function BalancePage() {
 
   // O texto da conta corrente, igual na tela e no PDF: de onde vem o número, ou por que não há número.
   const cxNote = cx.state === 'ok'
-    ? `shopping invoices: 006.N em aberto no app US ${usd(cx.data.usSide.totals.open)} − 085.N em aberto no app BR ${usd(cx.data.brSide.totals.open)} · o mesmo número do GZ-FLOW · as ${m?.crossingN ?? 0} 006.N saíram de Contas a receber (estão aqui dentro)`
+    ? `conta corrente CALCULADA (23/10/2026): PAID BY / RECEIVED BY da outra empresa nos dois apps + transferências · o mesmo número do GZ-FLOW · espelho antigo (006.N − 085.N) daria ${usd((cx.data as any).legacy?.brOwesUs ?? 0)} · as ${m?.crossingN ?? 0} 006.N (histórico) saíram de Contas a receber`
       // As duas leituras (este dataset e a rota) têm de ver as MESMAS 006.N; se não baterem, a tela diz em vez de esconder.
       + (m && Math.abs(m.crossingOpen - cx.data.usSide.totals.open) > 0.02 ? ` · ATENÇÃO: neste dataset as 006.N somam ${usd(m.crossingOpen)} em aberto — as duas leituras não bateram, recarregue` : '')
     : cx.state === 'loading' ? 'lendo as shopping invoices dos dois apps…'
