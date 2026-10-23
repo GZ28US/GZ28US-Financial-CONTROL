@@ -8,6 +8,7 @@ import {
   countryDefaults, phoneOnCountryChange, formatUKPostcode,
 } from '@/lib/utils'
 import Header from '@/components/Header'
+import { GradeEditor } from '@/components/ClientGrade'
 
 const usaStates = [
   'AL', 'AK', 'AZ', 'AR', 'CA', 'CO', 'CT', 'DE', 'FL', 'GA',
@@ -46,6 +47,10 @@ export default function EditClientPage() {
     zip: '',
     preferred_message_method: 'WhatsApp',
   })
+  // Nota do cliente (0–10) + o porquê; origGrade detecta mudança para gravar grade_at.
+  const [grade, setGrade] = useState<number | null>(null)
+  const [gradeNote, setGradeNote] = useState('')
+  const [origGrade, setOrigGrade] = useState<number | null>(null)
 
   useEffect(() => {
     if (id) {
@@ -89,6 +94,9 @@ export default function EditClientPage() {
       preferred_message_method: data.preferred_message_method || 'WhatsApp',
     })
 
+    setGrade(data.grade ?? null)
+    setOrigGrade(data.grade ?? null)
+    setGradeNote(data.grade_note || '')
     setLoading(false)
   }
 
@@ -122,6 +130,9 @@ export default function EditClientPage() {
         state: form.state,
         zip: form.zip,
         preferred_message_method: form.preferred_message_method,
+        grade,
+        grade_note: gradeNote.trim() || null,
+        ...(grade !== origGrade ? { grade_at: new Date().toISOString() } : {}),
         updated_at: new Date().toISOString(),
       })
       .eq('id', id)
@@ -341,6 +352,8 @@ export default function EditClientPage() {
             ))}
           </select>
         </div>
+
+        <GradeEditor grade={grade} note={gradeNote} onChange={(g, n) => { setGrade(g); setGradeNote(n) }} />
 
         <button
           onClick={updateClient}

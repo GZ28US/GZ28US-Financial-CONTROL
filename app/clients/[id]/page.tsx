@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import { GradeBadge } from '@/components/ClientGrade'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, toWaNumber, formatPhone, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -22,6 +23,8 @@ type Client = {
   zip: string | null
   country: string | null
   preferred_message_method: string | null
+  grade: number | null
+  grade_note: string | null
 }
 
 type Ride = {
@@ -209,7 +212,7 @@ export default function ViewClientPage() {
       <Header />
 
       <div className="flex items-center justify-between mb-8">
-        <h1 className="text-4xl font-bold">{client.name}</h1>
+        <div><h1 className="text-4xl font-bold">{client.name} <GradeBadge grade={client.grade} note={client.grade_note} big /></h1>{client.grade_note && <p className="text-lg text-gray-400 mt-2 max-w-2xl whitespace-pre-line">{client.grade_note}</p>}</div>
         <div className="flex gap-3">
           <button onClick={handleSendClient} disabled={sending || justSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${justSent ? 'bg-green-600' : 'bg-green-700 hover:bg-green-600'}`}>{sending ? 'SENDING…' : justSent ? '✓ SENT' : '📲 SEND CLIENT'}</button>
           <Link href="/clients" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>

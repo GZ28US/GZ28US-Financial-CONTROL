@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import { GradeBadge } from '@/components/ClientGrade'
 import { supabase } from '@/lib/supabase'
 import { clientCode, formatPhone } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
@@ -19,6 +20,8 @@ type Client = {
   state: string | null
   zip: string | null
   client_number: number | null
+  grade: number | null
+  grade_note: string | null
   is_quote: boolean | null
   origin: string | null
 }
@@ -236,7 +239,7 @@ export default function ClientsPage() {
           {filtered.map((client) => (
             <div key={client.id} className="bg-gray-900 border border-gray-800 rounded-3xl p-6 flex items-center justify-between gap-6">
               <div className="flex-1 min-w-0">
-                <h2 className="text-2xl font-bold mb-1">{clientCode(client)} — {client.name}</h2>
+                <h2 className="text-2xl font-bold mb-1">{clientCode(client)} — {client.name} <GradeBadge grade={client.grade} note={client.grade_note} /></h2>
                 <p className="text-lg text-gray-400">{client.email || '-'}</p>
                 <p className="text-lg text-gray-400">{formatPhone(client.phone, client.country)}</p>
                 <p className="text-lg text-gray-400">{[client.city, client.state, client.zip].filter(Boolean).join(', ')}</p>
