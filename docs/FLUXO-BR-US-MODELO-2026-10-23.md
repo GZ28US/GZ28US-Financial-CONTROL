@@ -47,11 +47,11 @@
 - **`intercompany_transfers`** (MIGRATION_intercompany_transfers.sql, com os 3 GRANTs): semente = 14 remessas + 15 entradas de dinheiro do BR nas 006.N (saques Chase, wires, Zelle). 22 já casadas com a Regions pela renda legada.
 - Os «Pending balance» do motor (placeholders) saíram, linha inteira na trilha (`espelho-encerrado-pendente`).
 
-## 5. A conferência de 23/10 (02:50 Orlando)
+## 5. A conferência de 23/10 (03:40 Orlando)
 
-Espelho (encerrado): **US$ 82.267,34**. Conta calculada: **US$ 54.833,06**. Diferença **27.434,28**, explicada inteira:
+Espelho (encerrado): **US$ 82.267,34**. Conta calculada: **US$ 88.377,19**. Diferença **−6.109,85** (espelho − conta), explicada inteira:
 - **A +682,86** — itens/serviços lançados à mão nas 006.N (600 Palleting & Shipping, 63,81 tie down, 27,54 pigtail, −8,49 refund…).
-- **B +300,39** — US$ 300 de ARRIVAL numa invoice de carro (US.022.4) + 0,39 de arredondamento. (A 1ª conferência trazia aqui +33.844,52 de duas «remessas» SENT: a REM-2026-07-02-T130K era EXPECTATIVA — o R$ 130k foi TED do Sidney ENTRANDO no BR, achado pela AutoBook BR no C6 — e foi anulada; o cheque de 20/10 é fato, mas transferência em trânsito não conta até chegar.)
+- **B +300,39** — US$ 300 de ARRIVAL numa invoice de carro (US.022.4) + 0,39 de arredondamento. (A 1ª conferência, às 02:50, dava conta 54.833,06 e trazia aqui +33.844,52 de duas «remessas» SENT: a REM-2026-07-02-T130K era EXPECTATIVA — o R$ 130k foi TED do Sidney ENTRANDO no BR, achado pela AutoBook BR no C6 — e foi anulada; o cheque de 20/10 é fato, mas transferência em trânsito não conta até chegar. Os dois ajustes somam +33.544,13 na conta.)
 - **C −7.093,10** — linha estornada do US que o espelho ainda cobrava (085.42, TSP Hemi 2kHP US$ 8.032,48) menos as despesas novas sem espelho (Alcatraz US.015.3 e 2 voos PESSOAL do SEMA 2025).
 - **D 0,00**.
 
