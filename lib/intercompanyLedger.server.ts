@@ -10,7 +10,7 @@
 //   2. renda   no app US  RECEIVED BY GZ28BR    → dinheiro do US caiu no BR → débito do BR  (BR_OWES)
 //   3. despesa no app BR  PAID BY GZ28US        → o US pagou conta do BR  → débito do BR   (BR_OWES)
 //   4. renda   no app BR  RECEIVED BY GZ28US    → dinheiro do BR caiu no US → crédito do BR (US_OWES)
-//   5. TRANSFERÊNCIA (intercompany_transfers)   → BR→US = crédito do BR; US→BR = débito do BR
+//   5. TRANSFERÊNCIA (intercompany_transfers)   → BR→US = crédito do BR; US→BR = débito do BR — SÓ quando CHEGA (SENT fica fora)
 //   BR deve ao US = Σ BR_OWES − Σ US_OWES, em US$.
 //
 // MOEDA: cada lançamento carrega o valor na moeda nativa e o par na outra, com a FONTE do câmbio:
@@ -326,6 +326,9 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     const dia = tr.arrived_on || tr.sent_on
     const key = `US:intercompany_transfers:${t.id}`
     const label = `${tr.direction === 'BR_TO_US' ? 'BR → US' : 'US → BR'} · ${tr.via || ''} · ${tr.description || ''}`.replace(/ ·  · /g, ' · ')
+    // EM TRÂNSITO NÃO CONTA (Márcio, 20/10/2026, cheque do Sidney: «quando o Allan mandar o comprovante, entra a parte do US paid from
+    // BR, e zera a operação»): a transferência só abate a conta quando CHEGA. Até lá é ponta solta, fora do número.
+    if (tr.status === 'SENT') { leftOut.push({ key, app: 'US', table: 'intercompany_transfers', id: t.id, code: tr.code, label, usd, brl: tr.brl, reason: 'transferência em trânsito — só conta quando chegar', href: '/gz-flow', external: false }); continue }
     if (!dia) { leftOut.push({ key, app: 'US', table: 'intercompany_transfers', id: t.id, code: tr.code, label, usd, brl: tr.brl, reason: 'transferência sem data', href: '/gz-flow', external: false }); continue }
     if (usd <= 0) {
       // Só R$ gravado (ainda sem a chegada em US$): conta pelo bid do dia, marcado
@@ -333,7 +336,6 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
       else { leftOut.push({ key, app: 'US', table: 'intercompany_transfers', id: t.id, code: tr.code, label, usd, brl: tr.brl, reason: 'transferência sem valor', href: '/gz-flow', external: false }); continue }
     }
     const flags: string[] = []
-    if (tr.status === 'SENT') flags.push('EM_TRANSITO')
     if (tr.needs_review) flags.push('REVISAR')
     if (tr.fx_diff_usd) flags.push('DIF_CAMBIO')
     entries.push({ key, app: 'US', table: 'intercompany_transfers', id: t.id, kind: 'TRANSFER', side: tr.direction === 'BR_TO_US' ? 'US_OWES' : 'BR_OWES', date: dia, month: dia.slice(0, 7), usd, brl: tr.brl, rate, rateSource: usd > 0 ? 'transfer' : 'fx_daily', code: tr.code, label, href: '/gz-flow', external: false, payer: tr.direction === 'BR_TO_US' ? 'GZ28BR' : 'GZ28US', receiver: tr.direction === 'BR_TO_US' ? 'GZ28US' : 'GZ28BR', receipts: [...tr.sent_receipts, ...tr.arrived_receipts], flags })
@@ -362,7 +364,7 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     if (e.kind === 'INCOME' && e.app === 'US' && !covered.has(e.key) && e.date && addDias(e.date, 30) < hoje) looseEnds.push({ kind: 'RENDA_NO_BR_SEM_REMESSA', key: e.key, label: `${e.code ? e.code + ' · ' : ''}${e.label} — recebida no BR em ${e.date}, nenhuma transferência a cobre`, usd: e.usd, href: e.href, external: e.external })
   }
   for (const t of transfers) {
-    if (t.status === 'SENT') looseEnds.push({ kind: 'TRANSFERENCIA_EM_TRANSITO', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — saiu ${t.sent_on || '?'} e ainda não chegou`, usd: t.usd, href: '/gz-flow', external: false })
+    if (t.status === 'SENT' && (t.usd > 0 || (t.brl || 0) > 0)) looseEnds.push({ kind: 'TRANSFERENCIA_EM_TRANSITO', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — saiu ${t.sent_on || '?'} e ainda não chegou (fora do número até chegar)`, usd: t.usd, href: '/gz-flow', external: false })
     if (t.needs_review) looseEnds.push({ kind: 'TRANSFERENCIA_A_REVISAR', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — ${t.description || ''} (falta o lado ${t.brl == null ? 'R$' : 'US$'} / o comprovante)`, usd: t.usd, href: '/gz-flow', external: false })
     // Saque em espécie (via CASH) nunca passa na Regions: não é ponta solta sem linha do banco.
     if (t.direction === 'BR_TO_US' && t.status !== 'SENT' && !t.bank_transaction_id && String(t.via || '').toUpperCase() !== 'CASH') looseEnds.push({ kind: 'TRANSFERENCIA_SEM_REGIONS', key: `US:intercompany_transfers:${t.id}`, label: `${t.code} — chegada sem linha da Regions casada`, usd: t.usd, href: '/gz-flow', external: false })

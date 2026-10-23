@@ -18,7 +18,7 @@
 2. **App US, renda RECEIVED BY GZ28BR** (invoice_incomes com `paid_at`) → **BR OWES**. R$ = `amount_brl` gravado, senão bid do dia.
 3. **App BR, despesa PAID BY GZ28US** (invoice_expenses, expenses da folha, fixed_cost_expenses; REGIONS conta como GZ28US) → **BR OWES**, no `expense_date` (o dia em que o US pagou). US$ = `amount_usd` × qtd (+ tax/extra pelo fator da linha), senão R$ ÷ bid do dia.
 4. **App BR, renda RECEIVED BY GZ28US** (invoice_payments com `paid_at`) → **US OWES**. US$ = `amount_usd`, senão R$ ÷ bid.
-5. **Transferências**: BR→US → **US OWES**; US→BR → **BR OWES**. US$ = a perna em dólar; R$ = a perna em real; câmbio real = razão. Uma transferência SENT (saiu, não chegou) já conta: o dinheiro do BR já saiu. `fx_diff_usd` declarado ao fechar vira lançamento próprio.
+5. **Transferências**: BR→US → **US OWES**; US→BR → **BR OWES**. US$ = a perna em dólar; R$ = a perna em real; câmbio real = razão. Uma transferência SENT (saiu, não chegou) **não conta** até chegar (Márcio, 20/10: «quando o Allan mandar o comprovante … zera a operação»); fica na lista de pontas soltas. `fx_diff_usd` declarado ao fechar vira lançamento próprio.
 
 **Fora da conta (e listado como tal):** quotes; as shopping invoices 006.N/085.N (histórico); invoice BUCKET; linha estornada; despesa do US sem data de pagamento; linha PAID BY GZ28BR com PAID TO GZ28BR dentro do app US; as 3 linhas «Crédito com GZ28US — FL tax» (crédito a decidir).
 
@@ -32,7 +32,7 @@
 | SEM_CAMBIO | dia sem bid | cron (AwesomeAPI) / AutoBook |
 | CREDITO_A_DECIDIR | FL tax cobrada errada, crédito do BR | Márcio |
 | RENDA_NO_BR_SEM_REMESSA | renda do US recebida no BR há 30+ dias sem transferência que a cubra | AutoBook US (cria a transferência com o Allan) |
-| TRANSFERENCIA_EM_TRANSITO | saiu do BR, não chegou na Regions | AutoBook US / cron |
+| TRANSFERENCIA_EM_TRANSITO | saiu do BR, não chegou na Regions — fora do número até chegar | AutoBook US / cron |
 | TRANSFERENCIA_A_REVISAR | falta uma perna ou o comprovante | AutoBook BR (lado R$) / US (lado US$) |
 | TRANSFERENCIA_SEM_REGIONS | chegou sem linha da Regions casada | cron casa sozinho (mesmo valor, ±5 dias, linha NEW); ambíguo fica |
 
@@ -51,7 +51,7 @@
 
 Espelho (encerrado): **US$ 82.267,34**. Conta calculada: **US$ 54.833,06**. Diferença **27.434,28**, explicada inteira:
 - **A +682,86** — itens/serviços lançados à mão nas 006.N (600 Palleting & Shipping, 63,81 tie down, 27,54 pigtail, −8,49 refund…).
-- **B +33.844,52** — 2 transferências em trânsito que o espelho não via (REM-2026-07-02-T130K US$ 24.074,43 desde JULHO; REM-2026-10-20-CHEQUE US$ 9.469,70) + US$ 300 de ARRIVAL numa invoice de carro (US.022.4) + 0,39 de arredondamento.
+- **B +300,39** — US$ 300 de ARRIVAL numa invoice de carro (US.022.4) + 0,39 de arredondamento. (A 1ª conferência trazia aqui +33.844,52 de duas «remessas» SENT: a REM-2026-07-02-T130K era EXPECTATIVA — o R$ 130k foi TED do Sidney ENTRANDO no BR, achado pela AutoBook BR no C6 — e foi anulada; o cheque de 20/10 é fato, mas transferência em trânsito não conta até chegar.)
 - **C −7.093,10** — linha estornada do US que o espelho ainda cobrava (085.42, TSP Hemi 2kHP US$ 8.032,48) menos as despesas novas sem espelho (Alcatraz US.015.3 e 2 voos PESSOAL do SEMA 2025).
 - **D 0,00**.
 

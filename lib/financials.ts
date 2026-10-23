@@ -402,7 +402,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   for (const e of d.intercompany?.entries || []) {
     if (e.app === 'BR' && e.kind === 'EXPENSE') push(e.date, 'FIN', 'FUND_BR', -num(e.usd), 'FUNDED', `GZ28US bancou conta do BR — ${e.code || ''} ${e.label || ''}`.trim(), '/gz-flow')
     else if (e.app === 'BR' && e.kind === 'INCOME') push(e.date, 'FIN', 'FUND_BR', num(e.usd), 'FUNDED', `cliente do BR pagou na Regions — ${e.code || ''} ${e.label || ''}`.trim(), '/gz-flow')
-    else if (e.kind === 'TRANSFER' && !String(e.flags || []).includes('EM_TRANSITO')) push(e.date, 'FIN', 'FUND_BR', e.side === 'US_OWES' ? num(e.usd) : -num(e.usd), 'FUNDED', `transferência ${e.code || ''} — ${e.label || ''}`.trim(), '/gz-flow')
+    else if (e.kind === 'TRANSFER') push(e.date, 'FIN', 'FUND_BR', e.side === 'US_OWES' ? num(e.usd) : -num(e.usd), 'FUNDED', `transferência ${e.code || ''} — ${e.label || ''}`.trim(), '/gz-flow')
   }
   // Compras a atribuir: saída operacional sem dono — linha BUCKET dentro da
   // contribuição dos projetos; esvazia conforme a fila atribui. Nunca CAR_BUY.
