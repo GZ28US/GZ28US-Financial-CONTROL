@@ -156,7 +156,7 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
       </div>
       {showFrom && (
         <div>
-          <label className="block mb-2 text-lg font-bold">PAID FROM</label>
+          <label className="block mb-2 text-lg font-bold">PAID BY</label>
           <select value={value.paidFrom} onChange={(e) => set({ paidFrom: e.target.value })} className={selectClass + (!value.paidFrom && rule.paidFrom === 'choice' ? ' border-amber-500 text-amber-300' : '')}>
             {!value.paidFrom && <option value="">{rule.paidFrom === 'house_choice' ? `— ${HOUSE_PAYER} (padrão) —` : '— quem pagou? —'}</option>}
             {PAID_FROM_OPTIONS.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -174,7 +174,7 @@ export default function PaymentFields({ value, onChange, table, hidePaidToggle }
           </select>
         </div>
       )}
-      {offRule(rule.paidFrom, value.paidFrom, 'PAID FROM')}
+      {offRule(rule.paidFrom, value.paidFrom, 'PAID BY')}
       {offRule(rule.paidTo, value.paidTo, 'RECEIVED BY')}
       {!hidePaidToggle && (
         <div className="sm:col-span-full flex items-start gap-4 flex-wrap">

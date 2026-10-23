@@ -75,7 +75,7 @@ export default function GzFlowPage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">GZ28US vs GZ28BR Flow</h1>
-      <p className="text-gray-400 mb-6 max-w-4xl">Shopping invoices only: every money movement between GZ28US and GZ28BR lives on a shopping invoice in the other company&apos;s app. Loose PAID FROM / PAID TO fields are not read here.</p>
+      <p className="text-gray-400 mb-6 max-w-4xl">Shopping invoices only: every money movement between GZ28US and GZ28BR lives on a shopping invoice in the other company&apos;s app. Loose PAID BY / RECEIVED BY fields are not read here.</p>
       {s.state === 'loading' ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : s.state === 'error' ? (

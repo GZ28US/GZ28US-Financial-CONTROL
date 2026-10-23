@@ -1047,7 +1047,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
       ...d.fixedExpenses.filter((e: any) => !e.paid_from && e.payment_date).map((e: any) => house(mk('fixed_cost_expenses', e, 'FIXO', e.supplier_id ? '/costs/fixed/' + e.supplier_id : '/costs/fixed', [d.fixedSuppliers.get(e.supplier_id)?.company, e.description].filter(Boolean).join(' · '), parseFloat(e.amount) || 0), 'CUSTO FIXO')),
     ].sort((a, b) => Number(!!b.certain) - Number(!!a.certain) || (b.amount || 0) - (a.amount || 0))
     checks.push({
-      group: 'FINANCIAL', key: 'house-payer', title: 'PAID FROM de SUPPLIES, ESTOQUE e CUSTO FIXO: gravar a régua', blocks: 'sem PAID FROM gravado, a linha paga depende do SOURCE antigo ou fica CEGA na conta corrente GZ28BR (o DFC a lê como Regions sem ninguém ter dito)',
+      group: 'FINANCIAL', key: 'house-payer', title: 'PAID BY de SUPPLIES, ESTOQUE e CUSTO FIXO: gravar a régua', blocks: 'sem PAID FROM gravado, a linha paga depende do SOURCE antigo ou fica CEGA na conta corrente GZ28BR (o DFC a lê como Regions sem ninguém ter dito)',
       why: 'SUPPLIES, ESTOQUE e CUSTO FIXO não têm escolha de pagador (Márcio, 11/set/2026: PAID FROM e PAID TO sempre GZ28US, escondidos). A tela grava os dois quando a linha nasce e quando o pagamento nasce com o campo vazio — mas a linha que JÁ estava paga sem PAID FROM não passa por nenhum desses momentos, e editar não inventa pagador. Este card é o caminho dela: o FIX grava GZ28US (a única opção), com trilha. Entram sozinhas (AUTO-RUN, com DESFAZER no card verde «O app preencheu sozinho») só as que têm prova da própria linha — casada com a Regions, a irmã do mesmo pedido já diz GZ28US, ou o SOURCE antigo limpo dizendo GZ28US; o resto espera um clique. Prova apontando GZ28BR aparece como CONFLITO e não tem certo: pagador fora da régua é conversa com o Márcio. Estoque DOADO não entra — peça doada não foi comprada e não tem pagador.',
       items: houseItems, impact: houseItems.reduce((s, i) => s + (i.amount || 0), 0),
     })
@@ -1297,7 +1297,7 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
         label: [r.staff_name, r.season_code, `${r.description || r.type} — ${usdBr(amt)}${PER[r.type] || ''} (${r.type})`].filter(Boolean).join(' · '),
         extra: [
           antiga ? `taxa do modelo antigo, nascida ${bornTxt}, antes da virada` : `nascida ${bornTxt}, DEPOIS da virada — não é a taxa do modelo antigo: é recorrente gravada sem data`,
-          `PAID FROM ${r.paid_from || 'vazio'}`,
+          `PAID BY ${r.paid_from || 'vazio'}`,
           seasonNote,
           'diga a DATA e o VALOR que de fato saíram',
         ].filter(Boolean).join(' · '),

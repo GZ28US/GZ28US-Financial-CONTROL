@@ -3403,7 +3403,7 @@ export default function EditInvoicePage() {
               </div>
             </div>
             <div>
-              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
               {/* O único pagador do pedido escaneado: vira paid_from (e o SOURCE legado) de toda linha. */}
               <PaidFromSelect value={scannedPurchase.source || DEFAULT_SOURCE} onChange={(v) => setScannedPurchase({ ...scannedPurchase, source: v })} className={inputClass} />
             </div>
@@ -3482,7 +3482,7 @@ export default function EditInvoicePage() {
               <input type="text" value={editingPurchaseOrderNumber} onChange={(e) => setEditingPurchaseOrderNumber(e.target.value)} placeholder="e.g. 2000149-80525197" className={inputClass} />
             </div>
             <div>
-              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
               <PaidFromSelect value={editingPurchaseSource} onChange={setEditingPurchaseSource} className={inputClass} />
             </div>
             <DatePicker label="PAID DATE" value={editingPurchaseDate} onChange={setEditingPurchaseDate} />
@@ -3753,7 +3753,7 @@ export default function EditInvoicePage() {
                 </select>
               </div>
               <div className="flex-1 min-w-[8rem]">
-                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
+                <label className="block mb-1 text-xs text-gray-400">PAID BY</label>
                 <select value={newExpense.paid_from} onChange={(e) => setNewExpense({ ...newExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full`}>
                   {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}
                   {newExpense.paid_from && !(PAID_FROM_OPTIONS as readonly string[]).includes(newExpense.paid_from) && <option value={newExpense.paid_from}>{newExpense.paid_from}</option>}
@@ -4011,7 +4011,7 @@ export default function EditInvoicePage() {
                                 </select>
                               </div>
                               <div className="flex-1 min-w-[8rem]">
-                                <label className="block mb-1 text-xs text-gray-400">PAID FROM</label>
+                                <label className="block mb-1 text-xs text-gray-400">PAID BY</label>
                                 <select value={editingExpense.paid_from} onChange={(e) => setEditingExpense({ ...editingExpense, paid_from: e.target.value })} className={`${smallInputClass} w-full${editingExpense.paid_from ? '' : ' border-amber-500 text-amber-300'}`}>
                                   {!editingExpense.paid_from && <option value="">— quem pagou? —</option>}
                                   {PAID_FROM_OPTIONS.map(s => <option key={s} value={s}>{s}</option>)}

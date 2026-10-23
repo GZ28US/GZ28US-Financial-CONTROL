@@ -515,7 +515,7 @@ export default function NewGoodPage() {
               onTracking={(v) => setNewExpense({ ...newExpense, tracking_number: v })}
               onCarrier={(v) => setNewExpense({ ...newExpense, carrier: v })} />
             <div>
-              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
               <PaidFromSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
             </div>
             <div>
@@ -552,7 +552,7 @@ export default function NewGoodPage() {
                           onTracking={(v) => setEditingExpense({ ...editingExpense, tracking_number: v })}
                           onCarrier={(v) => setEditingExpense({ ...editingExpense, carrier: v })} />
                         <div>
-                          <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+                          <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
                           <PaidFromSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>

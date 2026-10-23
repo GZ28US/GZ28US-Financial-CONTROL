@@ -485,7 +485,7 @@ export default function EditGoodPage() {
               <input type="text" value={newExpense.order_number} onChange={(e) => setNewExpense({ ...newExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
             </div>
             <div>
-              <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+              <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
               <PaidFromSelect value={newExpense.source} onChange={(v) => setNewExpense({ ...newExpense, source: v })} className={inputClass} />
             </div>
             <div>
@@ -517,7 +517,7 @@ export default function EditGoodPage() {
                           <input type="text" value={editingExpense.order_number} onChange={(e) => setEditingExpense({ ...editingExpense, order_number: e.target.value })} placeholder="e.g. 2000149-80525197" className={inputClass} />
                         </div>
                         <div>
-                          <label className="block mb-1 text-sm text-gray-400">PAID FROM</label>
+                          <label className="block mb-1 text-sm text-gray-400">PAID BY</label>
                           <PaidFromSelect value={editingExpense.source} onChange={(v) => setEditingExpense({ ...editingExpense, source: v })} className={inputClass} />
                         </div>
                         <div>
