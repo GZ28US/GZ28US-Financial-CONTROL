@@ -10,6 +10,8 @@
 //   wa_unanswered  chats diretos cuja última mensagem é do outro lado
 //   wa_send        envia pela rota do app certo (US ou BR) — LEI: só com
 //                  autorização literal do Márcio (never-send-unauthorized)
+//                  filePath (23/out/2026): anexa um arquivo LOCAL (PDF/imagem) em base64,
+//                  direto à UltraMsg — sem subir para storage público, sem link aberto.
 //
 // SMS (14/set/2026, Márcio: «inclua os SMSs nas pesquisas, em tudo!»): os SMS/iMessage
 // que CHEGAM no iPhone US (atalho do iOS → /api/sms/webhook → sms_messages) entram
@@ -155,9 +157,21 @@ const TOOLS = [
       to: { type: 'string', description: 'chat id (…@c.us / …@g.us) or bare number' },
       body: { type: 'string' },
       personal: { type: 'boolean', description: 'true = no app signature (default true)' },
+      filePath: { type: 'string', description: 'optional: absolute path of a LOCAL file (pdf/jpg/png/…) sent as attachment straight from this PC in base64 — no public link; body becomes the caption. Max ~3 MB.' },
+      filename: { type: 'string', description: 'optional: file name shown in WhatsApp (default: the local file name)' },
     } },
   },
 ]
+
+// Arquivo local → base64 no corpo do POST (limite de corpo da Vercel ≈ 4,5 MB → arquivo até ~3 MB).
+function anexo(a) {
+  if (!a.filePath) return {}
+  const buf = readFileSync(a.filePath)
+  if (buf.length > 3_200_000) throw new Error(`file too big for a direct send (${(buf.length / 1e6).toFixed(1)} MB > 3.2 MB) — compress it first`)
+  const filename = a.filename || String(a.filePath).split(/[\\/]/).pop()
+  const b64 = buf.toString('base64')
+  return /\.(jpe?g|png|webp)$/i.test(filename) ? { imageBase64: b64 } : { documentBase64: b64, filename }
+}
 
 async function callTool(name, a = {}) {
   if (name === 'wa_chats') {
@@ -302,7 +316,7 @@ async function callTool(name, a = {}) {
     if (!key) throw new Error(`send key not found at ${KEY_DIR}/whatsapp-send-key.txt or whatsapp-read-key.txt`)
     const r = await fetch(SEND_URL[a.app], {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'x-send-key': key },
-      body: JSON.stringify({ to: a.to, body: a.body, personal: a.personal !== false }),
+      body: JSON.stringify({ to: a.to, body: a.body, personal: a.personal !== false, ...anexo(a) }),
     })
     const data = await r.json().catch(() => null)
     // 401 = a rota não reconheceu a chave. Enquanto WHATSAPP_SEND_KEY não existir na Vercel, os

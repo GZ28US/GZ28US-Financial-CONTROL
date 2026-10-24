@@ -173,8 +173,11 @@ export async function POST(req: NextRequest) {
     // personal: true -> a message in Márcio's own voice (no app signature).
     const rawBody = typeof payload.body === 'string' ? payload.body : ''
     const body = payload.personal === true ? rawBody : withSignature(rawBody)
-    const documentUrl = payload.documentUrl as string | undefined
-    const imageUrl = payload.imageUrl as string | undefined
+    // ARQUIVO SEM LINK PÚBLICO (23/out/2026): documentBase64 / imageBase64 = o arquivo em base64,
+    // entregue direto à UltraMsg (o campo document/image aceita URL OU base64). Nada sobe para o
+    // storage público — relatório com dado de cliente nunca fica num link aberto. O base64 não vai para log.
+    const documentUrl = (payload.documentUrl || payload.documentBase64) as string | undefined
+    const imageUrl = (payload.imageUrl || payload.imageBase64) as string | undefined
     const filename = (payload.filename as string | undefined) || 'document'
 
     console.log('[whatsapp] payload', {
