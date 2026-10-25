@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { allRows } from '@/lib/allRows'
 import { soOQueConta, valorDespesa } from '@/lib/estorno'
 
 const money = (n: number) => `$${(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
@@ -65,10 +66,10 @@ export default function ReportsPage() {
     })
 
     // TO PAY — unpaid supplier expenses on report-ready invoices.
-    const { data: exps } = await supabase
+    const { data: exps } = await allRows(() => supabase
       .from('invoice_expenses')
       .select('invoice_id, item, supplier, price, quantity, tax, extra, payment_date, expense_date, order_number, cancel_status')
-      .is('payment_date', null)
+      .is('payment_date', null)) // sem teto de 1.000 (lib/allRows)
     // ESTORNO (14/set/2026 — lib/estorno.ts): compra estornada/cancelada não é conta a pagar (a 006.27 do HHP 382526 aparecia aqui).
     const pay: Row[] = soOQueConta((exps || []).filter((e: any) => invMap.has(e.invoice_id)), valorDespesa, e => e.invoice_id).map((e: any) => {
       const inv = invMap.get(e.invoice_id)

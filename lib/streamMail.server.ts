@@ -9,6 +9,7 @@
 //   last_poll      — high-water mark for the message scan
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { allRows } from '@/lib/allRows'
 import { guessCarrier, type StreamRow } from './stream'
 import { barrado } from './mailProtected.server'
 
@@ -912,7 +913,7 @@ export async function loadMoneyIndex(db: SupabaseClient): Promise<Map<string, Mo
       idx.set(k, [...(idx.get(k) || []), { table, id: String(r.id), text: textOf(r), qty: qtyOf(r), supplier: r.supplier ?? null, order_number: on }])
     }
   }
-  const { data: ie } = await db.from('invoice_expenses').select('id, item, part_number, quantity, supplier, order_number').not('order_number', 'is', null)
+  const { data: ie } = await allRows(() => db.from('invoice_expenses').select('id, item, part_number, quantity, supplier, order_number').not('order_number', 'is', null)) // sem teto de 1.000 (lib/allRows)
   push('invoice_expenses', (ie || []).filter(r => !/import duty|customs clearance/i.test(String(r.item || ''))),
     r => [r.item, r.part_number].filter(Boolean).join(' '), r => Number(r.quantity) || 1)
   const { data: inp } = await db.from('inputs').select('id, description, quantity, supplier, order_number').not('order_number', 'is', null)
