@@ -96,6 +96,9 @@ export async function renameRideMailFolders(
           const parent = cut >= 0 ? full.slice(0, cut + 1) : ''
           const leaf = full.slice(parent.length)
           if (!daPasta(leaf, a.oldCode, a.oldName)) continue
+          // RAIZ não se mexe (25/out/2026, Rides tuning): a caixa 7 tem as pastas do João na raiz com a numeração
+          // VELHA, à espera do Márcio — igual ao ensureRideMailFolders: só relata.
+          if (!parent) { rep.planned.push(`${full} — na raiz da caixa, não mexida`); continue }
           const to = parent + nomeNovo(leaf, a.oldCode, a.newCode, a.oldName, a.newName)
           if (to === full) continue
           rep.planned.push(`${full} → ${to}`)
@@ -117,6 +120,7 @@ export async function renameRideMailFolders(
       }
       for (const f of todas) {
         if (!daPasta(f.displayName, a.oldCode, a.oldName)) continue
+        if (!f.parentId) { rep.planned.push(`${f.path} — na raiz da caixa, não mexida`); continue }   // RAIZ não se mexe (caixa 7)
         const to = nomeNovo(f.displayName, a.oldCode, a.newCode, a.oldName, a.newName)
         if (to === f.displayName) continue
         const dePath = f.path
