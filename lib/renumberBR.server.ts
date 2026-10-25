@@ -35,7 +35,9 @@ import { selfCallHeaders } from './apiAuth.server'
 import { streamDb } from './stream.server'
 
 type Passo = { passo: string; ok: boolean; detalhe?: unknown }
-export const CODIGO_BR = /^BR\.\d{3,4}$/
+// Séries do banco do BR: BR.### e GM.### (GM do Brasil, cliente #33 — 25/out/2026, pedido da GZ28 Vintage).
+export const CODIGO_BR = /^(BR|GM)\.\d{3,4}$/
+const serieDe = (c: string) => c.split('.')[0]
 
 // Colunas de texto VIVAS que citam o código do carro, por banco. Troca só o TOKEN do código (BR.105 não pega BR.1050;
 // BR.105.1 vira BR.401.1).
@@ -81,10 +83,11 @@ export async function renumeraCarroBR(us: SupabaseClient, br: SupabaseClient | n
   const pedido = String(b.code || '').trim()
   const newCode = String(b.newCode || '').trim()
   const retryFrom = String(b.retryFrom || '').trim()
-  if (!CODIGO_BR.test(newCode)) return NextResponse.json({ ok: false, error: `newCode «${newCode}» não é BR.### .` }, { status: 400 })
+  if (!CODIGO_BR.test(newCode)) return NextResponse.json({ ok: false, error: `newCode «${newCode}» não é BR.### nem GM.### .` }, { status: 400 })
   const retomada = !!retryFrom && retryFrom !== newCode
   const oldCode = retomada ? retryFrom : pedido
-  if (!CODIGO_BR.test(oldCode)) return NextResponse.json({ ok: false, error: `code «${oldCode}» não é BR.### .` }, { status: 400 })
+  if (!CODIGO_BR.test(oldCode)) return NextResponse.json({ ok: false, error: `code «${oldCode}» não é BR.### nem GM.### .` }, { status: 400 })
+  if (serieDe(oldCode) !== serieDe(newCode)) return NextResponse.json({ ok: false, error: `${oldCode} → ${newCode}: renumerar não troca de série (BR fica BR, GM fica GM).` }, { status: 400 })
   if (oldCode === newCode) return NextResponse.json({ ok: true, result: 'nada a mudar', code: oldCode })
 
   // ── 1. CONFERÊNCIA ────────────────────────────────────────────────────────────────────────────────────────────────
@@ -139,7 +142,8 @@ export async function renumeraCarroBR(us: SupabaseClient, br: SupabaseClient | n
   }
 
   // E-mail: caixas do BR (2 e 3).
-  const mailPlano = await renameRideMailFolders(streamDb(), { oldCode, oldName: brRide.name, newCode, newName: brRide.name, slots: [2, 3], dryRun: true })
+  // As 8 caixas (LEI de 20/10/2026 — antes só a 2 e a 3).
+  const mailPlano = await renameRideMailFolders(streamDb(), { oldCode, oldName: brRide.name, newCode, newName: brRide.name, dryRun: true })
   for (const m of mailPlano) for (const c of m.conflicts) bloqueios.push(`E-mail caixa ${m.slot}: ${c}`)
   plano.push({ passo: 'e-mail (plano)', ok: true, detalhe: mailPlano.map(m => ({ slot: m.slot, conta: m.account, planejado: m.planned, erros: m.errors })) })
 
@@ -219,7 +223,7 @@ export async function renumeraCarroBR(us: SupabaseClient, br: SupabaseClient | n
   }
 
   // Pasta de e-mail do carro nas caixas 2 e 3 (renomeia; se não existia, cria — é sagrada).
-  const mail = await renameRideMailFolders(streamDb(), { oldCode, oldName: brRide.name, newCode, newName: brRide.name, slots: [2, 3] })
+  const mail = await renameRideMailFolders(streamDb(), { oldCode, oldName: brRide.name, newCode, newName: brRide.name })   // as 8 caixas
   const mailErro = mail.filter(m => m.errors.length || m.conflicts.length)
   passos.push({ passo: 'e-mail', ok: !mailErro.length, detalhe: mail.map(m => ({ slot: m.slot, conta: m.account, renomeadas: m.renamed, conflitos: m.conflicts, erros: m.errors })) })
   if (mailErro.length) return NextResponse.json({ ok: false, result: 'parou em «e-mail»', falhouEm: 'e-mail', passos, oldCode, newCode, retomar }, { status: 500 })
