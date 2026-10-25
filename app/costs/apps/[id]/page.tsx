@@ -11,6 +11,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { reservarReport } from '@/lib/reportMark'
+import { flowHorizonEnd } from '@/lib/flowHorizon'
 
 // One app's payment history — every charge since the subscription, grouped by
 // month, always showing the NEXT upcoming month too (the scheduled charge).
@@ -79,7 +80,7 @@ export default function AppViewPage() {
     const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
     const today = new Date(); today.setHours(0, 0, 0, 0)
     const end = sup.date_conclusion ? new Date(sup.date_conclusion + 'T00:00:00') : null
-    const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
+    const targetEnd = flowHorizonEnd()   // o horizonte do FUTURE (lib/flowHorizon: dez do ano que vem, mín. 6 meses)
     const { data: existing } = await supabase.from('fixed_cost_expenses').select('expense_date, payment_date').eq('supplier_id', id)
     const existingMonths = new Set((existing || []).map((e: any) => (e.expense_date || '').slice(0, 7)).filter(Boolean))
     const toInsert: any[] = []

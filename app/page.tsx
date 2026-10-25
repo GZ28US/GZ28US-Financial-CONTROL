@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { flowHorizonEnd } from '@/lib/flowHorizon'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL, PLATE_RENEWAL_COUNTY_URL, type PlateStatus } from '@/lib/plateExpiry'
@@ -42,7 +43,7 @@ async function ensureFixedCostPayments() {
   const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
   const clampDay = (y: number, m: number, day: number) => { const dim = new Date(y, m + 1, 0).getDate(); return new Date(y, m, Math.min(day, dim)) }
   const today = new Date(); today.setHours(0, 0, 0, 0)
-  const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
+  const targetEnd = flowHorizonEnd()   // o horizonte do FUTURE (lib/flowHorizon: dez do ano que vem, mín. 6 meses)
   const toInsert: any[] = []
   for (const sup of sups as any[]) {
     // ATIVAÇÕES (MARKETING: ASSET/MARKETING/MERCHANDISE) nunca geram conta

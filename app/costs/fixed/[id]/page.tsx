@@ -13,6 +13,7 @@ import { BASE_PATH, formatPhone, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan, scanCurrencyFx } from '@/lib/scanFile'
 import { hasLateFee, lateFeeFor } from '@/lib/lateFee'
+import { flowHorizonEnd } from '@/lib/flowHorizon'
 
 const LANG: 'en' | 'pt' = 'en'
 
@@ -108,8 +109,8 @@ export default function FixedCostSupplierViewPage() {
     const end = sup.date_conclusion ? new Date(sup.date_conclusion + 'T00:00:00') : null
 
     const firstPayMonth = new Date(start.getFullYear(), start.getMonth() + 1, 1)
-    // Always keep 6 months of payments generated ahead of the current month.
-    const targetEnd = new Date(today.getFullYear(), today.getMonth() + 7, 0)
+    // Parcelas geradas até o horizonte do FUTURE (25/out/2026: dez do ano que vem, no mínimo 6 meses).
+    const targetEnd = flowHorizonEnd()   // o horizonte do FUTURE (lib/flowHorizon: dez do ano que vem, mín. 6 meses)
 
     const { data: existing } = await supabase.from('fixed_cost_expenses').select('expense_date').eq('supplier_id', id)
     const existingDates = new Set((existing || []).map((e: any) => e.expense_date).filter(Boolean))

@@ -8,21 +8,23 @@ import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { DEFAULT_SOURCE } from '@/components/SourceSelect'
 import { hiddenPayers } from '@/lib/payerRule'
+import { flowHorizonEnd, flowHorizonEndYmd, flowHorizonMonths } from '@/lib/flowHorizon'
 
 function formatUSD(v: number) { return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(v) }
 function isValidDate(d: string | null) { return !!d && /^\d{4}-\d{2}-\d{2}$/.test(d) }
 function fmtD(v: string | null) { return v ? String(v).slice(0, 10) : '' }
 
 // JANELA DO FUTURE FLOW (ordem do Márcio, 28/jul/2026): "mês corrente + os
-// próximos 6 meses, só" — e dentro dela TODAS as contas da oficina, sem exceção.
+// próximos 6 meses, só" — e dentro dela TODAS as contas da oficina, sem exceção. (25/out/2026: dez do ano que vem, mín. 6 meses.)
 // Uma coisa depende da outra: o gerador precisa criar linha até o fim da janela
 // (staff, conta fixa) e a tela precisa cortar o que passa dela (renovação anual
 // de 2028, por exemplo). Os dois lados leem daqui.
-const HORIZON_MONTHS = 6
-function horizonEnd() { const d = new Date(); return new Date(d.getFullYear(), d.getMonth() + HORIZON_MONTHS + 1, 0) }
-function horizonEndYmd() { const d = horizonEnd(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` }
+// Horizonte (25/out/2026, Márcio): até DEZEMBRO DO ANO QUE VEM, no mínimo 6 meses — lib/flowHorizon, o mesmo dos geradores.
+const HORIZON_MONTHS = flowHorizonMonths()
+const horizonEnd = flowHorizonEnd
+const horizonEndYmd = flowHorizonEndYmd
 
-// Generate every fixed-cost supplier's scheduled payment rows 6 months ahead (one row per
+// Generate every fixed-cost supplier's scheduled payment rows up to the flow horizon (lib/flowHorizon) (one row per
 // payment day per month, first payment the month after the start). Idempotent — only inserts
 // month-dates that don't already exist. Runs here so the rows exist on HOME without first
 // visiting each supplier page (which has the same generator).
@@ -76,7 +78,7 @@ async function ensureFixedCostPayments() {
 // mesmo jeito que ensureFixedCostPayments faz com a conta fixa mensal. Sem isso o
 // salário só apareceria no dia do pagamento e sumiria da previsão. Enquanto o
 // funcionário está na casa o custo é infinito: o que fecha a conta não é uma data
-// de fim, é a janela de 6 meses.
+// de fim, é o horizonte do fluxo (lib/flowHorizon).
 async function ensureStaffPayments() {
   // Season com saída marcada no FUTURO continua prevista ATÉ o último dia (18/10/2026 — Eliel sai 26/10); nada depois dele.
   const hojeYmd = new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
@@ -440,7 +442,7 @@ export default function HomePage() {
     // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
     dueGz += tax.reduce((x, r) => x + r.amount, 0)
     // A projeção para no fim da janela: renovação anual de 2027/2028 continua no
-    // banco e na página do fornecedor, mas não polui o fluxo dos 6 meses.
+    // banco e na página do fornecedor, mas não polui o fluxo além do horizonte.
     const horizon = horizonEndYmd()
     const flowItems: FlowItem[] = [
       ...datedIncome.map(r => ({ date: r.date as string, code: r.code, label: r.label, href: r.href, signed: r.amount, tip: r.tip })),
@@ -472,14 +474,14 @@ export default function HomePage() {
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <h1 className="text-4xl font-bold mb-1">FUTURE Flow</h1>
-      <p className="text-gray-400 mb-6">Scheduled income &amp; expenses — this month + the next {HORIZON_MONTHS} months, everything included.</p>
+      <p className="text-gray-400 mb-6">Scheduled income &amp; expenses — this month + the next {HORIZON_MONTHS} months (through {horizonEnd().toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}), everything included.</p>
       {loading ? (
         <p className="text-gray-400 text-xl">Loading…</p>
       ) : (
         <>
           {flow.length > 0 ? (
             <>
-              <div className="max-w-3xl bg-gray-900 border border-gray-700 rounded-2xl p-5 mb-4">
+              <div className="max-w-6xl bg-gray-900 border border-gray-700 rounded-2xl p-5 mb-4">
                 <p className="text-sm font-bold text-gray-400 mb-2">THIS MONTH + NEXT {HORIZON_MONTHS} MONTHS</p>
                 <CashFlowChart series={flowSeries} />
               </div>
@@ -564,7 +566,7 @@ function niceStep(x: number): number {
 
 // 3-line cashflow chart: RED expenses, BLUE incomes, GREEN balance.
 function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: number; bal: number }[] }) {
-  const W = 760, H = 300, padR = 14, padT = 30, padB = 56
+  const W = Math.max(760, series.length * 72), H = 300, padR = 14, padT = 30, padB = 56
   const vals = series.flatMap(s => [s.inc, s.exp, s.bal])
   const rawMax = Math.max(1, ...vals), rawMin = Math.min(0, ...vals)
   const step = niceStep((rawMax - rawMin) / 4 || 1)
@@ -577,7 +579,8 @@ function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: num
   const line = (k: 'inc' | 'exp' | 'bal') => series.map((s, i) => `${i ? 'L' : 'M'}${xFor(i).toFixed(1)},${yFor(s[k]).toFixed(1)}`).join(' ')
   const ticks: number[] = []
   for (let v = minV; v <= maxV + 0.001; v += step) ticks.push(v)
-  const mLabel = (mk: string) => new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'short' })
+  // janeiro (e o 1º ponto) levam o ano — com 15 meses o eixo atravessa o ano
+  const mLabel = (mk: string, i: number) => new Date(Number(mk.slice(0, 4)), Number(mk.slice(5, 7)) - 1, 1).toLocaleDateString('en-US', { month: 'short' }) + (i === 0 || mk.endsWith('-01') ? ` ${mk.slice(2, 4)}` : '')
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="w-full h-auto">
       <g fontSize="12" fontWeight="bold">
@@ -593,7 +596,7 @@ function CashFlowChart({ series }: { series: { mk: string; inc: number; exp: num
       ))}
       {series.map((s, i) => (
         <g key={`x${i}`}>
-          <text x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk)}</text>
+          <text x={xFor(i)} y={yBot + 18} textAnchor="middle" fontSize="11" fill="#6b7280">{mLabel(s.mk, i)}</text>
           <text x={xFor(i)} y={yBot + 33} textAnchor="middle" fontSize="10.5" fontWeight="bold" fill={s.bal >= 0 ? '#60a5fa' : '#f87171'}>{compactUSD(s.bal)}</text>
         </g>
       ))}
