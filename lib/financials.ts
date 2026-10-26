@@ -8,6 +8,7 @@
 // Fonte de custo é SEMPRE invoice_expenses — invoice_items.base_cost é campo de
 // exibição (espelha o preço de venda nos car deals) e não entra em conta nenhuma.
 import { supabase } from '@/lib/supabase'
+import { invoiceMoneyFor } from '@/lib/flTax'
 import { foraDoDinheiro } from '@/lib/estorno'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH } from '@/lib/utils'

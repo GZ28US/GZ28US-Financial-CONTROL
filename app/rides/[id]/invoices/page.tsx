@@ -5,6 +5,7 @@ import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { invoiceMoneyFor } from '@/lib/flTax'
 import { formatUSD, clientCode } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 // «last activity 1st» (01/10/2026): régua única de última atividade, a mesma das listas de clientes e rides.

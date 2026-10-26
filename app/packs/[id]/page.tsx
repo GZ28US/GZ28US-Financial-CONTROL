@@ -62,10 +62,10 @@ export default function ViewPackPage() {
   const partsSubTotal = parts.reduce((s: number, p: any) => s + partSell(p) * num(p.quantity), 0)
   const servicesTotal = services.reduce((s: number, sv: any) => s + svcPrice(sv), 0)
   // FL SALES TAX PELA LEI (lib/flTax): estimativa de cliente da Flórida (o pack não tem carro)
-  const money = invoiceMoney({ partLines: parts.map((p: any) => partSell(p) * num(p.quantity)), serviceLines: services.map(svcPrice), discountPct: num(pack.global_discount), status: partsSubTotal > 0 ? 'TAXABLE' : 'LABOR_ONLY' })
-  const floridaTaxesAmount = money.tax
+  const flMoney = invoiceMoney({ partLines: parts.map((p: any) => partSell(p) * num(p.quantity)), serviceLines: services.map(svcPrice), discountPct: num(pack.global_discount), status: partsSubTotal > 0 ? 'TAXABLE' : 'LABOR_ONLY' })
+  const floridaTaxesAmount = flMoney.tax
   const partsAndServicesTotal = partsSubTotal + servicesTotal
-  const grandTotal = money.grand
+  const grandTotal = flMoney.grand
   const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + expAmount(e) * (num(e.quantity) || 1) + (num(e.tax) + num(e.extra)) * expRatio(e), 0)
   // STAFF COST (Márcio, 04/10/2026: «the staff costs should be considered in this math, as expense… always USD 15 per hour»):
   // horas previstas das duties × a hora da casa (lib/laborCost.ts). É CALCULADO a cada abertura — não existe linha de mão de
