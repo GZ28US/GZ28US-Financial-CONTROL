@@ -84,15 +84,13 @@ export async function findFolderByCode(token: string, root: string, code: string
 // "Invoices" guarda uma pasta POR INVOICE do carro ("US.021.1 - <nome>"), e dentro
 // dela os recibos das expenses daquela invoice. Purchases continua existindo para o
 // que é do carro mas não se sabe de qual invoice (Márcio, 08/set/2026).
-export const SUBFOLDERS = ['4T Tuning', 'Purchases', 'Performance', 'Documentation', 'Invoices']   // «4T Tuning» desde 26/out/2026 (era HB Tuning)
+export const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentation', 'Invoices']
 
 // A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
 // derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
 export async function ensureSubfolders(token: string, folderPath: string) {
   const subs = [...SUBFOLDERS, folderPath.startsWith(ROOTS.BR) ? 'Volante' : 'Screening']
   for (const sub of subs) {
-    // carro ainda não migrado (só «HB Tuning»): não nasce uma «4T Tuning» vazia ao lado
-    if (sub === '4T Tuning' && (await dbx(token, 'files/get_metadata', { path: `${folderPath}/HB Tuning` })).ok) continue
     const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
     if (!r.ok && !r.text.includes('conflict')) {
       console.error('[ride-folder] subfolder create failed', { path: `${folderPath}/${sub}`, err: r.text.slice(0, 200) })

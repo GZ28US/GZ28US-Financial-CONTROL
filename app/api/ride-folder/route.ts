@@ -58,7 +58,7 @@ async function findLegacyFolders(token: string, root: string, zone: string, code
 }
 
 // Upload a small file into a ride folder (content endpoint, overwrite mode) —
-// used to mirror the BUILD SHEET PDF into the car's tuning folder (4T Tuning).
+// used to mirror the BUILD SHEET PDF into the car's HB Tuning folder.
 async function dbxUpload(token: string, path: string, bytes: Buffer): Promise<{ ok: boolean; text: string }> {
   const res = await fetch('https://content.dropboxapi.com/2/files/upload', {
     method: 'POST',
@@ -145,16 +145,6 @@ async function syncMailFolder(action: 'create' | 'rename', code: string, name: s
   }
 }
 
-// A PASTA DE TUNE DO CARRO (Márcio, 26/out/2026): «4T Tuning» no lugar de «HB Tuning». Carro já migrado tem «4T Tuning»;
-// carro ainda não migrado só tem «HB Tuning» — o app grava e acha na que EXISTE (4T primeiro), e carro novo nasce com 4T.
-const TUNING_SUB = '4T Tuning', LEGACY_TUNING_SUB = 'HB Tuning'
-const isTuningSub = (s: string) => !s || s === TUNING_SUB || s === LEGACY_TUNING_SUB
-async function tuningSubOf(token: string, folderPath: string): Promise<string> {
-  if ((await dbx(token, 'files/get_metadata', { path: `${folderPath}/${TUNING_SUB}` })).ok) return TUNING_SUB
-  if ((await dbx(token, 'files/get_metadata', { path: `${folderPath}/${LEGACY_TUNING_SUB}` })).ok) return LEGACY_TUNING_SUB
-  return TUNING_SUB
-}
-
 export async function POST(req: NextRequest) {
   try {
     // PORTÃO (13/set/2026). Esta rota cria, renomeia, sobe e APAGA arquivo nas pastas
@@ -190,10 +180,9 @@ export async function POST(req: NextRequest) {
       if (!fz || !tz || fz === tz) {
         return NextResponse.json({ error: 'Bad request: mirror needs distinct fromZone/toZone (US|BR).' }, { status: 400 })
       }
-      const subPedido = sanitize(String(body.subfolder || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       const srcFolder = await findFolderByCode(token, ROOTS[fz], code, name)
       if (!srcFolder) return NextResponse.json({ ok: true, result: 'no-source-folder', copied: [] })
-      const sub = isTuningSub(subPedido) ? await tuningSubOf(token, `${ROOTS[fz]}/${srcFolder}`) : subPedido
       let dstFolder = await findFolderByCode(token, ROOTS[tz], code, name)
       if (!dstFolder) {
         dstFolder = target
@@ -203,14 +192,13 @@ export async function POST(req: NextRequest) {
         }
       }
       await ensureSubfolders(token, `${ROOTS[tz]}/${dstFolder}`)
-      const subDst = isTuningSub(subPedido) ? await tuningSubOf(token, `${ROOTS[tz]}/${dstFolder}`) : subPedido
       const list = await dbx(token, 'files/list_folder', { path: `${ROOTS[fz]}/${srcFolder}/${sub}`, recursive: false, limit: 1000 })
       if (!list.ok) return NextResponse.json({ ok: true, result: 'no-source-subfolder', copied: [] })
       const copied: string[] = []
       for (const e of list.data.entries || []) {
         if (e['.tag'] !== 'file') continue
         const from_path = `${ROOTS[fz]}/${srcFolder}/${sub}/${e.name}`
-        const to_path = `${ROOTS[tz]}/${dstFolder}/${subDst}/${e.name}`
+        const to_path = `${ROOTS[tz]}/${dstFolder}/${sub}/${e.name}`
         let cp = await dbx(token, 'files/copy_v2', { from_path, to_path, autorename: false })
         if (!cp.ok && cp.text.includes('conflict')) {
           // Target already has the file — replace it with the source version.
@@ -224,14 +212,13 @@ export async function POST(req: NextRequest) {
     // Every other action was validated to carry a zone.
     if (!zone) return NextResponse.json({ error: 'Bad request: zone required.' }, { status: 400 })
 
-    // find: list the files in the ride folder's subfolder (default: the car's tuning folder — 4T Tuning, or HB Tuning if not migrated),
+    // find: list the files in the ride folder's subfolder (default HB Tuning),
     // optionally filtered by a case-insensitive name match. Used for status display.
     if (action === 'find') {
-      const subPedido = sanitize(String(body.subfolder || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       const match = String(body.match || '').toLowerCase()
       const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder', files: [] })
-      const sub = isTuningSub(subPedido) ? await tuningSubOf(token, `${root}/${folder}`) : subPedido
       // SUBPASTA DO BUILD dentro do subfolder (09/10/2026): «NN - <pack>» ou «00 - BoneStock». O sanitize come a barra, por isso campo próprio.
       const bf = sanitize(String(body.buildFolder || ''))
       const subDir = bf ? `${sub}/${bf}` : sub
@@ -243,7 +230,7 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ ok: true, result: 'found', files })
     }
 
-    // upload: drop a file into the ride folder's subfolder (default: the car's tuning folder — 4T Tuning, or HB Tuning if not migrated),
+    // upload: drop a file into the ride folder's subfolder (default HB Tuning),
     // overwriting any previous version. Se a pasta do carro não existir, ela nasce:
     // arquivo salvo é arquivo que tem que estar em algum lugar certo.
     // Renomeia UM arquivo dentro da subpasta do ride (ex.: o BuildSheet PDF quando o nome
@@ -253,7 +240,7 @@ export async function POST(req: NextRequest) {
     // Roda DEPOIS do rename da pasta — procura a etiqueta "<CODIGO> - <Nome>"
     // que o app carimba no nome de todo arquivo que gera (BoneStock Tune,
     // BuildSheet PDF) e troca só ela, preservando prefixo e extensão. Varre a
-    // pasta de tune do carro (4T Tuning e a antiga HB Tuning) E a pasta plana do acervo, onde o nome do arquivo é a
+    // HB Tuning do carro E a pasta plana do acervo, onde o nome do arquivo é a
     // única identidade que existe.
     if (action === 'retag') {
       const oldTag = sanitize(`${String(body.oldCode || '')}${body.oldName ? ' - ' + String(body.oldName) : ''}`)
@@ -265,7 +252,7 @@ export async function POST(req: NextRequest) {
       if (repoName) dirs.push(`${root}/${repoName}`)
       // a pasta do carro já foi renomeada pelo action 'rename' — busca pelo código NOVO
       const folder = await findFolderByCode(token, root, sanitize(String(body.newCode || code)), name)
-      if (folder) for (const sub of [...SUBFOLDERS, LEGACY_TUNING_SUB]) dirs.push(`${root}/${folder}/${sub}`)
+      if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
       let renamed = 0
       const falhas: string[] = []
       for (const dir of dirs) {
@@ -317,9 +304,9 @@ export async function POST(req: NextRequest) {
       const repoName = sanitize(String(body.rootFolder || ''))
       if (repoName) dirs.push(`${root}/${repoName}`)
       const folder = await findFolderByCode(token, root, code, name)
-      if (folder) for (const sub of [...SUBFOLDERS, LEGACY_TUNING_SUB]) dirs.push(`${root}/${folder}/${sub}`)
-      // o tune do BoneStock mora em «4T Tuning/00 - BoneStock» (antes «HB Tuning», 09/10/2026) (e também se acha a base «00 - Stock»)
-      if (folder) for (const t of [TUNING_SUB, LEGACY_TUNING_SUB]) for (const b of ['00 - BoneStock', '00 - Stock']) dirs.push(`${root}/${folder}/${t}/${b}`)
+      if (folder) for (const sub of SUBFOLDERS) dirs.push(`${root}/${folder}/${sub}`)
+      // o tune do BoneStock mora em «HB Tuning/00 - BoneStock» desde 09/10/2026 (e também se acha a base «00 - Stock»)
+      if (folder) for (const b of ['00 - BoneStock', '00 - Stock']) dirs.push(`${root}/${folder}/HB Tuning/${b}`)
       // "<prefixo> <CÓDIGO> - <Nome> <ETIQUETA DE OS> Tune.<ext>". O (.*) guloso
       // casa a ÚLTIMA ocorrência da etiqueta, que é onde ela mora — o prefixo do
       // arquivo pode conter as mesmas palavras.
@@ -566,12 +553,11 @@ export async function POST(req: NextRequest) {
     if (action === 'rename-file') {
       const from = sanitize(String(body.from || ''))
       const to = sanitize(String(body.to || ''))
-      const subPedido = sanitize(String(body.subfolder || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       if (!from || !to) return NextResponse.json({ error: 'Bad request: rename-file needs from + to.' }, { status: 400 })
       if (from === to) return NextResponse.json({ ok: true, result: 'same-name' })
       const folder = await findFolderByCode(token, root, code, name)
       if (!folder) return NextResponse.json({ ok: true, result: 'no-folder' })
-      const sub = isTuningSub(subPedido) ? await tuningSubOf(token, `${root}/${folder}`) : subPedido
       // SUBPASTA DO BUILD dentro do subfolder (09/10/2026): «NN - <pack>» ou «00 - BoneStock». O sanitize come a barra, por isso campo próprio.
       const bf = sanitize(String(body.buildFolder || ''))
       const subDir = bf ? `${sub}/${bf}` : sub
@@ -591,7 +577,7 @@ export async function POST(req: NextRequest) {
 
     if (action === 'upload') {
       const filename = sanitize(String(body.filename || ''))
-      const subPedido = sanitize(String(body.subfolder || ''))
+      const sub = sanitize(String(body.subfolder || 'HB Tuning'))
       const b64 = String(body.contentBase64 || '')
       if (!filename || !b64) {
         return NextResponse.json({ error: 'Bad request: upload needs filename + contentBase64.' }, { status: 400 })
@@ -616,7 +602,6 @@ export async function POST(req: NextRequest) {
         folder = target
       }
       await ensureSubfolders(token, `${root}/${folder}`)
-      const sub = isTuningSub(subPedido) ? await tuningSubOf(token, `${root}/${folder}`) : subPedido
       // RECIBO DE EXPENSE: cai em "Invoices/<código> - <nome>", não solto no carro.
       // O sanitize come a barra, então o caminho aninhado vem em campo próprio.
       const invFolder = invoiceFolderName(sanitize(String(body.invoiceCode || '')), sanitize(String(body.invoiceName || '')))

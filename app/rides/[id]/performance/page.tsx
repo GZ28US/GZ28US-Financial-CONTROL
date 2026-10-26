@@ -117,7 +117,7 @@ export default function RideBuildsPage() {
   // Não-fatal: sem arquivo (sheet nunca gerada) não é erro.
   async function renameSheetFile(b: Build, oldName: string, newName: string) {
     if (!ride?.project_code) return
-    // SUBPASTA DO BUILD (09/10/2026): «NN - <pack>» dentro de 4T Tuning. Renomeia a pasta e o PDF dentro dela; a base
+    // SUBPASTA DO BUILD (09/10/2026): «NN - <pack>» dentro de HB Tuning. Renomeia a pasta e o PDF dentro dela; a base
     // (BoneStock/Stock) não tem Build Sheet nas pastas, então não há o que renomear.
     if (!isBaselineName(oldName) && !isBaselineName(newName)) {
       const baseNo = builds.find(isBoneStockBuild)?.build_no ?? null
