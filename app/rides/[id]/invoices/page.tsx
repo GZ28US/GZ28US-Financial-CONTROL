@@ -147,6 +147,11 @@ export default function InvoicesPage() {
 
     const invoiceList = data || []
     setInvoices(invoiceList)
+    // FL SALES TAX PELA LEI (lib/flTax): o carro (OWNER & DESTINATION) e o endereço do cliente de cada invoice
+    const { data: taxRide } = isClient ? { data: null } : await supabase.from('rides').select('client_id, title_scope').eq('id', ownerId).single()
+    const taxClientIds = [...new Set([...invoiceList.map((i: any) => i.client_id), isClient ? ownerId : taxRide?.client_id].filter(Boolean))] as string[]
+    const { data: taxClients } = taxClientIds.length ? await supabase.from('clients').select('id, country, state').in('id', taxClientIds) : { data: [] as any[] }
+    const taxClientBy = new Map<string, any>((taxClients || []).map((c: any) => [c.id, c]))
 
     // Ride mode: resolve each invoice's owner name (stamp ?? ride's current
     // client) so transferred cars read clearly — old rows previous owner,
@@ -180,12 +185,9 @@ export default function InvoicesPage() {
       const partsVivos = soOQueConta(partsRes.data || [], valorItem, () => invoice.id)
       const expensesVivas = soOQueConta(expensesRes.data || [], valorDespesa, () => invoice.id)
       const partsSubTotal = partsVivos.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-      const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
-      const partsTotal = partsSubTotal + floridaTaxesAmount
-      const servicesTotal = (servicesRes.data || []).reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
-      const partsAndServicesTotal = partsTotal + servicesTotal
-      const discountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
-      const grandTotal = partsAndServicesTotal - discountAmount
+      const money = invoiceMoneyFor(invoice, taxRide?.title_scope, taxClientBy.get(invoice.client_id || taxRide?.client_id || (isClient ? ownerId : '')) || null, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
+      const floridaTaxesAmount = money.tax
+      const grandTotal = money.grand
 
       // Income counts only payments explicitly marked PAID (paid_at) — same as the
       // edit page. Expenses include each item's Tax and Extra Costs plus the

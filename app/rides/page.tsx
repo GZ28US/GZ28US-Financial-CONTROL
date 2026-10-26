@@ -88,6 +88,9 @@ export default function RidesPage() {
   async function loadRides(m: 'project' | 'quote' | 'shop', c: string) {
     const { data, error } = await supabase.from('rides').select('*')
     if (error) { console.error(error); setLoading(false); return }
+    // o imposto pela lei precisa do endereço do cliente quando o carro não tem destino
+    const { data: clientsTax } = await supabase.from('clients').select('id, country, state')
+    const clientTax = new Map<string, any>((clientsTax || []).map((c: any) => [c.id, c]))
 
     // A client's filtered list also shows the rides they SOLD (closed
     // ride_owners period) — badged, grayed, history intact.
@@ -133,7 +136,7 @@ export default function RidesPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, invoice_code, is_quote, florida_taxes, global_discount, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, live_status, updated_at, created_at')
+        .select('id, invoice_code, is_quote, client_id, global_discount, fl_tax_override, fl_tax_expense_date, entry_date, conclusion_date, delivery_date, feed_status, live_status, updated_at, created_at')
         .eq('ride_id', ride.id)
 
       const invoiceList = invoices || []
@@ -207,13 +210,11 @@ export default function RidesPage() {
           const payments = paymentsBy.get(inv.id) || []
           const expenses = expensesBy.get(inv.id) || []
 
-          const partsSubTotal = parts.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-          const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
-          const partsTotal = partsSubTotal + floridaTaxesAmount
-          const servicesTotal = services.reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
-          const partsAndServicesTotal = partsTotal + servicesTotal
-          const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
-          const grandTotal = partsAndServicesTotal - discountAmount
+          // FL tax pela lei (lib/flTax): OWNER & DESTINATION deste carro, senão o endereço do cliente
+          const money = invoiceMoneyFor(inv, ride.title_scope, clientTax.get((inv as any).client_id || ride.client_id) || null, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
+          const partsSubTotal = money.parts
+          const floridaTaxesAmount = money.tax
+          const grandTotal = money.grand
 
           // Income counts only payments explicitly marked PAID (paid_at), plus stock-sale income.
           const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)

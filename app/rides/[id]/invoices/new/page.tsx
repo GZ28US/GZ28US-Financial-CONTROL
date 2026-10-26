@@ -134,7 +134,7 @@ export default function NewInvoicePage() {
         origin: src.origin || 'PROJECT',
         is_quote: src.is_quote,
         target_grand_total: src.target_grand_total ?? null,
-        florida_taxes: src.florida_taxes ?? null,
+        fl_tax_override: src.fl_tax_override ?? null, fl_tax_override_reason: src.fl_tax_override_reason ?? null,
         global_discount: src.global_discount ?? null,
         import_margin: src.import_margin ?? 0,
         service: src.service ?? null,
@@ -319,7 +319,7 @@ export default function NewInvoicePage() {
     if (pack) {
       row.pack_id = pack.id
       row.target_grand_total = pack.target_grand_total ?? null
-      row.florida_taxes = null
+      row.fl_tax_override = null; row.fl_tax_override_reason = null
       row.global_discount = pack.global_discount ?? null
       row.import_margin = pack.import_margin ?? 0
     }

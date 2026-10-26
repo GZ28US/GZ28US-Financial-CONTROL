@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { invoiceMoney, FL_TAX_RATE_LABEL } from '@/lib/flTax'
 import { formatUSD, BASE_PATH, partMatches, partStatusBadge, dutyPriorityBadge, dutyTextColor, DUTY_PRIORITY_RANK, dutyOrderOf, stripDutyOrder, withDutyOrder, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
 import { loadFixedMember, staffCostOf, sumEstimatedSeconds, type FixedMember } from '@/lib/laborCost'
 import { carData, yearsForSpec, carLabel } from '@/lib/carData'
@@ -94,7 +95,6 @@ export default function EditPackPage() {
   const [bYears, setBYears] = useState<number[]>([])
 
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
-  const [floridaTaxes, setFloridaTaxes] = useState('')
   const [globalDiscount, setGlobalDiscount] = useState('')
   const [importMargin, setImportMargin] = useState('')
   // Se as quotes nascidas deste pack já saem mostrando o PART NUMBER embaixo
@@ -216,7 +216,6 @@ export default function EditPackPage() {
       ...(c.pack_name ? { pack_name: String(c.pack_name) } : {}),
     })) : [])
     setTargetGrandTotal(data.target_grand_total != null ? String(data.target_grand_total) : '')
-    setFloridaTaxes(data.florida_taxes != null ? String(data.florida_taxes) : '')
     setGlobalDiscount(data.global_discount != null ? String(data.global_discount) : '')
     setImportMargin(data.import_margin != null ? String(data.import_margin) : '')
     setShowPartNumbers(!!data.show_part_numbers)
@@ -442,16 +441,17 @@ export default function EditPackPage() {
   // ---- Totals math (mirrors the invoice editor) ----
   const getPartTotal = (p: Part) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)
   const partsSubTotal = parts.reduce((sum, p) => sum + getPartTotal(p), 0)
-  const floridaTaxesPct = parseFloat(floridaTaxes) || 0
-  const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
-  const partsTotal = partsSubTotal + floridaTaxesAmount
+  const partsTotal = partsSubTotal
   const laborIndex = services.findIndex(s => s.description === FULL_PROJECT_LABOR)
   const otherServicesTotal = services.reduce((sum, s, i) => i === laborIndex ? sum : sum + (parseFloat(s.price) || 0), 0)
   const servicesTotal = services.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
   const partsAndServicesTotal = partsTotal + servicesTotal
   const globalDiscountPct = parseFloat(globalDiscount) || 0
-  const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  // FL SALES TAX PELA LEI (lib/flTax): o pack não tem carro — a estimativa é a de cliente da Flórida (peça + mão de obra).
+  const money = invoiceMoney({ partLines: parts.map(getPartTotal), serviceLines: services.map(s => parseFloat(s.price) || 0), discountPct: globalDiscountPct, status: parts.some(p => getPartTotal(p) > 0) ? 'TAXABLE' : 'LABOR_ONLY' })
+  const floridaTaxesAmount = money.tax
+  const globalDiscountAmount = money.discount
+  const grandTotal = money.grand
   // Florida taxes are a pass-through: collected as revenue (in the grand total) AND
   // owed as an expense, so they net to zero profit. Count them on the expense side.
   const expensesTotal = floridaTaxesAmount + expenses.reduce((sum, e) => sum + (parseFloat(e.amount) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0), 0)
@@ -490,7 +490,14 @@ export default function EditPackPage() {
     if (!target || target <= 0) return
     const discountFactor = 1 - (globalDiscountPct / 100)
     if (discountFactor <= 0) return
-    const labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    let labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    const partLines = parts.map(getPartTotal), st = parts.some(p => getPartTotal(p) > 0) ? 'TAXABLE' as const : 'LABOR_ONLY' as const
+    for (let k = 0; k < 8; k++) {   // o imposto pela lei incide na mão de obra: itera até bater no alvo
+      const lines = services.map((s, i) => i === laborIndex ? labor : (parseFloat(s.price) || 0)); if (laborIndex < 0) lines.push(labor)
+      const diff = invoiceMoney({ partLines, serviceLines: lines, discountPct: globalDiscountPct, status: st }).grand - target
+      if (Math.abs(diff) < 0.005) break
+      labor -= diff / discountFactor
+    }
     const laborStr = (labor < 0 ? 0 : labor).toFixed(2)
     setServices(prev => {
       const li = prev.findIndex(s => s.description === FULL_PROJECT_LABOR)
@@ -681,7 +688,7 @@ export default function EditPackPage() {
       summary: summary.trim() || null,
       status: nextStatus || status,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
-      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
+      florida_taxes: null,   // LEGADO: o imposto é pela lei (lib/flTax)
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       import_margin: parseFloat(importMargin) || 0,
       show_part_numbers: showPartNumbers,
@@ -1065,11 +1072,7 @@ export default function EditPackPage() {
               <span className="text-xl font-bold">{formatUSD(partsSubTotal)}</span>
             </div>
             <div className="flex items-center gap-3">
-              <span className="text-gray-400 font-bold whitespace-nowrap">FLORIDA TAXES</span>
-              <div className="relative w-28">
-                <input type="text" inputMode="decimal" value={floridaTaxes} onChange={(e) => { if (isNumeric(e.target.value)) setFloridaTaxes(e.target.value) }} disabled={locked} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
-              </div>
+              <span className="text-gray-400 font-bold whitespace-nowrap">FL SALES TAX <span className="text-gray-500 font-normal text-sm">({FL_TAX_RATE_LABEL} by law · estimate for a Florida client, parts + labor)</span></span>
               <span className="text-xl font-bold ml-auto">{formatUSD(floridaTaxesAmount)}</span>
             </div>
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">

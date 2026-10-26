@@ -99,7 +99,7 @@ async function fetchAll(table: string, select: string): Promise<any[]> {
 export async function loadFinancials(): Promise<FinData> {
   const [invoices, payments, invExpensesAll, invPartsAll, invServices, expensesAll,
     fixedExpenses, fixedSuppliers, goodsAll, goodExpensesAll, inputsAll, inventoryAll, rides, clients] = await Promise.all([
-    fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
+    fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_override, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
     // mirror_expense_id é a cicatriz do espelho do cliente, que saiu do app US em
     // 11/set: a máquina que criava essas linhas morreu, a COLUNA fica até a onda que
     // a derruba no banco. Está preenchida em 0 de 220 linhas (medido) — o corte
@@ -131,7 +131,7 @@ export async function loadFinancials(): Promise<FinData> {
     // explícito derrubava o dataset inteiro quando o deploy chegava antes da
     // migration (caso rides.exported). Com '*', coluna ausente vira undefined.
     fetchAll('rides', '*'),
-    fetchAll('clients', 'id, name, country'),
+    fetchAll('clients', 'id, name, country, state'),
   ])
   const [capitalEvents, financingRows, financingEvents, cashBalances, dataFixes, intercompany] = await Promise.all([
     fetchOpt('capital_events', '*'), fetchOpt('financing', '*'),
@@ -236,13 +236,12 @@ export function invoiceTotals(d: FinData, inv: any) {
   // CLIENT, base_tributavel = unit_price × quantity nas 804 linhas (conferido ao
   // centavo), e a onda 9 tira a perna do CLIENT da própria expressão. Continua sendo
   // a coluna do banco que se lê, e não uma conta feita aqui.
-  const base = minhas.reduce((s, p) => s + num(p.base_tributavel), 0)
-  const parts = base
-  const services = d.invServices.filter(s2 => s2.invoice_id === inv.id).reduce((s, x) => s + num(x.price), 0)
-  const flTax = base * (num(inv.florida_taxes) / 100)
-  const pAndS = base + flTax + services
-  const discount = pAndS * (num(inv.global_discount) / 100)
-  const grand = pAndS - discount
+  // FL SALES TAX PELA LEI (26/out/2026 — lib/flTax.ts): status pelo OWNER & DESTINATION do carro (ou endereço do cliente),
+  // peça + mão de obra, desconto antes do imposto. A alíquota antiga (florida_taxes) não é lida.
+  const ride = inv.ride_id ? d.rides.get(inv.ride_id) : null
+  const client = d.clients.get(inv.client_id || ride?.client_id) || null
+  const m = invoiceMoneyFor(inv, ride?.title_scope, client, minhas.map(p => num(p.base_tributavel)), d.invServices.filter(s2 => s2.invoice_id === inv.id).map(x => num(x.price)))
+  const parts = m.parts, services = m.services, flTax = m.tax, discount = m.discount, grand = m.grand
   const cost = d.invExpenses.filter(e => e.invoice_id === inv.id).reduce((s, e) => s + expLine(e), 0)
   // O GRAND TOTAL era `grand + o que o cliente pagou direto`: a compra no cartão dele
   // virava venda de margem zero, somada DEPOIS do imposto e DEPOIS do desconto pra não
@@ -250,7 +249,7 @@ export function invoiceTotals(d: FinData, inv: any) {
   // sempre zero — e uma soma que só pode somar zero é mentira esperando acontecer.
   // `clientCost` sai do retorno junto: ninguém lia (conferido por grep).
   const received = d.payments.filter(p => p.invoice_id === inv.id && p.paid_at).reduce((s, p) => s + num(p.amount), 0)
-  return { parts, services, flTax, discount, grand, cost, received }
+  return { parts, services, flTax, discount, grand, cost, received, taxStatus: m.status, taxBase: m.taxBase }
 }
 
 // Dono do carro (OWNER & DESTINATION): OWN/TOOL são NOSSOS — o custo deles é frota/

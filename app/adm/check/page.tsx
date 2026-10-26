@@ -1688,8 +1688,8 @@ function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySig
   {
     const items: Item[] = []
     for (const i of d.invoices) {
-      if (i.is_quote || i.origin === 'BUCKET' || i.live_status !== 'CLOSED' || !(Number(i.florida_taxes) > 0) || i.fl_tax_expense_date) continue
-      // florida_taxes é ALÍQUOTA (%), não dinheiro: o imposto cobrado é o que invoiceTotals calcula (parts × alíquota).
+      if (i.is_quote || i.origin === 'BUCKET' || i.live_status !== 'CLOSED' || i.fl_tax_expense_date) continue
+      // o imposto cobrado é o da LEI (invoiceTotals → lib/flTax): peça + mão de obra do carro de cliente da Flórida
       const tax = Math.round((Number(invoiceTotals(d, i).flTax) || 0) * 100) / 100
       if (tax < 0.005) continue
       const ref = String(i.conclusion_date || i.delivery_date || '').slice(0, 10)

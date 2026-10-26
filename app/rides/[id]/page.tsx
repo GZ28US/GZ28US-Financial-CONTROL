@@ -307,9 +307,10 @@ export default function ViewRidePage() {
     if (!rideData) { setLoading(false); return }
     setRide(rideData)
 
+    let clientRow: any = null
     if (rideData.client_id) {
       const { data: clientData } = await supabase.from('clients').select('*').eq('id', rideData.client_id).single()
-      if (clientData) setClient(clientData)
+      if (clientData) { setClient(clientData); clientRow = clientData }
     }
 
     const { data: invoicesData } = await supabase
@@ -334,12 +335,10 @@ export default function ViewRidePage() {
         const partsVivos = soOQueConta(partsRes.data || [], valorItem, () => inv.id)
         const expensesVivas = soOQueConta(expensesRes.data || [], valorDespesa, () => inv.id)
         const partsSubTotal = partsVivos.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-        const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
-        const partsTotal = partsSubTotal + floridaTaxesAmount
-        const servicesTotal = (servicesRes.data || []).reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
-        const partsAndServicesTotal = partsTotal + servicesTotal
-        const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
-        const grandTotal = partsAndServicesTotal - discountAmount
+        // FL SALES TAX PELA LEI (lib/flTax): OWNER & DESTINATION deste carro, senão o endereço do dono
+        const money = invoiceMoneyFor(inv, rideData.title_scope, clientRow, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
+        const floridaTaxesAmount = money.tax
+        const grandTotal = money.grand
 
         // Edit-page math: income counts only payments marked PAID (paid_at);
         // expenses include each item's qty, Tax and Extra Costs, plus the

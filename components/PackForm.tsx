@@ -61,7 +61,6 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
   const [name, setName] = useState(initial?.name || '')
   const [status, setStatus] = useState(initial?.status || 'DRAFT')
   const [targetGrandTotal, setTargetGrandTotal] = useState(initial?.target_grand_total != null ? String(initial.target_grand_total) : '')
-  const [floridaTaxes, setFloridaTaxes] = useState(initial?.florida_taxes != null ? String(initial.florida_taxes) : '')
   const [globalDiscount, setGlobalDiscount] = useState(initial?.global_discount != null ? String(initial.global_discount) : '')
   const [importMargin, setImportMargin] = useState(initial?.import_margin != null ? String(initial.import_margin) : '0')
 
@@ -138,7 +137,6 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
     if (!p) return
     setName(p.name || '')
     setTargetGrandTotal(p.target_grand_total != null ? String(p.target_grand_total) : '')
-    setFloridaTaxes(p.florida_taxes != null ? String(p.florida_taxes) : '')
     setGlobalDiscount(p.global_discount != null ? String(p.global_discount) : '')
     setImportMargin(p.import_margin != null ? String(p.import_margin) : '0')
     setParts((p.parts || []).map((x: any) => ({ description: x.description || '', unit_price: x.unit_price != null ? String(x.unit_price) : '', quantity: x.quantity != null ? String(x.quantity) : '1', base_cost: x.base_cost != null ? String(x.base_cost) : '', ...(x.image_url ? { image_url: String(x.image_url) } : {}), ...scopeKey(x) })))
@@ -152,7 +150,7 @@ export default function PackForm({ packId, initial }: { packId?: string; initial
       name: name.trim(),
       cars: finalCars,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
-      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
+      florida_taxes: null,   // LEGADO: o imposto é pela lei (lib/flTax)
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       import_margin: parseFloat(importMargin) || 0,
       parts: parts.filter((p) => p.description.trim()).map((p) => ({ description: p.description.trim(), unit_price: parseFloat(p.unit_price) || 0, quantity: parseFloat(p.quantity) || 0, base_cost: p.base_cost !== '' ? parseFloat(p.base_cost) : null, ...(p.image_url ? { image_url: p.image_url } : {}), ...scopeKey(p) })),

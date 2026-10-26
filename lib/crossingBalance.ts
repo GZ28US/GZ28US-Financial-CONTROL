@@ -186,7 +186,8 @@ const rideLabel = (rides: Map<string, Row>, inv: Row) => {
 function grandTotal(items: Row[], services: Row[], inv: Row) {
   const base = items.reduce((s, i) => s + lineValue(i), 0)
   const serv = services.reduce((s, x) => s + num(x.price), 0)
-  const pAndS = base + base * (num(inv.florida_taxes) / 100) + serv
+  // 006.N é invoice do cliente GZ28BR (Brasil) = exportação: FL tax ZERO pela lei (lib/flTax, 26/out/2026)
+  const pAndS = base + serv
   return { base, serv, grand: pAndS - pAndS * (num(inv.global_discount) / 100) }
 }
 
@@ -213,7 +214,7 @@ export function computeCrossingBalance(rows: CrossingRows): CrossingBalance {
       id: inv.id, code: String(inv.invoice_code || '?'), path: ownerPath(inv), day: String(inv.hiring_date || inv.created_at || '').slice(0, 10) || null,
       label: [rideLabel(usRides, inv), String(inv.service || '').trim()].filter(Boolean).join(' · '), status: inv.live_status ?? null,
       counted, reason: counted ? null : inv.is_quote ? 'QUOTE' : 'CAR_INVOICE',   // carro: a régua do motor conta só as 006.N sem ride
-      parts: r2(g.base), services: r2(g.serv), flTaxPct: num(inv.florida_taxes), discountPct: num(inv.global_discount),
+      parts: r2(g.base), services: r2(g.serv), flTaxPct: 0, discountPct: num(inv.global_discount),
       total: r2(g.grand), received: r2(received), open: r2(g.grand - received),
       pending: r2(pend.reduce((s, p) => s + num(p.amount), 0)), pendingN: pend.length,
       items: (allItemsBy.get(inv.id) || []).map(i => ({ id: i.id, description: String(i.description || ''), unitPrice: num(i.unit_price), quantity: qty(i), usd: r2(lineValue(i)), cancelStatus: cancelOf(i), counted: !itemFora.has(i), day: i.payment_date ? String(i.payment_date).slice(0, 10) : null })),

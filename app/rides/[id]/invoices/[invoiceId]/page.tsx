@@ -337,7 +337,7 @@ export default function ViewInvoicePage() {
       // on every report, always.
       const promisedLine = isValidDate(invoice.delivery_date) && !isValidDate(invoice.conclusion_date)
         ? `\n🗓 PROMISED TO: *${formatDate(invoice.expected_conclusion_date)}*` : ''
-      const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${invoice.is_quote ? '\nPrices Exclude Florida Taxes' : ''}${promisedLine}`
+      const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${promisedLine}`
       const markupLine = `MarkUp: *${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%*`
       // CLIENTE vê só o VALOR EM ABERTO (Márcio, 30/09/2026: «Substitua o Grand Total somente pelo
       // valor em aberto… msgs pro cliente both apps»): Grand Total − incomes QUITADAS (paid_at).
@@ -466,13 +466,15 @@ export default function ViewInvoicePage() {
   const partsVivos = parts.filter(p => !partFora.has(p))
   const expensesVivas = expenses.filter(e => !expFora.has(e))
   const partsSubTotal = partsVivos.reduce((s, p) => s + partLine(p), 0)
-  const floridaTaxesAmount = partsSubTotal * ((invoice.florida_taxes || 0) / 100)
-  const partsTotal = partsSubTotal + floridaTaxesAmount
+  // FL SALES TAX PELA LEI (26/out/2026 — lib/flTax): OWNER & DESTINATION do carro / endereço do cliente / exceção gravada.
+  const money = invoiceMoneyFor(invoice, ride?.title_scope, client, partsVivos.map(partLine), services.map(sv => sv.price))
+  const floridaTaxesAmount = money.tax
+  const partsTotal = partsSubTotal
   const servicesTotal = services.reduce((s, sv) => s + sv.price, 0)
   const partsAndServicesTotal = partsTotal + servicesTotal
   const hasDiscount = (invoice.global_discount || 0) > 0
-  const globalDiscountAmount = partsAndServicesTotal * ((invoice.global_discount || 0) / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  const globalDiscountAmount = money.discount
+  const grandTotal = money.grand
   // Match the edit page exactly: income counts only payments explicitly marked
   // PAID (paid_at), and the Florida parts tax is itself an expense GZ28 owes —
   // included in both the global and paid expense totals.
@@ -521,7 +523,7 @@ export default function ViewInvoicePage() {
     quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
     clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: client?.country === 'ANGOLA' ? 'Cidade/Província' : 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
-    items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Impostos Flórida', itemsTotal: 'Total dos Itens',
+    items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Imposto sobre vendas da Flórida', flExempt: 'Isento de imposto sobre vendas da Flórida', itemsTotal: 'Total dos Itens',
     services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
     notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA',
@@ -530,7 +532,7 @@ export default function ViewInvoicePage() {
     quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
     clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
-    items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Taxes', itemsTotal: 'Items Total',
+    items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Sales Tax', flExempt: 'Florida sales tax exempt', itemsTotal: 'Items Total',
     services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
     notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY',
@@ -695,7 +697,6 @@ export default function ViewInvoicePage() {
                     return rows
                   })()}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">{T.subtotal}</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
-                  {(invoice.florida_taxes || 0) > 0 && <tr className="pi-taxes"><td colSpan={3} className="r">{T.flTax} {invoice.florida_taxes}%</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>}
                   <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{formatUSD(partsTotal)}</td></tr>
                 </tbody>
               </table>
@@ -725,6 +726,9 @@ export default function ViewInvoicePage() {
                 <tbody>
                   <tr className="pi-psrow"><td>{T.itemsServices}</td><td className="r">{formatUSD(partsAndServicesTotal)}</td></tr>
                   {hasDiscount && <tr className="pi-discrow"><td>{T.discount} ({invoice.global_discount}%)</td><td className="r">— {formatUSD(globalDiscountAmount)}</td></tr>}
+                  {money.taxable
+                    ? <tr className="pi-psrow"><td>{T.flTax} ({FL_TAX_RATE_LABEL})</td><td className="r">{formatUSD(floridaTaxesAmount)}</td></tr>
+                    : (money.status === 'EXPORT' || money.status === 'OUT_OF_STATE' || money.status === 'OVERRIDE_EXEMPT') && <tr className="pi-psrow"><td>{T.flExempt}</td><td className="r">—</td></tr>}
                   <tr className="pi-grandrow"><td>{T.grand}</td><td className="r">{formatUSD(grandTotal)}</td></tr>
                 </tbody>
               </table>
@@ -1003,7 +1007,6 @@ export default function ViewInvoicePage() {
                   )
                 }) })()}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span><span className="font-bold">{formatUSD(partsSubTotal)}</span></div>
-                {(invoice.florida_taxes || 0) > 0 && <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="text-gray-400 font-bold">FLORIDA PARTS TAXES ({invoice.florida_taxes}%)</span><span className="font-bold">{formatUSD(floridaTaxesAmount)}</span></div>}
                 <div className="px-4 py-3 flex justify-between border-t border-gray-700"><span className="font-bold text-lg">ITEMS TOTAL</span><span className="text-xl font-bold">{formatUSD(partsTotal)}</span></div>
               </div>
             </div>
@@ -1027,6 +1030,7 @@ export default function ViewInvoicePage() {
           <div className={sectionClass}>
             <div className={rowClass}><span className={labelClass}>ITEMS + SERVICES TOTAL</span><span className="font-bold">{formatUSD(partsAndServicesTotal)}</span></div>
             {hasDiscount && <div className={rowClass}><span className={labelClass}>GLOBAL DISCOUNT ({invoice.global_discount}%)</span><span className="font-bold text-red-400">- {formatUSD(globalDiscountAmount)}</span></div>}
+            <div className={rowClass}><span className={labelClass}>FL SALES TAX{money.taxable ? ` (${FL_TAX_RATE_LABEL})` : ''} <span className="text-gray-500 font-normal text-sm">· {FL_TAX_STATUS_LABEL[money.status]}</span></span><span className={`font-bold ${money.taxable ? '' : 'text-gray-500'}`}>{money.taxable ? formatUSD(floridaTaxesAmount) : 'EXEMPT'}</span></div>
             <div className="px-4 py-3 flex justify-between"><span className="font-bold text-xl">GRAND TOTAL</span><span className="text-3xl font-bold">{formatUSD(grandTotal)}</span></div>
           </div>
 

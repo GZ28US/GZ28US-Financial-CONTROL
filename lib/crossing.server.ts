@@ -628,7 +628,8 @@ function casar<S, T>(fontes: S[], alvos: T[], pertoDe: (s: S, t: T) => boolean, 
 function grandTotal(itens: Row[], servicos: Row[], inv: Row, valor: (i: Row) => number) {
   const base = itens.reduce((s, i) => s + valor(i), 0)
   const serv = servicos.reduce((s, x) => s + num(x.price), 0)
-  const pAndS = base + base * (num(inv.florida_taxes) / 100) + serv
+  // espelho encerrado (23/10); 006.N = exportação, FL tax zero pela lei (lib/flTax, 26/out/2026)
+  const pAndS = base + serv
   return pAndS - pAndS * (num(inv.global_discount) / 100)
 }
 

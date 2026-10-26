@@ -5,6 +5,7 @@ import { useParams, useRouter, usePathname } from 'next/navigation'
 import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
+import { flTaxStatus, invoiceMoney, FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL, type FlTaxOverride } from '@/lib/flTax'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
 import { nextFreeCode } from '@/lib/rideCodes'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -430,7 +431,12 @@ export default function EditInvoicePage() {
   const [mileage, setMileage] = useState('')
   const [service, setService] = useState('')
   const [liveStatus, setLiveStatus] = useState('INCOMPLETE')
-  const [floridaTaxes, setFloridaTaxes] = useState('')
+  // FL SALES TAX PELA LEI (26/out/2026 — lib/flTax): nada de alíquota digitada. O status nasce do OWNER & DESTINATION do
+  // carro e do endereço do cliente; só a EXCEÇÃO (com motivo) é gravada na invoice.
+  const [flTaxOverride, setFlTaxOverride] = useState('')
+  const [flTaxOverrideReason, setFlTaxOverrideReason] = useState('')
+  const [taxScope, setTaxScope] = useState<string | null>(null)
+  const [taxClient, setTaxClient] = useState<{ country?: string | null; state?: string | null } | null>(null)
   const [globalDiscount, setGlobalDiscount] = useState('')
   const [targetGrandTotal, setTargetGrandTotal] = useState('')
   const [parts, setParts] = useState<Part[]>([])
@@ -587,12 +593,14 @@ export default function EditInvoicePage() {
       setClientFacebook(c?.facebook || '')
     }
     if (isClient) {
-      const { data: clientData } = await supabase.from('clients').select('name, client_number, phone, country, email, preferred_message_method, instagram, facebook').eq('id', ownerId).single()
+      const { data: clientData } = await supabase.from('clients').select('name, client_number, phone, country, state, email, preferred_message_method, instagram, facebook').eq('id', ownerId).single()
       setClientName(clientData?.name || '')
+      setTaxClient(clientData ? { country: clientData.country, state: clientData.state } : null)
       setClientNumber(clientData?.client_number ?? null)
       applyClientContact(clientData)
     } else {
-      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, client_id').eq('id', ownerId).single()
+      const { data: rideData } = await supabase.from('rides').select('project_code, project_name, manufacturer, brand, model, version, year, client_id, title_scope').eq('id', ownerId).single()
+      setTaxScope(rideData?.title_scope || null)
       const pCode = rideData?.project_code || ''
       const pName = rideData?.project_name || ''
       setProjectCode(pCode)
@@ -605,8 +613,9 @@ export default function EditInvoicePage() {
       const { data: invOwner } = await supabase.from('invoices').select('client_id').eq('id', invoiceId).single()
       const ownerClientId = invOwner?.client_id || rideData?.client_id
       if (ownerClientId) {
-        const { data: c } = await supabase.from('clients').select('name, phone, country, email, preferred_message_method, instagram, facebook').eq('id', ownerClientId).single()
+        const { data: c } = await supabase.from('clients').select('name, phone, country, state, email, preferred_message_method, instagram, facebook').eq('id', ownerClientId).single()
         setClientName(c?.name || '')
+        setTaxClient(c ? { country: c.country, state: c.state } : null)
         applyClientContact(c)
       }
     }
@@ -633,7 +642,8 @@ export default function EditInvoicePage() {
     setService(data.service || '')
     setLiveStatus(data.live_status === 'CLOSED' ? 'CLOSED' : data.live_status === 'REALTIME' ? 'REALTIME' : 'INCOMPLETE')
     setShowPartNumbers(!!data.show_part_numbers)
-    setFloridaTaxes(data.florida_taxes ? String(data.florida_taxes) : '')
+    setFlTaxOverride(data.fl_tax_override || '')
+    setFlTaxOverrideReason(data.fl_tax_override_reason || '')
     setGlobalDiscount(data.global_discount ? String(data.global_discount) : '')
     setTargetGrandTotal(data.target_grand_total ? String(data.target_grand_total) : '')
     setImportMargin(data.import_margin ? String(data.import_margin) : '')
@@ -1798,16 +1808,18 @@ export default function EditInvoicePage() {
   const partsVivos = parts.filter(p => !partFora.has(p))
   const expensesVivas = expenses.filter(e => !expFora.has(e))
   const partsSubTotal = partsVivos.reduce((sum, p) => sum + getPartTotal(p), 0)
-  const floridaTaxesPct = parseFloat(floridaTaxes) || 0
-  const floridaTaxesAmount = partsSubTotal * (floridaTaxesPct / 100)
-  const partsTotal = partsSubTotal + floridaTaxesAmount
+  const partsTotal = partsSubTotal
   const laborIndex = services.findIndex(s => s.description === FULL_PROJECT_LABOR)
   const otherServicesTotal = services.reduce((sum, s, i) => i === laborIndex ? sum : sum + (parseFloat(s.price) || 0), 0)
   const servicesTotal = services.reduce((sum, s) => sum + (parseFloat(s.price) || 0), 0)
   const partsAndServicesTotal = partsTotal + servicesTotal
   const globalDiscountPct = parseFloat(globalDiscount) || 0
-  const globalDiscountAmount = partsAndServicesTotal * (globalDiscountPct / 100)
-  const grandTotal = partsAndServicesTotal - globalDiscountAmount
+  // FL SALES TAX PELA LEI (lib/flTax): status do carro/cliente + exceção; imposto sobre peça E mão de obra, depois do desconto.
+  const flTaxStatusNow = flTaxStatus({ scope: taxScope, client: taxClient, override: (flTaxOverride || null) as FlTaxOverride, hasParts: partsSubTotal > 0 })
+  const money = invoiceMoney({ partLines: partsVivos.map(getPartTotal), serviceLines: services.map(s => parseFloat(s.price) || 0), discountPct: globalDiscountPct, status: flTaxStatusNow })
+  const floridaTaxesAmount = money.tax
+  const globalDiscountAmount = money.discount
+  const grandTotal = money.grand
   // The DONOR car does not take part in any stock sale (user law 22/aug/2026): it
   // donates the part and that's it — the money stays on the receiving car's invoice.
   const totalPaid = payments.filter(p => !!p.paid_at).reduce((sum, p) => sum + (parseFloat(p.amount) || 0), 0)
@@ -1887,7 +1899,15 @@ export default function EditInvoicePage() {
     if (!target || target <= 0) return
     const discountFactor = 1 - (globalDiscountPct / 100)
     if (discountFactor <= 0) return
-    const labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    // O imposto pela lei também incide na mão de obra: itera até o GRAND TOTAL bater no alvo (converge em 2–3 voltas).
+    let labor = (target / discountFactor) - partsTotal - otherServicesTotal
+    const partLines = partsVivos.map(getPartTotal)
+    for (let k = 0; k < 8; k++) {
+      const lines = services.map((s, i) => i === laborIndex ? labor : (parseFloat(s.price) || 0)); if (laborIndex < 0) lines.push(labor)
+      const diff = invoiceMoney({ partLines, serviceLines: lines, discountPct: globalDiscountPct, status: flTaxStatusNow }).grand - target
+      if (Math.abs(diff) < 0.005) break
+      labor -= diff / discountFactor
+    }
     const laborStr = (labor < 0 ? 0 : labor).toFixed(2)
     setServices(prev => {
       const li = prev.findIndex(s => s.description === FULL_PROJECT_LABOR)
@@ -1900,7 +1920,7 @@ export default function EditInvoicePage() {
       updated[li] = { ...updated[li], price: laborStr }
       return updated
     })
-  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading])
+  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading, flTaxStatusNow])
 
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
@@ -2667,6 +2687,7 @@ export default function EditInvoicePage() {
   }
 
   async function saveInvoice() {
+    if (flTaxOverride && !flTaxOverrideReason.trim()) { alert('FL SALES TAX exception needs a reason (why this invoice is charged / exempt against the law).'); return }
     // A CLOSED invoice can NEVER carry a pending balance. If one appeared after it was
     // closed (e.g. an income was removed), it can't stay CLOSED — drop it to ONLINE on
     // save. (The status button blocks the same transition; this also guards save.)
@@ -2704,7 +2725,8 @@ export default function EditInvoicePage() {
       service: service || null,
       feed_status: effectiveFeedOnline ? 'REAL_TIME' : 'INCOMPLETE',
       live_status: effectiveLive,
-      florida_taxes: floridaTaxes ? parseFloat(floridaTaxes) : null,
+      fl_tax_override: flTaxOverride || null,
+      fl_tax_override_reason: flTaxOverride ? flTaxOverrideReason.trim() : null,
       global_discount: globalDiscount ? parseFloat(globalDiscount) : null,
       target_grand_total: targetGrandTotal ? parseFloat(targetGrandTotal.replace(/,/g, '')) : null,
       import_margin: parseFloat(importMargin) || 0,
@@ -4247,14 +4269,6 @@ export default function EditInvoicePage() {
               <span className="text-gray-400 font-bold">ITEMS SUB-TOTAL</span>
               <span className="text-xl font-bold">{formatUSD(partsSubTotal)}</span>
             </div>
-            <div className="flex items-center gap-3">
-              <span className="text-gray-400 font-bold whitespace-nowrap">FLORIDA TAXES</span>
-              <div className="relative w-28">
-                <input type="text" inputMode="decimal" value={floridaTaxes} onChange={(e) => { if (isNumeric(e.target.value)) setFloridaTaxes(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
-                <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
-              </div>
-              <span className="text-xl font-bold ml-auto">{formatUSD(floridaTaxesAmount)}</span>
-            </div>
             <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
               <span className="font-bold text-lg">ITEMS TOTAL</span>
               <span className="text-2xl font-bold">{formatUSD(partsTotal)}</span>
@@ -4340,6 +4354,17 @@ export default function EditInvoicePage() {
             </div>
             <span className="text-xl font-bold ml-auto text-red-400">- {formatUSD(globalDiscountAmount)}</span>
           </div>
+          <div className="flex items-center gap-3 flex-wrap">
+            <span className="text-gray-400 font-bold whitespace-nowrap">FL SALES TAX</span>
+            <select value={flTaxOverride} onChange={(e) => setFlTaxOverride(e.target.value)} className={`${smallInputClass} w-52`} title="By law: the car's OWNER & DESTINATION (or the client's address) decides. Exception: override with a written reason.">
+              <option value="">BY LAW</option>
+              <option value="TAXABLE">EXCEPTION · CHARGE</option>
+              <option value="EXEMPT">EXCEPTION · EXEMPT</option>
+            </select>
+            {flTaxOverride && <input type="text" value={flTaxOverrideReason} onChange={(e) => setFlTaxOverrideReason(e.target.value)} className={`${smallInputClass} flex-1 min-w-[14rem]`} placeholder="Reason (required)" />}
+            <span className={`text-xl font-bold ml-auto ${money.taxable ? '' : 'text-gray-500'}`}>{money.taxable ? formatUSD(floridaTaxesAmount) : 'EXEMPT'}</span>
+          </div>
+          <p className="text-sm text-gray-500 -mt-1">{FL_TAX_STATUS_LABEL[money.status]}{money.taxable ? ` · ${FL_TAX_RATE_LABEL} (6% Florida + 0.5% Orange County on the first $5,000 of each line) on ${formatUSD(money.taxBase)}` : ''}</p>
           <div className="border-t border-gray-700 pt-3 flex justify-between items-center">
             <span className="font-bold text-xl">GRAND TOTAL</span>
             <span className="text-3xl font-bold">{formatUSD(grandTotal)}</span>

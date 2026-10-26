@@ -63,7 +63,7 @@ export default function DrePage() {
       if (!ours) {
         const cp = d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick))
           .reduce((s: number, p: any) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0)
-        const cft = cp * ((parseFloat(inv.florida_taxes) || 0) / 100)
+        const cft = (t.parts + t.services) > 0 ? t.flTax * (cp / (t.parts + t.services)) : 0   // a parte do carro no imposto pela lei
         carRev += cp; carFlTax += cft
         carDiscount += (cp + cft) * ((parseFloat(inv.global_discount) || 0) / 100)
         carCost += d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick))
@@ -164,7 +164,7 @@ export default function DrePage() {
       const lbl = `${mm.code} ${mm.car || ''}`.trim()
       const carP = off ? d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick)).reduce((s3: number, p: any) => s3 + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0) : 0
       const carC = off ? d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s3: number, e: any) => s3 + expLine(e), 0) : 0
-      const cft = carP * ((parseFloat(inv.florida_taxes) || 0) / 100)
+      const cft = (t.parts + t.services) > 0 ? t.flTax * (carP / (t.parts + t.services)) : 0
       partsL.push({ label: lbl, amount: t.parts - carP, href: mm.href })
       svcL.push({ label: lbl, amount: t.services, href: mm.href })
       taxL.push({ label: lbl, amount: t.flTax - cft, href: mm.href })
@@ -235,7 +235,7 @@ export default function DrePage() {
       const nick = (inv.ride_id && d.rides.get(inv.ride_id)?.project_name) || null
       const carP = off ? d.invParts.filter((p: any) => p.invoice_id === inv.id && isCarLine(p.description, (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), nick)).reduce((s3: number, p: any) => s3 + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 1), 0) : 0
       const carC = off ? d.invExpenses.filter((e: any) => e.invoice_id === inv.id && isCarLine(e.item, expLine(e), nick)).reduce((s3: number, e: any) => s3 + expLine(e), 0) : 0
-      const cft = carP * ((parseFloat(inv.florida_taxes) || 0) / 100)
+      const cft = (t.parts + t.services) > 0 ? t.flTax * (carP / (t.parts + t.services)) : 0
       const liq = (t.parts - carP) + t.services - (t.discount - (carP + cft) * ((parseFloat(inv.global_discount) || 0) / 100))
       add('REV', rd, liq)
       add('CPV', rd, t.cost - carC)

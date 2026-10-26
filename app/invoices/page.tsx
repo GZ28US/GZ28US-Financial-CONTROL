@@ -60,7 +60,7 @@ export default function InvoicesPage() {
   async function load() {
     const { data } = await supabase
       .from('invoices')
-      .select('id, invoice_code, ride_id, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
+      .select('id, invoice_code, ride_id, client_id, fl_tax_override, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', false)
       .eq('origin', mode === 'shop' ? 'SHOP' : 'PROJECT')
       // Cinto e suspensório (AUTO-BOOK fase B, 4/set/2026): o .eq acima já
@@ -72,6 +72,9 @@ export default function InvoicesPage() {
       .order('created_at', { ascending: false })
     const list = data || []
     setRows(list)
+    // o imposto pela lei precisa do carro (OWNER & DESTINATION) e do cliente
+    const [{ data: ridesTax }, { data: clientsTax }] = await Promise.all([supabase.from('rides').select('id, client_id, title_scope'), supabase.from('clients').select('id, country, state')])
+    const rideTax = new Map<string, any>((ridesTax || []).map((r: any) => [r.id, r])), clientTax = new Map<string, any>((clientsTax || []).map((c: any) => [c.id, c]))
 
 
     // Bulk-load the children for every listed invoice (one query each, grouped in memory).
@@ -101,8 +104,10 @@ export default function InvoicesPage() {
       const ie = expsBy.get(inv.id) || []
       const ipa = partsBy.get(inv.id) || []
       const isv = svcsBy.get(inv.id) || []
-      const partsSubTotal = ipa.reduce((s: number, p: any) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-      const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+      const rideT = inv.ride_id ? rideTax.get(inv.ride_id) : null
+      const money = invoiceMoneyFor(inv, rideT?.title_scope, clientTax.get(inv.client_id || rideT?.client_id) || null, ipa.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), isv.map((sv: any) => parseFloat(sv.price) || 0))
+      const partsSubTotal = money.parts
+      const flTaxAmount = money.tax
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
       const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
       const totalIncomeAll = ip.reduce((s: number, p: any) => s + (parseFloat(p.amount) || 0), 0)
@@ -110,9 +115,7 @@ export default function InvoicesPage() {
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((s: number, e: any) => s + expenseLine(e), 0)
       const currentProfit = totalPaid - expensesTotalPaid
       const finalProfit = totalIncomeAll - expensesTotalGlobal
-      const servicesTotal = isv.reduce((s: number, sv: any) => s + (parseFloat(sv.price) || 0), 0)
-      const partsAndServicesTotal = partsSubTotal + flTaxAmount + servicesTotal
-      const grandTotal = partsAndServicesTotal - partsAndServicesTotal * ((inv.global_discount || 0) / 100)
+      const grandTotal = money.grand
       statsMap[inv.id] = {
         paymentsBalance: totalIncomeAll - totalPaid,
         expensesBalance: expensesTotalPaid - expensesTotalGlobal,

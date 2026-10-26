@@ -5,6 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { invoiceMoney, FL_TAX_RATE_LABEL } from '@/lib/flTax'
 import { carLabel } from '@/lib/carData'
 import { loadCarGroups, packCarLabels, type CarGroup } from '@/lib/carGroups'
 import { dutyPriorityBadge } from '@/lib/utils'
@@ -59,10 +60,12 @@ export default function ViewPackPage() {
   const expAmount = (e: any) => (e.amount_usd != null ? num(e.amount_usd) : num(e.amount))
   const svcPrice = (sv: any) => (sv.price_usd != null ? num(sv.price_usd) : num(sv.price))
   const partsSubTotal = parts.reduce((s: number, p: any) => s + partSell(p) * num(p.quantity), 0)
-  const floridaTaxesAmount = partsSubTotal * (num(pack.florida_taxes) / 100)
   const servicesTotal = services.reduce((s: number, sv: any) => s + svcPrice(sv), 0)
-  const partsAndServicesTotal = partsSubTotal + floridaTaxesAmount + servicesTotal
-  const grandTotal = partsAndServicesTotal - partsAndServicesTotal * (num(pack.global_discount) / 100)
+  // FL SALES TAX PELA LEI (lib/flTax): estimativa de cliente da Flórida (o pack não tem carro)
+  const money = invoiceMoney({ partLines: parts.map((p: any) => partSell(p) * num(p.quantity)), serviceLines: services.map(svcPrice), discountPct: num(pack.global_discount), status: partsSubTotal > 0 ? 'TAXABLE' : 'LABOR_ONLY' })
+  const floridaTaxesAmount = money.tax
+  const partsAndServicesTotal = partsSubTotal + servicesTotal
+  const grandTotal = money.grand
   const expensesTotalGlobal = floridaTaxesAmount + expenses.reduce((s: number, e: any) => s + expAmount(e) * (num(e.quantity) || 1) + (num(e.tax) + num(e.extra)) * expRatio(e), 0)
   // STAFF COST (Márcio, 04/10/2026: «the staff costs should be considered in this math, as expense… always USD 15 per hour»):
   // horas previstas das duties × a hora da casa (lib/laborCost.ts). É CALCULADO a cada abertura — não existe linha de mão de
@@ -120,7 +123,7 @@ export default function ViewPackPage() {
           <h2 className="text-lg font-bold mb-3">TOTALS CONFIG</h2>
           <div className="grid grid-cols-2 gap-3 text-lg text-gray-300">
             <p>Target grand total: <span className="text-white">{money(pack.target_grand_total)}</span></p>
-            <p>Florida taxes: <span className="text-white">{pack.florida_taxes ?? '—'}%</span></p>
+            <p>FL sales tax: <span className="text-white">{FL_TAX_RATE_LABEL} by law (FL client estimate)</span></p>
             <p>Global discount: <span className="text-white">{pack.global_discount ?? '—'}%</span></p>
             <p>Import margin: <span className="text-white">{pack.import_margin ?? 0}%</span></p>
           </div>

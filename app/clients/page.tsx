@@ -61,7 +61,7 @@ export default function ClientsPage() {
 
     const withStats = await Promise.all(clientList.map(async (client) => {
       // All invoices tied to this client: personal invoices (client_id) PLUS invoices on rides they own.
-      const { data: ridesOwned } = await supabase.from('rides').select('id, project_code, created_at, updated_at').eq('client_id', client.id)
+      const { data: ridesOwned } = await supabase.from('rides').select('id, project_code, title_scope, created_at, updated_at').eq('client_id', client.id)
       const rideIds = (ridesOwned || []).map(r => r.id)
 
       const orParts: string[] = [`client_id.eq.${client.id}`]
@@ -69,7 +69,7 @@ export default function ClientsPage() {
 
       const { data: invoices } = await supabase
         .from('invoices')
-        .select('id, invoice_code, is_quote, florida_taxes, global_discount, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
+        .select('id, invoice_code, ride_id, is_quote, global_discount, fl_tax_override, fl_tax_expense_date, live_status, feed_status, created_at, updated_at')
         .or(orParts.join(','))
 
       const invoiceList = invoices || []
@@ -127,13 +127,11 @@ export default function ClientsPage() {
           const payments = paymentsBy.get(inv.id) || []
           const expenses = expensesBy.get(inv.id) || []
 
-          const partsSubTotal = parts.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-          const floridaTaxesAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
-          const partsTotal = partsSubTotal + floridaTaxesAmount
-          const servicesTotal = services.reduce((s, sv) => s + (parseFloat(sv.price) || 0), 0)
-          const partsAndServicesTotal = partsTotal + servicesTotal
-          const discountAmount = partsAndServicesTotal * ((inv.global_discount || 0) / 100)
-          const grandTotal = partsAndServicesTotal - discountAmount
+          // FL tax pela lei (lib/flTax): OWNER & DESTINATION do carro, senão o endereço deste cliente
+          const money = invoiceMoneyFor(inv, (ridesOwned || []).find(r => r.id === (inv as any).ride_id)?.title_scope, client, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
+          const partsSubTotal = money.parts
+          const floridaTaxesAmount = money.tax
+          const grandTotal = money.grand
 
           // Income counts only payments explicitly marked PAID (paid_at), plus stock-sale income.
           const totalPaid = payments.filter(p => !!p.paid_at).reduce((s, p) => s + (parseFloat(p.amount) || 0), 0)

@@ -146,12 +146,13 @@ export default function HomePage() {
     await ensureFixedCostPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     // As invoices vêm primeiro; as filhas só das invoices que passaram (ver childRows).
-    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, florida_taxes, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
+    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, global_discount, fl_tax_override, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
     const invIds = (invs || []).map((i: any) => String(i.id))
-    const [pays, expsTodas, partsTodos] = await Promise.all([
+    const [pays, expsTodas, partsTodos, svcsTodos] = await Promise.all([
       childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
       childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier, order_number, cancel_status', invIds),
       childRows('invoice_items', 'id, invoice_id, unit_price, quantity, cancel_status', invIds),
+      childRows('invoice_services', 'id, invoice_id, price', invIds),   // o imposto pela lei incide na mão de obra também
     ])
     // ESTORNO (14/set/2026 — lib/estorno.ts): despesa e item estornados não são dinheiro devido nem a receber — saem daqui
     // antes de qualquer soma ou lista (a despesa estornada sem pagamento aparecia como conta a pagar).
@@ -165,7 +166,7 @@ export default function HomePage() {
       for (const r of rs || []) { const a = m.get(r.invoice_id) || []; a.push(r); m.set(r.invoice_id, a) }
       return m
     }
-    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts)
+    const paysBy = group(pays), expsBy = group(exps), partsBy = group(parts), svcsBy = group(svcsTodos)
     const expenseLine = (e: any) => (parseFloat(e.price) || 0) * (parseFloat(e.quantity) || 1) + (parseFloat(e.tax) || 0) + (parseFloat(e.extra) || 0)
     // Per-invoice FINAL MARKUP; invoices with a negative markup are LOSSES, surfaced in
     // their own group in the DUE by CLIENTS column (separate from the unpaid incomes).
@@ -174,7 +175,7 @@ export default function HomePage() {
     // Resolve each invoice's client + car for the VIEW link/tooltip.
     const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }, { data: staffExp }, { data: seasonsD }, { data: staffD }] = await Promise.all([
       supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry, title_scope, insurance_company, insurance_expiry'),
-      supabase.from('clients').select('id, name'),
+      supabase.from('clients').select('id, name, country, state'),
       supabase.from('fixed_cost_expenses').select('id, supplier_id, description, amount, expense_date').is('payment_date', null),
       supabase.from('inventory_sales').select('kind, amount, entry_date').not('entry_date', 'is', null),
       supabase.from('staff_expenses').select('id, season_id, type, description, amount, expense_date').is('payment_date', null),
@@ -183,6 +184,9 @@ export default function HomePage() {
     ])
     const ridesById = new Map<string, any>(); (ridesD || []).forEach((r: any) => ridesById.set(r.id, r))
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
+    const clientRow = new Map<string, any>(); (clientsD || []).forEach((c: any) => clientRow.set(c.id, c))
+    // o imposto pela lei (lib/flTax): carro + cliente + itens + serviços da invoice
+    const taxOf = (inv: any) => { const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null; return invoiceMoneyFor(inv, ride?.title_scope, clientRow.get(inv.client_id || ride?.client_id) || null, (partsBy.get(inv.id) || []).map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (svcsBy.get(inv.id) || []).map((s: any) => parseFloat(s.price) || 0)).tax }
     // Registration watch: only rides already expired or inside the warning window,
     // soonest first (the late ones lead, since their days are negative).
     setPlateAlerts((ridesD || [])
@@ -247,8 +251,7 @@ export default function HomePage() {
       const ip = paysBy.get(inv.id) || []
       const ie = expsBy.get(inv.id) || []
       const ipa = partsBy.get(inv.id) || []
-      const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-      const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+      const flTaxAmount = taxOf(inv)
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)
       const paymentsSum = ip.reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
       const totalPaid = ip.filter((p: any) => !!p.paid_at).reduce((x: number, p: any) => x + (parseFloat(p.amount) || 0), 0)
@@ -323,9 +326,7 @@ export default function HomePage() {
     // Florida sales tax GZ28 owes — consolidated into its own group, shown last.
     const tax: Row[] = []
     for (const inv of invs || []) {
-      const ipa = partsBy.get(inv.id) || []
-      const partsSubTotal = ipa.reduce((x: number, p: any) => x + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-      const flTaxAmount = partsSubTotal * ((inv.florida_taxes || 0) / 100)
+      const flTaxAmount = taxOf(inv)
       if (flTaxAmount > 0.005 && !isValidDate(inv.fl_tax_expense_date)) {
         const m = metaFor(inv.id, inv.invoice_code)
         // O RÓTULO É SÓ O CARRO (Márcio, 18/10/2026: «instead of Florida Taxes, which is obvious in this frame…» e depois «only the name
