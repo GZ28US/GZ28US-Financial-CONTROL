@@ -86,7 +86,7 @@ export default function EditRidePage() {
   const [insExpiry, setInsExpiry] = useState('')
   const [titleNotes, setTitleNotes] = useState('')
 
-  // BoneStock TUNE file — lives in the car's Dropbox HB Tuning folder (both archives for common cars).
+  // BoneStock TUNE file — lives in the car's Dropbox 4T Tuning folder (both archives for common cars).
   const [tuneExisting, setTuneExisting] = useState<string[]>([])
   const [tuneUploading, setTuneUploading] = useState(false)
 
@@ -217,7 +217,7 @@ export default function EditRidePage() {
     setUploading(false)
   }
 
-  // Which BoneStock tune files already exist in the car's HB Tuning folder(s)?
+  // Which BoneStock tune files already exist in the car's 4T Tuning folder(s)?
   async function loadTuneStatus(code: string) {
     if (!code) return
     const found = new Set<string>()
@@ -231,7 +231,7 @@ export default function EditRidePage() {
     setTuneExisting([...found].sort())
   }
 
-  // Upload the BoneStock tune straight into the car's Dropbox HB Tuning folder(s), overwrite mode.
+  // Upload the BoneStock tune straight into the car's Dropbox 4T Tuning folder(s), overwrite mode.
   async function uploadTune(file: File) {
     if (!projectCode) { alert('The ride needs a code before uploading the tune.'); return }
     if (file.size > 3 * 1024 * 1024) { alert('Tune file too big (max 3 MB).'); return }
@@ -269,7 +269,7 @@ export default function EditRidePage() {
       const noCarro = await put({ zone: 'US' })
       const faltou: string[] = []
       for (const zone of ['US', 'BR']) { if (!(await put({ zone, rootFolder: 'BoneStock TuneRepository' }))) faltou.push(zone) }
-      if (!noCarro) alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.')
+      if (!noCarro) alert('The BoneStock tune could not be saved to the Dropbox 4T Tuning folder.')
       else {
         if (faltou.length) alert(`BoneStock tune saved to the car folder, but the copy to BoneStock TuneRepository failed on: ${faltou.join(', ')}.`)
         await loadTuneStatus(projectCode)
@@ -649,7 +649,7 @@ export default function EditRidePage() {
             {tuneUploading ? 'Uploading...' : tuneExisting.length ? '🔄 REPLACE BONESTOCK TUNE' : '⚙️ UPLOAD BONESTOCK TUNE'}
             <input type="file" className="hidden" onChange={(e) => { if (e.target.files?.[0]) uploadTune(e.target.files[0]); e.target.value = '' }} />
           </label>
-          <p className="mt-1 text-sm text-gray-500">Saved to the car&apos;s Dropbox HB Tuning folder.</p>
+          <p className="mt-1 text-sm text-gray-500">Saved to the car&apos;s Dropbox 4T Tuning folder.</p>
         </div>
 
         <button onClick={saveChanges} disabled={saving} className={`px-6 py-4 rounded-2xl text-xl font-bold ${saving ? 'bg-gray-600 cursor-not-allowed' : 'bg-green-700 hover:bg-green-600'}`}>

@@ -235,7 +235,7 @@ export function buildDisplayLabel(buildNo: number, buildName: string | null | un
   return `Build.${String(n).padStart(2, '0')}`
 }
 
-// A SUBPASTA DO BUILD em «HB Tuning» (Márcio, 09/10/2026): «each build should create a subfolder inside HB Tuning, with the
+// A SUBPASTA DO BUILD em «4T Tuning» (Márcio, 09/10/2026): «each build should create a subfolder inside 4T Tuning, with the
 // number then the name of the pack… The bonestock should be the folder 00 - BoneStock». O número é o mesmo do rótulo (Build.01 →
 // «01 - <pack>»); a base é «00 - BoneStock» (ou «00 - Stock», a base própria do carro). A Build Sheet mora na pasta do build; a
 // base NÃO tem Build Sheet nas pastas, só o tune de fábrica.

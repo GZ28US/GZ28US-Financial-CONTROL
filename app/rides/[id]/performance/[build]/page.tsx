@@ -1492,7 +1492,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // CORREÇÃO (regra do BR) e best/baseWhp/meta chegam aqui já em roda crua. 1 = passada do US (STD).
   const [dyno, setDyno] = useState<{ loss: number | null; best: number; baseWhp: number | null; baseBhp: number | null; baseName: string; cf: number }>({ loss: null, best: 0, baseWhp: null, baseBhp: null, baseName: '', cf: 1 })
 
-  // BoneStock TUNE — picked here, uploaded to the car's Dropbox HB Tuning folder on SAVE.
+  // BoneStock TUNE — picked here, uploaded to the car's Dropbox 4T Tuning folder on SAVE.
   const [tuneFile, setTuneFile] = useState<File | null>(null)
   const [tuneExisting, setTuneExisting] = useState<string[]>([])
 
@@ -1541,7 +1541,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // O que o carro JÁ ganhou sobre a linha de fábrica (só quando há puxada real acima dela).
   const gainWhp = dyno.baseWhp != null && dyno.best > dyno.baseWhp ? dyno.best - dyno.baseWhp : null
 
-  // Which BoneStock tune files already exist in the car's HB Tuning folder(s)?
+  // Which BoneStock tune files already exist in the car's 4T Tuning folder(s)?
   async function loadTuneStatus() {
     if (!rideCode) return
     const found = new Set<string>()
@@ -1555,7 +1555,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     setTuneExisting([...found].sort())
   }
 
-  // Upload the picked BoneStock tune into the car's Dropbox HB Tuning folder(s), overwrite mode.
+  // Upload the picked BoneStock tune into the car's Dropbox 4T Tuning folder(s), overwrite mode.
   // Lido do Dropbox em 06/set/2026: a pasta JÁ EXISTE nas duas raízes de Rides
   // com este nome exato — "BoneStock TuneRepository", sem espaço entre as duas
   // palavras finais. Escrever "Tune Repository" criaria uma segunda pasta.
@@ -1616,7 +1616,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       } catch { return false }
     }
     // 1) a pasta do carro — esta é a que não pode falhar
-    const noCarro = await put({ zone: 'US', buildFolder: '00 - BoneStock' })   // a pasta da base, dentro de HB Tuning (09/10/2026)
+    const noCarro = await put({ zone: 'US', buildFolder: '00 - BoneStock' })   // a pasta da base, dentro de 4T Tuning (09/10/2026)
     // 2) o acervo, nas duas zonas. O nome que o app gera já traz marca, ano,
     //    modelo, versão, câmbio, código e nome do carro: é único por construção,
     //    então numa pasta plana não colide com o tune de outro carro. E o upload
@@ -1625,7 +1625,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     for (const zone of ['US', 'BR']) {
       if (!(await put({ zone, rootFolder: BONESTOCK_REPO }))) faltou.push(zone)
     }
-    if (!noCarro) { alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.'); return false }
+    if (!noCarro) { alert('The BoneStock tune could not be saved to the Dropbox 4T Tuning folder.'); return false }
     // O tune está salvo no carro; o acervo é cópia. Avisa sem derrubar o SAVE.
     if (faltou.length) alert(`BoneStock tune saved to the car folder, but the copy to BoneStock TuneRepository failed on: ${faltou.join(', ')}.`)
     return true
@@ -1677,7 +1677,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       const osAgora = (sheet.os_update || 'Stock').trim()
       if (!tuneFile && (osAgora !== (osOriginal || 'Stock').trim() || osAgora !== 'Stock')) await retagTuneOs()
       setOsOriginal(osAgora)
-      // Mirror the sheet as a PDF into the car's Dropbox HB Tuning folder (every save re-syncs it).
+      // Mirror the sheet as a PDF into the car's Dropbox 4T Tuning folder (every save re-syncs it).
       await syncSheetPdf()
       // A picked BoneStock tune rides along on the same SAVE.
       if (tuneFile && await uploadTuneFile(tuneFile)) setTuneFile(null)
@@ -1830,7 +1830,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           return d.ok ? String(d.result) : 'error'
         } catch { return 'error' }
       }))
-      if (!results.includes('uploaded')) alert('Build sheet saved, but the PDF could not be synced to the Dropbox HB Tuning folder.')
+      if (!results.includes('uploaded')) alert('Build sheet saved, but the PDF could not be synced to the Dropbox 4T Tuning folder.')
     } catch (e) {
       alert('Build sheet saved, but the PDF sync failed: ' + String(e))
     }
@@ -1856,7 +1856,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // O arquivo carrega o NOME DO PACK, não Build.XX (ordem do usuário, 17/ago/2026).
       const packTag = ((buildName || '').trim() || buildTag).replace(/[\\/:*?"<>|]/g, '')
       const filename = `${rideCode}${rideName ? ' - ' + rideName : ''} ${packTag} BuildSheet.pdf`
-      // Re-sync to the Dropbox HB Tuning folder first — the caption reports where it landed.
+      // Re-sync to the Dropbox 4T Tuning folder first — the caption reports where it landed.
       const ROOT_LABEL = 'Dropbox\\001 - GZ28US\\GZ28US Rides'
       const savedIn: string[] = []
       for (const zone of (isBaselineName(buildName) ? [] : ['US'])) {   // a base não salva Build Sheet nas pastas
@@ -2057,7 +2057,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           {tuneFile ? `📄 ${tuneFile.name}` : (tuneExisting.length ? '🔄 CHOOSE NEW BONESTOCK TUNE' : '⚙️ CHOOSE BONESTOCK TUNE')}
           <input type="file" className="hidden" onChange={(e) => { setTuneFile(e.target.files?.[0] || null); e.target.value = '' }} />
         </label>
-        {tuneFile && <span className="ml-3 text-gray-400 text-sm">uploads to HB Tuning when you press SAVE</span>}
+        {tuneFile && <span className="ml-3 text-gray-400 text-sm">uploads to 4T Tuning when you press SAVE</span>}
       </div>
       <div className="flex justify-end mt-6">
         <button onClick={saveSheet} disabled={bsSaving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
