@@ -257,12 +257,11 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
   const [editingLoss, setEditingLoss] = useState(false)
   const [lossDraft, setLossDraft] = useState(defaultLoss)
   const rideLoss = pulls.find((p) => p.loss_pct != null)?.loss_pct ?? null
-  // Display order = chronological: BoneStock (the baseline) first, then every other pull
-  // OLDEST → NEWEST. `pulls` itself stays newest-first so the "latest pull" logic (gains,
-  // receipt) keeps working; only what's shown/printed reads oldest-first.
+  // Display order (Márcio, 29/oct/2026): BoneStock (the baseline) PINNED first, then every other pull
+  // NEWEST → OLDEST. `pulls` is already newest-first, so no reversal.
   const orderedPulls = (() => {
     const bs = pulls.find(isBoneStock)
-    const others = pulls.filter((p) => !isBoneStock(p)).slice().reverse()
+    const others = pulls.filter((p) => !isBoneStock(p))
     return [...(bs ? [bs] : []), ...others]
   })()
 
