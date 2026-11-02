@@ -22,6 +22,15 @@ export const dynamic = 'force-dynamic'
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
 
+// TEXTO PURO VIRAVA UM PARÁGRAFO SÓ (Parts Chasing, 02/nov/2026 — e-mails ao Trevor/Earth Motorcars): os 3 caminhos mandam
+// o corpo como HTML, e HTML ignora \n. Corpo sem tag HTML é escapado (&, <, >) e cada quebra vira <br>; corpo já em HTML
+// segue como está.
+function asHtml(body: string): string {
+  const s = String(body || '')
+  if (/<(p|br|div|ul|ol|li|table|html|body|h[1-6]|a|span|strong|b|i|em)\b[^>]*>/i.test(s)) return s
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\r?\n/g, '<br>')
+}
+
 async function gmailSend(auth: any, b: any, to: string[], cc: string[]): Promise<NextResponse> {
   const clientId = process.env.GOOGLE_CLIENT_ID, clientSecret = process.env.GOOGLE_CLIENT_SECRET
   if (!clientId || !clientSecret) return NextResponse.json({ error: 'GOOGLE_CLIENT_ID/SECRET not configured' }, { status: 503 })
@@ -61,7 +70,7 @@ async function gmailSend(auth: any, b: any, to: string[], cc: string[]): Promise
     ...replyHeaders,
     'MIME-Version: 1.0',
   ]
-  const htmlPart = ['Content-Type: text/html; charset="UTF-8"', 'Content-Transfer-Encoding: base64', '', Buffer.from(b.body, 'utf8').toString('base64')].join('\r\n')
+  const htmlPart = ['Content-Type: text/html; charset="UTF-8"', 'Content-Transfer-Encoding: base64', '', Buffer.from(asHtml(b.body), 'utf8').toString('base64')].join('\r\n')
   const atts = b.attachments || []
   const boundary = 'gz28-' + Math.random().toString(36).slice(2)
   const mime = atts.length
@@ -121,7 +130,7 @@ export async function POST(req: NextRequest) {
 
     const patch = await fetch(`${G}/me/messages/${draft.id}`, {
       method: 'PATCH', headers: gh(token),
-      body: JSON.stringify({ toRecipients: rec(to), ccRecipients: rec(cc), body: { contentType: 'HTML', content: b.body } }),
+      body: JSON.stringify({ toRecipients: rec(to), ccRecipients: rec(cc), body: { contentType: 'HTML', content: asHtml(b.body) } }),
     })
     if (!patch.ok) return NextResponse.json({ error: (await patch.text()).slice(0, 300) }, { status: 502 })
 
@@ -141,7 +150,7 @@ export async function POST(req: NextRequest) {
     body: JSON.stringify({
       message: {
         subject: b.subject,
-        body: { contentType: 'HTML', content: b.body },
+        body: { contentType: 'HTML', content: asHtml(b.body) },
         toRecipients: rec(to),
         ccRecipients: rec(cc),
         attachments: atts,
