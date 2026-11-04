@@ -28,6 +28,8 @@ const nextConfig: NextConfig = {
   async rewrites() {
     return [
       // robots.txt, sitemap.xml e favicon só valem na RAIZ do domínio — vêm da loja (auditoria 08/10/2026).
+      // Vercel Web Analytics DA LOJA (04/11/2026): o script e o endpoint /_vercel/insights/* do domínio vão para o projeto da loja
+      { source: "/_vercel/insights/:path*", destination: "https://gz28shop-us.vercel.app/_vercel/insights/:path*", basePath: false },
       { source: "/robots.txt", destination: "https://gz28shop-us.vercel.app/shop/robots.txt", basePath: false },
       { source: "/sitemap.xml", destination: "https://gz28shop-us.vercel.app/shop/sitemap.xml", basePath: false },
       { source: "/favicon.ico", destination: "https://gz28shop-us.vercel.app/shop/icon.png", basePath: false },
