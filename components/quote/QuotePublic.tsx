@@ -133,6 +133,8 @@ export default function QuotePublic({ token, attemptId, print, previewDto }: { t
             <span className={p.paid ? 'text-emerald-400 font-semibold' : 'text-white'}>{moneyCents(p.amount_cents, lang)}{p.paid ? ` ✓ ${T('paid')}` : ''}</span>
           </div>))}
         <p className="text-xs text-gray-400 mt-2">{railsSentence(d, lang)}</p>
+        {!preview && (d.attempts || []).filter((a: any) => a.status === 'SUCCEEDED').map((a: any) => (
+          <a key={a.id} href={`${BASE_PATH}/api/q/receipt?link_id=${d.link_id}&attempt=${a.id}`} target="_blank" rel="noreferrer" className="block text-xs text-sky-300 underline mt-1 print:hidden">⬇ {lang === 'pt' ? 'Recibo' : 'Receipt'} — {moneyCents(a.amount_cents, lang)}</a>))}
       </Card>
 
       <Section title={T('fl_estimate_title')}><p className="text-sm text-gray-300 whitespace-pre-line">{d.fl_estimate_text}</p></Section>
@@ -313,6 +315,7 @@ function Certificate({ d, lang, T }: { d: Dto; lang: Lang; T: any }) {
   const a = d.approval
   const when = fmtStamp(a.signed_at, lang)
   return <Card>
+    {d.link_id && <a href={`${BASE_PATH}/api/q/pdf?link_id=${d.link_id}`} target="_blank" rel="noreferrer" className="float-right text-xs text-sky-300 underline print:hidden">{T('signed_copy')}</a>}
     <div className="text-emerald-300 font-semibold">{a.method === 'CLIENT_ESIGN' ? T('approved_by', { name: a.signer_name, when }) : T('approved_shop', { method: T('method.' + a.method), when })}</div>
     <div className="mt-3 text-[11px] text-gray-500 leading-relaxed">
       <div className="font-bold tracking-widest text-gray-400">{T('certificate')}</div>

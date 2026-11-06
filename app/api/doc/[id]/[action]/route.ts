@@ -7,6 +7,7 @@ import { stripeClient, stripeMode } from '@/lib/stripe.server'
 import { readSetting } from '@/lib/appSettings.server'
 import { orlandoToday } from '@/lib/orlando'
 import { moneyCents, type Lang } from '@/lib/quoteStrings'
+import { staffRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/docFiles.server'
 
 // STAFF ACTIONS ON ONE DOCUMENT (06/11/2026; blueprint §2.3). /ca/api/doc/<invoiceId>/<action>
 //   GET  state · link · preview
@@ -136,6 +137,18 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
       if (!s.liveLink) return bad('no live link — SEND first', 404)
       const pay = await payModeOk(s.isTest)
       return NextResponse.json(publicDto(s, s.liveLink as any, { rails: await railsEnabled(), payOk: pay.ok, inApp: false, gateOk: true }))
+    }
+    if (action === 'pdf') {
+      // the STAFF copy: the frozen revision + the FULL certificate (contact, IP, recorder). Generated, never stored.
+      const rev = Number(req.nextUrl.searchParams.get('rev') || 0) || undefined
+      const p = staffRevisionPdf(s, rev, 'full')
+      if (!p) return bad('no revision — SEND first', 404)
+      return new NextResponse(new Uint8Array(p.buf), { headers: pdfResponseHeaders(p.name) })
+    }
+    if (action === 'receipt') {
+      const p = await attemptReceiptPdf(db, s, String(req.nextUrl.searchParams.get('attempt') || ''))
+      if (!p) return bad('no paid attempt', 404)
+      return new NextResponse(new Uint8Array(p.buf), { headers: pdfResponseHeaders(p.name) })
     }
     return bad('unknown action', 404)
   }

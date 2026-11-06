@@ -35,7 +35,7 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
   const skip = async (s: string) => db.rpc('doc_event', { p_invoice: invoiceId, p_revision: null, p_kind: 'SIDE_EFFECT', p_actor: 'SYSTEM', p_actor_id: null,
     p_payload: { step: s, status: 'skipped', reason: 'test' } })
   const newCode = hire.new_code as string | null
-  if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '3b-br-mirror', '4-seed-pack']) if (want(s)) await skip(s); return }
+  if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '3b-br-mirror', '4-seed-pack', '5-dropbox-docs']) if (want(s)) await skip(s); return }
   if (ride && newCode && want('1-ride-folder')) {
     // create also syncs the car's e-mail folders (ride-folder → syncMailFolder → ensureRideMailFolders) = step 3
     await step(db, invoiceId, '1-ride-folder', () => post('/api/ride-folder', { action: 'create', zone: 'US', code: newCode, name: ride.project_name || '' }))
@@ -72,4 +72,23 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
     })
   }
   if (want('4-seed-pack')) await step(db, invoiceId, '4-seed-pack', () => post('/api/performance/seed-pack', { invoiceId }))
+  // 5 (M2): the signed copy and the deposit receipt go into the car's «Invoices/<code> - <service>» folder (C-53 naming).
+  if (ride && want('5-dropbox-docs')) {
+    await step(db, invoiceId, '5-dropbox-docs', async () => {
+      const { loadDocState } = await import('./quoteDoc.server')
+      const { clientRevisionPdf, attemptReceiptPdf } = await import('./docFiles.server')
+      const s = await loadDocState(db, invoiceId)
+      if (!s) throw new Error('document not found')
+      const { data: r2 } = await db.from('rides').select('project_code, project_name').eq('id', ride.id).maybeSingle()
+      const code = String(s.bundle.invoice.invoice_code || ''), car = String(r2?.project_name || '')
+      const files: { filename: string; buf: Buffer }[] = []
+      const signed = await clientRevisionPdf(db, s)
+      if (signed) files.push({ filename: `${code} ${car} - Quote rev ${s.live?.seq ?? ''} signed.pdf`.replace(/s+/g, ' '), buf: signed.buf })
+      const paidAttempt = s.attempts.find(a => a.status === 'SUCCEEDED' && a.id === hire.attempt_id) || s.attempts.find(a => a.status === 'SUCCEEDED')
+      if (paidAttempt) { const rc = await attemptReceiptPdf(db, s, paidAttempt.id); if (rc) files.push({ filename: `${code} ${car} - Deposit receipt.pdf`.replace(/s+/g, ' '), buf: rc.buf }) }
+      for (const f of files) await post('/api/ride-folder', { action: 'upload', zone: 'US', code: r2?.project_code, name: car, invoiceCode: code,
+        invoiceName: s.bundle.invoice.service || '', filename: f.filename, contentBase64: f.buf.toString('base64') })
+      return files.map(f => f.filename).join(' · ')
+    })
+  }
 }

@@ -142,6 +142,7 @@ export default function DocPage() {
           <div className="grid gap-2 text-sm">
             <Link href={editorUrl} className="px-3 py-2 rounded bg-gray-800">EDIT IN EDITOR →</Link>
             <a href={`${BASE_PATH}${viewUrl}`} className="px-3 py-2 rounded bg-gray-800">PRINT (legacy view)</a>
+            {s.live && <button onClick={async () => { const r = await fetch(`${BASE_PATH}/api/doc/${invoiceId}/pdf`, { headers: await sessionHeaders() }); if (!r.ok) { setMsg('✖ PDF ' + r.status); return } window.open(URL.createObjectURL(await r.blob()), '_blank') }} className="px-3 py-2 rounded bg-gray-800 text-left">PDF — rev {s.live.seq} + full certificate</button>}
             {isQuote && !s.live && <button onClick={() => setSheet('plan')} className="px-3 py-2 rounded bg-gray-800 text-left">PLAN & TERMS</button>}
             {isQuote && s.live && !s.approvalOnLive && <button onClick={async () => { const j = await act('revision', { kind: 'QUOTE' }); if (j?.editor_url) window.location.href = BASE_PATH + j.editor_url }} className="px-3 py-2 rounded bg-gray-800 text-left">NEW REVISION → editor</button>}
             {isQuote && s.live && <button onClick={() => setSheet('extend')} className="px-3 py-2 rounded bg-gray-800 text-left">EXTEND</button>}

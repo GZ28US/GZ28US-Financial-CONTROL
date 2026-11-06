@@ -8,6 +8,7 @@ import {
 } from '@/lib/quotePublic.server'
 import { openDepositCheckout, claimAndFulfil } from '@/lib/stripeEvents.server'
 import type { Lang } from '@/lib/quoteStrings'
+import { clientRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/docFiles.server'
 
 // THE CLIENT'S QUOTE PAGE — server side (06/11/2026; blueprint §2.1, §5). /ca/api/q/<action>, all POST, all JSON.
 //   open      {token}                      → sets the per-link httpOnly cookie, returns the document DTO
@@ -31,6 +32,28 @@ const cleanName = (s: string) => s.normalize('NFC').replace(/[^\p{L}\p{M}\s'.\-]
 
 async function ev(db: ReturnType<typeof serviceDb>, invoiceId: string, revisionId: string | null, kind: string, payload: Record<string, unknown> = {}) {
   await db.rpc('doc_event', { p_invoice: invoiceId, p_revision: revisionId, p_kind: kind, p_actor: 'CLIENT', p_actor_id: null, p_payload: payload })
+}
+
+// GET /ca/api/q/pdf?link_id=…[&rev=n] · /ca/api/q/receipt?link_id=…&attempt=… — the CLIENT copies (masked certificate), from the private
+// bucket. Cookie required; behind the CONTACT gate when the link has one (security R2-07). Same budget as the page.
+export async function GET(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {
+  const { action } = await ctx.params
+  if (action !== 'pdf' && action !== 'receipt') return err('unknown', 404)
+  let db
+  try { db = serviceDb() } catch { return err('unavailable', 503) }
+  const linkId = req.nextUrl.searchParams.get('link_id')
+  const link = await linkFromCookie(db, req, linkId)
+  if (!link || link.revoked_at) return err('not_found', 404)
+  if (!(await portalAllows(link))) return j({ state: 'inactive' })
+  if (link.gate === 'CONTACT' && !gatePassOk(link.id, req.cookies.get(gateCookieName(link.id))?.value)) return err('err_gate', 403, { gate: true })
+  if (await limited(db, 'get', req, link.id)) return err('err_rate', 429)
+  const s = await loadDocState(db, link.invoice_id)
+  if (!s) return err('not_found', 404)
+  const p = action === 'pdf'
+    ? await clientRevisionPdf(db, s, Number(req.nextUrl.searchParams.get('rev') || 0) || undefined)
+    : await attemptReceiptPdf(db, s, String(req.nextUrl.searchParams.get('attempt') || ''))
+  if (!p) return err('not_found', 404)
+  return new NextResponse(new Uint8Array(p.buf), { headers: pdfResponseHeaders(p.name) })
 }
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ action: string }> }) {

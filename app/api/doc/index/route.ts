@@ -29,9 +29,18 @@ export async function GET(req: NextRequest) {
   for (const id of ids) {
     const s = await loadDocState(db, id)
     if (!s) continue
-    const last = s.events[s.events.length - 1]
-    docs.push({ id, code: s.bundle.invoice.invoice_code, service: s.bundle.invoice.service, client: s.bundle.client?.name || '', car: s.bundle.ride?.project_name || '',
-      grand: s.bundle.money.grand, stage: s.stage.stage, sub: s.stage.sub, rank: actionRank(s.stage), last_kind: last?.kind || null, last_at: last?.at || null, is_test: s.isTest })
+    // sort key (U2-05): staff/system writes + every FIRST-of-kind client event; repeated VIEWED beacons never reorder
+    const seen = new Set<string>()
+    const keyEvents = s.events.filter(e => { if (e.actor !== 'CLIENT') return e.kind !== 'SIDE_EFFECT' && e.kind !== 'NOTIFY_SKIPPED'; if (seen.has(e.kind)) return false; seen.add(e.kind); return true })
+    const last = keyEvents[keyEvents.length - 1]
+    const sent = [...s.events].reverse().find(e => e.kind === 'SENT')
+    const exp = s.terms?.valid_until || null
+    const daysLeft = exp ? Math.round((Date.parse(exp + 'T12:00:00Z') - Date.now()) / 86400e3) : null
+    docs.push({ id, code: s.bundle.invoice.invoice_code, rev: s.live?.seq || null, service: s.bundle.invoice.service, client: s.bundle.client?.name || '',
+      client_number: s.bundle.client?.client_number || null, car: s.bundle.ride?.project_name || '', grand: s.bundle.money.grand, stage: s.stage.stage, sub: s.stage.sub,
+      rank: actionRank(s.stage), last_kind: last?.kind || null, last_at: last?.at || null, is_test: s.isTest, channel: sent?.payload?.channel || null, sent_at: sent?.at || null,
+      first_viewed_at: s.liveLink?.first_viewed_at || null, last_viewed_at: s.liveLink?.last_viewed_at || null, signed_at: s.approvalOnLive?.signed_at || null,
+      language: s.terms?.language || 'en', rails: s.terms?.rails || [], days_left: daysLeft, received: s.bundle.received })
   }
   docs.sort((a, b) => a.rank - b.rank || String(b.last_at || '').localeCompare(String(a.last_at || '')))
   const { data: quotes } = await db.from('invoices').select('id, invoice_code, service, updated_at, live_status, rides(project_name, clients(name)), clients(name)')
