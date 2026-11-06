@@ -338,6 +338,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
         p_presented_sha256: co.presented_sha256, p_terms_sha256: co.terms_sha256, p_grand: co.grand, p_fl_tax: co.fl_tax, p_fl_status: co.fl_status,
         p_delta: co.delta, p_valid_days: days })
       if (error) return rpcErr(error.message)
+      { const { after } = await import('next/server'); const rid = (data as any)?.revision_id || null; after(() => import('@/lib/notify.server').then(m => m.notify(serviceDb(), 'notify.client.change_order', { invoiceId: id, revisionId: rid })).catch(e => console.error('[co notify]', e?.message || e))) }   // M4 switchboard (OFF → NOTIFY_SKIPPED)
       return NextResponse.json({ ok: true, result: data, delta: co.delta, band: co.band })
     }
     default: {

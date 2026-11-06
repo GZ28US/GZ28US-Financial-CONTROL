@@ -166,9 +166,13 @@ export async function GET(req: NextRequest) {
     const testInv = new Set(((tl || []) as any[]).map(l => l.invoice_id))
     const { data: key } = await supabase.from('app_settings').select('value').eq('key', 'notify.reports.installment_delayed').maybeSingle()
     const planOn = key?.value === true
+    // M4: a plan row with a payment OPEN or CLEARING (Stripe session, bank debit in flight) is not late — it is being paid
+    const planIds = (delayed as any[]).map(r => r.installment_id).filter(Boolean)
+    const { data: inFlight } = planIds.length ? await supabase.from('payment_attempts').select('installment_id').in('installment_id', planIds).in('status', ['OPEN', 'PROCESSING']) : { data: [] as any[] }
+    const paying = new Set(((inFlight || []) as any[]).map(a => a.installment_id))
     for (let i = delayed.length - 1; i >= 0; i--) {
       const r = delayed[i] as any
-      if (testInv.has(r.invoice_id) || (r.installment_id && !planOn)) delayed.splice(i, 1)
+      if (testInv.has(r.invoice_id) || (r.installment_id && (!planOn || paying.has(r.installment_id)))) delayed.splice(i, 1)
     }
   }
 

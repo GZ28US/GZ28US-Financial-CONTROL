@@ -250,6 +250,14 @@ export async function bookDispute(db: SupabaseClient, d: Stripe.Dispute, type: s
   if (type === 'charge.dispute.created') {
     await row(-(d.amount / 100), d.id, `Chargeback (dispute) — installment ${att.seq ?? ''}`.trim())
     await db.from('payment_attempts').update({ status: 'DISPUTED', dispute_id: d.id }).eq('id', att.id)
+    // M4: the dispute FEE (Stripe withdraws it with the funds — US$ 15 today) is a real cash-out: one MONEY expense per balance transaction
+    // that carries a fee, same shape and uniqueness as the processing-fee row (order_number = txn id). Test money writes no fee row.
+    if (!muted) for (const bt of (d.balance_transactions || []) as Stripe.BalanceTransaction[]) {
+      if (!(bt?.fee > 0)) continue
+      const { error: fe } = await db.rpc('stripe_fee_row', { p_invoice: att.invoice_id, p_money: { fee: bt.fee / 100, balance_transaction_id: bt.id, paid_on: day, payment_reference: `stripe:${chargeId}` },
+        p_label: `dispute fee (chargeback ${d.id}) — installment ${att.seq ?? ''}`.trim() })
+      if (fe) throw new Error('dispute fee row: ' + fe.message)
+    }
     await event(db, att.invoice_id, att.revision_id, 'DISPUTE_OPENED', 'STRIPE', { attempt_id: att.id, dispute_id: d.id, reason: d.reason, amount_cents: d.amount,
       due_by: d.evidence_details?.due_by ? orlandoDay(d.evidence_details.due_by * 1000) : null })
   } else if (type === 'charge.dispute.funds_reinstated' || (type === 'charge.dispute.closed' && d.status === 'won')) {

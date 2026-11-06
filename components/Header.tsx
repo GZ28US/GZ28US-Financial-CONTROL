@@ -99,6 +99,7 @@ const MENU: MenuItem[] = [
       ['/adm/tax', 'TAX SHIELD'],
       ['/whatsapp', 'INTERCOM'],
       ['/adm/reports', 'REPORTS'],
+      ['/adm/notifications', 'NOTIFICATIONS'],
     ],
   },
   {

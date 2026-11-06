@@ -35,6 +35,8 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
   const skip = async (s: string) => db.rpc('doc_event', { p_invoice: invoiceId, p_revision: null, p_kind: 'SIDE_EFFECT', p_actor: 'SYSTEM', p_actor_id: null,
     p_payload: { step: s, status: 'skipped', reason: 'test' } })
   const newCode = hire.new_code as string | null
+  // M4 switchboard: the deposit's messages decide by their keys (all OFF → NOTIFY_SKIPPED events, nothing sent)
+  try { const { notifyAll } = await import('./notify.server'); await notifyAll(db, ['notify.client.deposit_received', 'notify.reports.deposit_received'], { invoiceId, attemptId: hire.attempt_id || null }) } catch (e) { console.error('[hire notify]', (e as Error).message) }
   if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '3b-br-mirror', '4-seed-pack', '5-dropbox-docs']) if (want(s)) await skip(s); return }
   if (ride && newCode && want('1-ride-folder')) {
     // create also syncs the car's e-mail folders (ride-folder → syncMailFolder → ensureRideMailFolders) = step 3

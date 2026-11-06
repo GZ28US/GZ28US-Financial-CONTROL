@@ -1,5 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-import { NextRequest, NextResponse } from 'next/server'
+import { NextRequest, NextResponse, after as nextAfter } from 'next/server'
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { serviceDb, loadDocState, termsSha256 } from '@/lib/quoteDoc.server'
 import {
@@ -177,6 +177,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         p_note: null, p_evidence_url: null, p_signature_path: null })
       if (error) return /stale|not live|changed|already/i.test(error.message) ? err('err_stale', 409) : (console.error('[q sign]', error.message), err('err_generic', 500))
       if (isCo) { const ap = await db.rpc('change_order_apply', { p_revision: s.live.id, p_actor: 'client' }); if (ap.error) console.error('[q sign] change_order_apply', ap.error.message) }
+      { const inv0 = link.invoice_id, rev0 = s.live.id; nextAfter(() => import('@/lib/notify.server').then(m => m.notifyAll(serviceDb(), ['notify.client.signed_copy', 'notify.reports.quote_signed'], { invoiceId: inv0, revisionId: rev0 })).catch(e => console.error('[q sign notify]', e?.message || e))) }   // M4 switchboard (keys OFF → NOTIFY_SKIPPED)
       const s2 = await loadDocState(db, link.invoice_id)
       const pay = await payModeOk(!!link.is_test)
       return j(publicDto(s2!, link as any, { rails: await railsEnabled(), payOk: pay.ok, inApp: isInApp(ua), gateOk }))
