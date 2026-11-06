@@ -602,7 +602,7 @@ export async function POST(req: NextRequest) {
       let res
       try { res = await applyPlan(db, plan, { max: 150, batch }) }
       catch (e) { await finishRun(db, batch, { status: 'ERROR', errors: [String((e as Error).message || e).slice(0, 300)], note: 'APLICAR humano · exceção' }); throw e }
-      const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer + res.bucket
+      const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer + res.bucket + (res.payout || 0)
       // Mesma condição do loop do card: enquanto ele vai mandar outra fatia, a rodada fica RUNNING (trava mantida).
       const cont = res.remaining > 0 && !res.errors.length
       await finishRun(db, batch, { status: cont ? 'RUNNING' : (res.remaining ? 'PARTIAL' : 'DONE'), counts: { fee_create: res.fee_create, fee_match: res.fee_match, exact: res.exact, name: res.name, rule_create: res.rule_create, rule_adopt: res.rule_adopt, learn: res.learn, transfer: res.transfer, bucket: res.bucket }, errors: res.errors, remaining: res.remaining, note: `APLICAR humano · ${done} nesta fatia` })

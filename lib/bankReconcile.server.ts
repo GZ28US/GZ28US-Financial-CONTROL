@@ -168,7 +168,12 @@ export type Cand = { table: string; id: string; label: string; date: string | nu
 // nos centavos duplicava a conta e deixava um "a pagar" fantasma).
 export type Sched = { id: string; supplier_id: string; expense_date: string; amount: number; description: string | null; paid_from: string | null }
 // shadow: registros da FOLHA pagos por outra conta (brPaid) — não casam, mas guardam contra gêmeo (CASAR COM AJUSTE).
-export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[] }
+export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[]; payouts?: PayoutCand[] }
+// STRIPE PAYOUT (quote portal M2, 06/11/2026; blueprint §7.5): um depósito da Stripe na Regions = Σ(renda − tarifa) das cobranças
+// que a Stripe juntou naquele payout (payment_attempts.payout_id, gravado pelo webhook payout.paid). Só cobrança LIVE e SUCCEEDED;
+// cada membro precisa estar LIVRE no pool (nem casado, nem BR). Payout com cobrança da LOJA (mesma conta Stripe, sem attempt) não fecha a
+// soma e cai no caminho de sempre — honesto: o motor não chuta. Reembolso/disputa dentro do payout: M5 (tabela stripe_payouts).
+export type PayoutCand = { payout_id: string; net: number; date: string; members: Member[]; label: string; n: number }
 // `o` = valor ANTERIOR do campo (undefined nos registros antigos = volta pra null).
 // Integridade do DESFAZER (10/set/2026): linha casada guarda SEMPRE o array ([] = o casamento não escreveu nada no app);
 // NULL numa linha casada = casamento antigo, sem registro — o DESFAZER não reverte data nenhuma por palpite, só avisa.
@@ -371,7 +376,38 @@ const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to =
     }
   }
   groups.forEach((g, id) => { if (g.n > 1) push(out, { table: 'purchase_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `PEDIDO: soma de ${g.n} itens comprados juntos — o banco cobra o pedido inteiro de uma vez` }) })
-  return { out, inn, sched, shadow }
+  const payouts = await payoutCands(db, out, inn)
+  return { out, inn, sched, shadow, payouts }
+}
+
+async function payoutCands(db: any, out: Cand[], inn: Cand[]): Promise<PayoutCand[]> {
+  let atts: any[] = []
+  try { atts = await fetchAll(db, 'payment_attempts', 'id, payout_id, income_id, charge_id, livemode, status, succeeded_at', (q: any) => q.not('payout_id', 'is', null).eq('livemode', true).eq('status', 'SUCCEEDED')) }
+  catch { return [] }   // tabela ausente (BR antes do M6) = motor de sempre
+  if (!atts.length) return []
+  const incById = new Map(inn.filter(c => c.table === 'invoice_incomes').map(c => [c.id, c]))
+  const charges = [...new Set(atts.map(a => a.charge_id).filter(Boolean).map(String))]
+  const fees = charges.length ? await fetchAll(db, 'invoice_expenses', 'id, payment_reference, supplier', (q: any) => q.in('payment_reference', charges.map(c => 'stripe:' + c)).eq('supplier', 'Stripe')) : []
+  const outById = new Map(out.filter(c => c.table === 'invoice_expenses').map(c => [c.id, c]))
+  const feesByCh = new Map<string, any[]>()
+  for (const f of fees) { const ch = String(f.payment_reference).slice(7); feesByCh.set(ch, [...(feesByCh.get(ch) || []), f]) }
+  const byPo = new Map<string, any[]>()
+  for (const a of atts) byPo.set(String(a.payout_id), [...(byPo.get(String(a.payout_id)) || []), a])
+  const res: PayoutCand[] = []
+  byPo.forEach((as, po) => {
+    let net = 0, date = '', ok = true
+    const members: Member[] = []
+    for (const a of as) {
+      const inc = a.income_id ? incById.get(String(a.income_id)) : null
+      if (!inc) { ok = false; break }   // renda casada, BR, ou sem renda: o grupo não é livre
+      members.push({ table: 'invoice_incomes', id: inc.id }); net += inc.amount
+      for (const f of feesByCh.get(String(a.charge_id)) || []) { const c = outById.get(String(f.id)); if (!c) { ok = false; break } members.push({ table: 'invoice_expenses', id: c.id }); net -= c.amount }
+      if (!ok) break
+      const d = String(a.succeeded_at || '').slice(0, 10); if (d > date) date = d
+    }
+    if (ok && members.length && date) res.push({ payout_id: po, net: Math.round(net * 100) / 100, date, members, n: as.length, label: `STRIPE PAYOUT ${po} · ${as.length} cobrança(s) − tarifa` })
+  })
+  return res
 }
 
 /* ─────────────── NOME: o que conta como "bate" ─────────────── */
@@ -547,7 +583,7 @@ const isFeeCand = (c: Cand) => { const segs = c.label.split(' · '); const sup =
 // humano); alvo TRANSFER (status, sem lançamento — só regra humana com regex);
 // direção; teto de valor. Precedência: HUMAN+regex > HUMAN só-pfc > LEARNED.
 export type MerchantRule = { id: string; pattern: string | null; target: 'FIXED_EXPENSE' | 'INPUT' | 'TRANSFER' | 'BUCKET' | 'IGNORE'; supplier_id: string | null; category: string | null; label: string | null; active: boolean; pfc_primary?: string | null; pfc_detailed?: string | null; origin?: 'HUMAN' | 'LEARNED' | 'DEFAULT' | null; merchant_key?: string | null; direction?: 'OUT' | 'IN' | 'ANY' | null; amount_max?: number | null; key?: string | null; klass?: string | null; priority?: number | null; created_at?: string | null }
-export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET' | 'SET'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; ignore?: boolean; cls?: Classified; reason?: string }
+export type PlanItem = { line: any; cand: Cand | null; engine: 'FEE' | 'EXACT' | 'NAME' | 'RULE' | 'LEARN' | 'BUCKET' | 'SET' | 'PAYOUT'; create: boolean; rule?: MerchantRule; adopt?: Sched; transfer?: boolean; ignore?: boolean; cls?: Classified; reason?: string }
 // A DÚVIDA DO MOTOR (BL 0.10.0, lei do João de 4/set: «silêncio é promessa de que está tudo
 // certo»). Toda linha que o plano NÃO resolve leva o motivo e o candidato que o motor viu —
 // a tela mostra o par e pergunta; nada fica parado calado.
@@ -929,6 +965,16 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
       continue
     }
     if (l.pending) { skip('pendente'); continue }
+    // STRIPE PAYOUT (M2): entrada com STRIPE no nome = Σ(renda − tarifa) de UM payout, exato ao centavo, do dia da última cobrança até
+    // +10 d. Um só payout bate → MISTO automático; dois → dúvida; nenhum → segue o motor de sempre (payout da loja).
+    if (num(l.amount) < 0 && pool.payouts && pool.payouts.length && /STRIPE/i.test(String(l.merchant || '') + ' ' + String(l.name || ''))) {
+      const hit = pool.payouts.filter(p => Math.abs(p.net - amt) < 0.005 && p.members.every(m => !used.has(m.table + ':' + m.id)) && !rejected.has(MIXED_GROUP + ':' + p.payout_id) && String(l.date) >= p.date && daysBetween(p.date, l.date) <= 10)
+      if (hit.length === 1) {
+        const p = hit[0], c: Cand = { table: MIXED_GROUP, id: String(l.id), label: p.label, date: p.date, amount: p.net, undated: false, members: p.members, detail: `STRIPE PAYOUT ${p.payout_id}: ${p.n} cobrança(s) do portal − tarifa Stripe = ${p.net.toFixed(2)}` }
+        consume(c); plan.items.push({ line: l, cand: c, engine: 'PAYOUT', create: false }); continue
+      }
+      if (hit.length > 1) { if (cur) cur.cands = hit.map(p => ({ table: MIXED_GROUP, id: p.payout_id, label: p.label, date: p.date, amount: p.net, undated: false })); skip('payout Stripe ambíguo (2+ somam igual)'); continue }
+    }
     const arr = num(l.amount) > 0 ? pool.out : pool.inn
     const same = arr.filter(x => free(x) && notRejected(x) && Math.abs(x.amount - amt) < 0.011)
     // Mesmo valor a mais de 30 dias não é a mesma compra (dry run da fase B: 168 linhas presas por coincidência de valor) — e
@@ -1056,14 +1102,14 @@ export const planSummary = (plan: Plan) => {
   const creates = plan.items.filter(i => (i.engine === 'RULE' || i.engine === 'LEARN') && i.create)
   const learn = plan.items.filter(i => i.engine === 'LEARN'), transfer = plan.items.filter(i => i.transfer)
   const bucket = plan.items.filter(i => i.engine === 'BUCKET')
-  const setM = plan.items.filter(i => i.engine === 'SET'), ignore = plan.items.filter(i => i.ignore)
+  const setM = plan.items.filter(i => i.engine === 'SET'), ignore = plan.items.filter(i => i.ignore), payout = plan.items.filter(i => i.engine === 'PAYOUT')
   const byKlass: Record<string, number> = {}
   for (const i of bucket) { const k = i.cls?.klass || '?'; byKlass[k] = (byKlass[k] || 0) + 1 }
   const ruleLabel = (i: PlanItem) => { const l = i.line, r = i.rule!; const base = `${l.date} · ${l.merchant || l.name} · $${Math.abs(num(l.amount)).toFixed(2)}`
     if (i.adopt) return `${base} → ADOTA agendada de ${i.adopt.expense_date} ($${i.adopt.amount.toFixed(2)} → $${Math.abs(num(l.amount)).toFixed(2)})${r.label ? ' · ' + r.label : ''}`
     return `${base} → CRIA ${r.target === 'INPUT' ? 'SUPPLY ' + inputCategoryFor(r, (i.cls || classify(l)).klass, String(l.merchant || l.name || ''), String(l.name || '')) : 'despesa do fornecedor'}${r.label ? ' · ' + r.label : ''}${i.engine === 'LEARN' ? ' (regra aprendida)' : ''}` }
   return {
-    fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length, set: setM.length, ignore: ignore.length,
+    payout: payout.length, fee_create: fee.filter(i => i.create).length, fee_match: fee.filter(i => !i.create).length, exact: exact.length, set: setM.length, ignore: ignore.length,
     name: name.length, rule_create: creates.filter(i => !i.adopt).length, rule_adopt: creates.filter(i => !!i.adopt).length,
     learn: learn.length, transfer: transfer.length, bucket: bucket.length, by_klass: byKlass,
     total: plan.items.length, skipped: plan.skipped, hash: planHash(plan),
@@ -1831,7 +1877,7 @@ async function pmap<T>(items: T[], n: number, fn: (t: T) => Promise<void>) {
   await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => { while (i < items.length) { const it = items[i++]; await fn(it) } }))
 }
 
-export type ApplyResult = { batch: string; fee_match: number; fee_create: number; exact: number; name: number; rule_create: number; rule_adopt: number; learn: number; transfer: number; bucket: number; remaining: number; errors: string[] }
+export type ApplyResult = { batch: string; payout?: number; fee_match: number; fee_create: number; exact: number; name: number; rule_create: number; rule_adopt: number; learn: number; transfer: number; bucket: number; remaining: number; errors: string[] }
 
 // Aplica até `max` itens do plano a partir de `offset` (o cliente repete enquanto
 // remaining > 0 — revisão #12: 317 linhas × 2–3 idas ao banco não cabem num request).
@@ -2033,7 +2079,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
       } else {
         const c = it.cand!
         const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: new Date().toISOString() })
-        if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else res.exact++
+        if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else if (it.engine === 'PAYOUT') res.payout = (res.payout || 0) + 1; else res.exact++
         fixes.push(fix(l.id, `${it.engine} · ${lineLabel(l)} ⇄ ${c.label}${backfill.length ? ' → ' + backfill.map(b => `${b.t}.${b.f}=${b.v.slice(0, 10)}`).join(', ') : ''}`))
       }
     } catch (e) { res.errors.push(`${it.engine} ${lineLabel(l)}: ${String((e as Error).message || e)}`) }
@@ -2441,7 +2487,7 @@ export type AutoSummary = { run?: string; status: string; skipped?: string; coun
 // RULE/LEARN com maturidade; fatias de 150 re-planejadas; orçamento de tempo;
 // nunca lança exceção pro chamador — tudo vira status/erros em bank_auto_runs.
 export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'human'; deadlineMs: number; maxItems?: number }): Promise<AutoSummary> {
-  const counts: Record<string, number> = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0 }
+  const counts: Record<string, number> = { fee_create: 0, fee_match: 0, exact: 0, name: 0, rule_create: 0, rule_adopt: 0, learn: 0, transfer: 0, bucket: 0, payout: 0 }
   const errors: string[] = []
   const notes: string[] = []
   let run: string | null = null
@@ -2473,7 +2519,7 @@ export async function autoBook(db: any, opts: { trigger: 'cron' | 'webhook' | 'h
       if (!plan.items.length) break
       if (Date.now() - t0 > opts.deadlineMs - 25_000 || applied >= maxItems) { status = 'PARTIAL'; break }
       const res = await applyPlan(db, plan, { max: 150, batch: run, auto: true })
-      const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer + res.bucket
+      const done = res.fee_create + res.fee_match + res.exact + res.name + res.rule_create + res.rule_adopt + res.transfer + res.bucket + (res.payout || 0)
       applied += done
       for (const k of Object.keys(counts)) counts[k] += (res as any)[k] || 0
       errors.push(...res.errors)
