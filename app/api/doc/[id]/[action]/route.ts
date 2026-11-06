@@ -8,10 +8,12 @@ import { readSetting } from '@/lib/appSettings.server'
 import { orlandoToday } from '@/lib/orlando'
 import { moneyCents, type Lang } from '@/lib/quoteStrings'
 import { staffRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/docFiles.server'
+import { tabsExtras, tabAction } from '@/lib/docTabs.server'
 
 // STAFF ACTIONS ON ONE DOCUMENT (06/11/2026; blueprint §2.3). /ca/api/doc/<invoiceId>/<action>
 //   GET  state · link · preview
 //   POST seed · send · revision · rotate · gate-unlock · plan · approve-manual · deposit-manual · extend · void · note-hide
+//   M3 tabs (lib/docTabs.server.ts): item-add/save/del · service-add/save/del · note-add/save/del · duty-add/toggle/save/del · status
 // Every call: requireStaff (a HUMAN JWT — machine accounts refused; the actor recorded is ALWAYS the JWT e-mail, never a body
 // field). Every mutation except `seed`: actionsAllow = app_settings qi_v2.actions OR the document is a test document → else 409.
 // NOTHING here sends a message: SEND freezes the revision and returns the link + a ready text for the staff to paste.
@@ -123,7 +125,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
   if (method === 'GET') {
     if (action === 'state') {
       if (!s.terms) { await db.rpc('seed_terms', { p_invoice: id }); s = (await loadDocState(db, id))! }     // lazy seed (exempt from the key)
-      return NextResponse.json({ ...staffState(s), actionsAllowed: await actionsAllow(s.isTest) })
+      return NextResponse.json({ ...staffState(s), tabs: await tabsExtras(db, s), actionsAllowed: await actionsAllow(s.isTest) })
     }
     if (action === 'link') {
       const tok = await linkToken(db, id)
@@ -309,8 +311,10 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
       }
       return NextResponse.json({ ok: true, result: data })
     }
-    default:
-      return bad('unknown action', 404)
+    default: {
+      const r = await tabAction(db, s, action, body, actor)   // M3 tabs: items · services · notes · duties · status
+      return r ? NextResponse.json(r.body, { status: r.status }) : bad('unknown action', 404)
+    }
   }
 }
 

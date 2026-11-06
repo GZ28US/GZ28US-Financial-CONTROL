@@ -14,6 +14,7 @@ import { BASE_PATH } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { STAGE_LABEL, SUB_LABEL } from '@/lib/quoteStage'
 import { fmtStamp, fmtDay } from '@/lib/orlando'
+import { DocTab, StatusSheet, TAB_KEYS, tabLabel, type TabKey } from '@/components/doc/DocTabs'
 
 type S = Record<string, any>
 const usd = (n: number) => 'US$ ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -24,8 +25,8 @@ export default function DocPage() {
   const [s, setS] = useState<S | null>(null)
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
-  const [tab, setTab] = useState<'PLAN' | 'ITEMS' | 'ACTIVITY'>('PLAN')
-  const [sheet, setSheet] = useState<'' | 'send' | 'plan' | 'deposit' | 'approve' | 'extend' | 'void' | 'more'>('')
+  const [tab, setTab] = useState<'PLAN' | 'ACTIVITY' | TabKey>('PLAN')
+  const [sheet, setSheet] = useState<'' | 'send' | 'plan' | 'deposit' | 'approve' | 'extend' | 'void' | 'more' | 'status'>('')
   const [out, setOut] = useState<{ url?: string; text?: string } | null>(null)
 
   const load = useCallback(async () => {
@@ -76,7 +77,7 @@ export default function DocPage() {
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <h1 className="text-xl font-bold">{inv.invoice_code}{s.live ? ` · rev ${s.live.seq}` : ''}</h1>
           <span className="px-2 py-0.5 rounded bg-sky-900 text-sky-200 text-xs font-bold">{stageText}</span>
-          {!isQuote && <span className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 text-xs">{inv.live_status === 'REALTIME' ? 'ONLINE' : inv.live_status}</span>}
+          {!isQuote && <button onClick={() => setSheet('status')} className="px-2 py-0.5 rounded bg-gray-800 text-gray-300 text-xs">{inv.live_status === 'REALTIME' ? 'ONLINE' : inv.live_status || 'INCOMPLETE'} ▾</button>}
           {s.isTest && <span className="px-2 py-0.5 rounded bg-yellow-800 text-yellow-100 text-xs font-bold">TEST</span>}
           {s.presentedDrift && <span className="px-2 py-0.5 rounded bg-red-800 text-red-100 text-xs">unsent changes</span>}
           {s.planDrift !== 0 && !isQuote && <span className="px-2 py-0.5 rounded bg-red-800 text-red-100 text-xs">balance ≠ plan ({cents(s.planDrift)})</span>}
@@ -89,7 +90,8 @@ export default function DocPage() {
         </div>
         <div className="mt-3 flex items-end justify-between">
           <div><div className="text-xs text-gray-400">GRAND TOTAL</div><div className="text-2xl font-bold">{usd(s.money?.grand)}</div></div>
-          {!isQuote && <div className="text-right text-sm"><div className="text-emerald-400">received {usd(s.received)}</div><div className="text-amber-300">open {usd(s.openBalance)}</div></div>}
+          {!isQuote && <div className="text-right text-sm"><div className="text-emerald-400">received {usd(s.received)}</div><div className="text-amber-300">open {usd(s.openBalance)}</div>
+            {inv.expected_conclusion_date && <div className="text-xs text-gray-300">🗓 PROMISED TO {fmtDay(String(inv.expected_conclusion_date).slice(0, 10))}</div>}</div>}
         </div>
         {blocked && <div className="mt-3 text-xs bg-amber-950 border border-amber-800 text-amber-200 rounded p-2">Actions on real documents are OFF (app_settings qi_v2.actions). You can read everything; test documents work.</div>}
         {s.readiness?.length > 0 && isQuote && !s.live && <div className="mt-2 text-xs text-red-300">Not ready to send: {s.readiness.join(' · ')}</div>}
@@ -97,8 +99,8 @@ export default function DocPage() {
         {out?.url && <div className="mt-2 text-xs bg-gray-950 border border-gray-800 rounded p-2 break-all"><div className="text-gray-400 mb-1">ready to paste (copied):</div>{out.text}</div>}
 
         <div className="mt-5 flex gap-2 flex-wrap text-xs">
-          {(['PLAN', 'ITEMS', 'ACTIVITY'] as const).map(k => <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 rounded ${tab === k ? 'bg-white text-black' : 'bg-gray-900 text-gray-300'}`}>
-            {k === 'PLAN' ? (isQuote ? 'PAYMENT PLAN' : 'INCOMES') : k === 'ITEMS' ? `ITEMS ${s.counts.items} · SERVICES ${s.counts.services} · NOTES ${s.counts.notes}` : `ACTIVITY ${s.events.length}`}</button>)}
+          {(['PLAN', ...TAB_KEYS, 'ACTIVITY'] as const).map(k => <button key={k} onClick={() => setTab(k)} className={`px-3 py-2 rounded ${tab === k ? 'bg-white text-black' : 'bg-gray-900 text-gray-300'}`}>
+            {k === 'PLAN' ? (isQuote ? 'PAYMENT PLAN' : 'INCOMES') : k === 'ACTIVITY' ? `ACTIVITY ${s.events.length}` : s.tabs ? tabLabel(k, s.tabs) : k}</button>)}
           <Link href={`/doc/${invoiceId}/preview`} className="px-3 py-2 rounded bg-gray-900 text-gray-300">CLIENT VIEW</Link>
         </div>
 
@@ -116,12 +118,8 @@ export default function DocPage() {
           </>}
         </div>}
 
-        {tab === 'ITEMS' && <div className="mt-3 bg-gray-950 border border-gray-800 rounded-xl p-3 text-sm">
-          <div>ITEMS {s.counts.items} lines · {usd(s.counts.itemsTotal)}</div>
-          <div>SERVICES {s.counts.services} lines · {usd(s.counts.servicesTotal)}</div>
-          <div>NOTES {s.counts.notes}</div>
-          <Link href={editorUrl} className="inline-block mt-3 px-3 py-2 rounded bg-white text-black font-semibold">EDIT IN EDITOR →</Link>
-        </div>}
+        {TAB_KEYS.includes(tab as TabKey) && s.tabs && <div className="mt-3 bg-gray-950 border border-gray-800 rounded-xl p-3">
+          <DocTab k={tab as TabKey} s={s} act={act} blocked={blocked} editorUrl={editorUrl} /></div>}
 
         {tab === 'ACTIVITY' && <div className="mt-3 bg-gray-950 border border-gray-800 rounded-xl p-3 text-sm">
           {s.events.filter((e: S) => e.actor !== 'SYSTEM' && e.actor !== 'STRIPE').map((e: S) => <Ev key={e.id} e={e} />)}
@@ -138,6 +136,7 @@ export default function DocPage() {
         {sheet === 'approve' && <ApproveSheet close={() => setSheet('')} act={act} name={client?.name || ''} />}
         {sheet === 'extend' && <Sheet title="EXTEND" close={() => setSheet('')}>{[7, 15, 30].map(d => <button key={d} onClick={async () => { if (await act('extend', { days: d })) setSheet('') }} className="mr-2 px-4 py-2 rounded bg-white text-black">+{d} days</button>)}</Sheet>}
         {sheet === 'void' && <VoidSheet s={s} close={() => setSheet('')} act={act} />}
+        {sheet === 'status' && <StatusSheet s={s} close={() => setSheet('')} act={act} />}
         {sheet === 'more' && <Sheet title="⋯" close={() => setSheet('')}>
           <div className="grid gap-2 text-sm">
             <Link href={editorUrl} className="px-3 py-2 rounded bg-gray-800">EDIT IN EDITOR →</Link>
@@ -150,6 +149,7 @@ export default function DocPage() {
             {s.liveLink && <button onClick={copyLink} className="px-3 py-2 rounded bg-gray-800 text-left">COPY LINK</button>}
             {s.liveLink?.gate === 'CONTACT' && <button onClick={() => act('gate-unlock')} className="px-3 py-2 rounded bg-gray-800 text-left">UNLOCK GATE</button>}
             {s.liveLink && <button onClick={() => act('rotate')} className="px-3 py-2 rounded bg-gray-800 text-left">ROTATE LINK (old link stops working)</button>}
+            {!isQuote && <button onClick={() => setSheet('status')} className="px-3 py-2 rounded bg-gray-800 text-left">STATUS ▾ (ONLINE / CLOSE checklist)</button>}
             {isQuote && <button onClick={() => setSheet('void')} className="px-3 py-2 rounded bg-red-900 text-left">VOID</button>}
           </div></Sheet>}
       </div>
