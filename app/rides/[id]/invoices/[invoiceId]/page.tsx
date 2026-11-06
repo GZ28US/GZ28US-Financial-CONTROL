@@ -6,7 +6,8 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor, FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL } from '@/lib/flTax'
+import { FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
@@ -161,6 +162,7 @@ export default function ViewInvoicePage() {
   }, [])
 
   async function loadAll() {
+    await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
     if (isClient) {
       const { data: clientData } = await supabase.from('clients').select('*').eq('id', ownerId).single()
       if (clientData) {
@@ -468,7 +470,7 @@ export default function ViewInvoicePage() {
   const expensesVivas = expenses.filter(e => !expFora.has(e))
   const partsSubTotal = partsVivos.reduce((s, p) => s + partLine(p), 0)
   // FL SALES TAX PELA LEI (26/out/2026 — lib/flTax): OWNER & DESTINATION do carro / endereço do cliente / exceção gravada.
-  const money = invoiceMoneyFor(invoice, ride?.title_scope, client, partsVivos.map(partLine), services.map(sv => sv.price))
+  const money = docMoneyFor(invoice, ride?.title_scope, client, partsVivos.map(partLine), services.map(sv => sv.price))
   const floridaTaxesAmount = money.tax
   const partsTotal = partsSubTotal
   const servicesTotal = services.reduce((s, sv) => s + sv.price, 0)

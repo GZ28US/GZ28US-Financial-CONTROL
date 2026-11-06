@@ -8,7 +8,7 @@
 // Fonte de custo é SEMPRE invoice_expenses — invoice_items.base_cost é campo de
 // exibição (espelha o preço de venda nos car deals) e não entra em conta nenhuma.
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { foraDoDinheiro } from '@/lib/estorno'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { BASE_PATH } from '@/lib/utils'
@@ -98,6 +98,7 @@ async function fetchAll(table: string, select: string): Promise<any[]> {
 }
 
 export async function loadFinancials(): Promise<FinData> {
+  await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
   const [invoices, payments, invExpensesAll, invPartsAll, invServices, expensesAll,
     fixedExpenses, fixedSuppliers, goodsAll, goodExpensesAll, inputsAll, inventoryAll, rides, clients] = await Promise.all([
     fetchAll('invoices', 'id, invoice_code, ride_id, client_id, is_quote, live_status, origin, florida_taxes, global_discount, fl_tax_override, fl_tax_expense_date, entry_date, hiring_date, conclusion_date, delivery_date, expected_conclusion_date, mileage'),
@@ -241,7 +242,7 @@ export function invoiceTotals(d: FinData, inv: any) {
   // peça + mão de obra, desconto antes do imposto. A alíquota antiga (florida_taxes) não é lida.
   const ride = inv.ride_id ? d.rides.get(inv.ride_id) : null
   const client = d.clients.get(inv.client_id || ride?.client_id) || null
-  const m = invoiceMoneyFor(inv, ride?.title_scope, client, minhas.map(p => num(p.base_tributavel)), d.invServices.filter(s2 => s2.invoice_id === inv.id).map(x => num(x.price)))
+  const m = docMoneyFor(inv, ride?.title_scope, client, minhas.map(p => num(p.base_tributavel)), d.invServices.filter(s2 => s2.invoice_id === inv.id).map(x => num(x.price)))
   const parts = m.parts, services = m.services, flTax = m.tax, discount = m.discount, grand = m.grand
   const cost = d.invExpenses.filter(e => e.invoice_id === inv.id).reduce((s, e) => s + expLine(e), 0)
   // O GRAND TOTAL era `grand + o que o cliente pagou direto`: a compra no cartão dele

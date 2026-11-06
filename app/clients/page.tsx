@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { GradeBadge } from '@/components/ClientGrade'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { clientCode, formatPhone } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { maisRecente, msAtividade, atividadeDasInvoices, rotuloAtividade } from '@/lib/ultimaAtividade'
@@ -96,6 +96,7 @@ export default function ClientsPage() {
       let sumExpensesGlobal = 0
 
       if (invoiceIds.length > 0) {
+        await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
           // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
@@ -129,7 +130,7 @@ export default function ClientsPage() {
           const expenses = expensesBy.get(inv.id) || []
 
           // FL tax pela lei (lib/flTax): OWNER & DESTINATION do carro, senão o endereço deste cliente
-          const money = invoiceMoneyFor(inv, (ridesOwned || []).find(r => r.id === (inv as any).ride_id)?.title_scope, client, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
+          const money = docMoneyFor(inv, (ridesOwned || []).find(r => r.id === (inv as any).ride_id)?.title_scope, client, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
           const partsSubTotal = money.parts
           const floridaTaxesAmount = money.tax
           const grandTotal = money.grand

@@ -5,7 +5,7 @@ import { useParams, usePathname } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { formatUSD, clientCode } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 // «last activity 1st» (01/10/2026): régua única de última atividade, a mesma das listas de clientes e rides.
@@ -173,6 +173,7 @@ export default function InvoicesPage() {
 
     const statsMap: Record<string, InvoiceStats> = {}
     await Promise.all(invoiceList.map(async (invoice) => {
+      await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
       const [paymentsRes, expensesRes, partsRes, servicesRes, notesRes] = await Promise.all([
         supabase.from('invoice_incomes').select('amount, payment_date, paid_at, created_at, updated_at').eq('invoice_id', invoice.id),
         // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
@@ -186,7 +187,7 @@ export default function InvoicesPage() {
       const partsVivos = soOQueConta(partsRes.data || [], valorItem, () => invoice.id)
       const expensesVivas = soOQueConta(expensesRes.data || [], valorDespesa, () => invoice.id)
       const partsSubTotal = partsVivos.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
-      const money = invoiceMoneyFor(invoice, taxRide?.title_scope, taxClientBy.get(invoice.client_id || taxRide?.client_id || (isClient ? ownerId : '')) || null, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
+      const money = docMoneyFor(invoice, taxRide?.title_scope, taxClientBy.get(invoice.client_id || taxRide?.client_id || (isClient ? ownerId : '')) || null, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
       const floridaTaxesAmount = money.tax
       const grandTotal = money.grand
 

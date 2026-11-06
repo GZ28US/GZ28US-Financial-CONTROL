@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 import { isOurCar } from '@/lib/utils'
 import { maisRecente, msAtividade, atividadeDasInvoices, rotuloAtividade } from '@/lib/ultimaAtividade'
@@ -179,6 +179,7 @@ export default function RidesPage() {
         // criado OU alterado — o helper faz a mesma consulta limit-1 por tabela, agora por updated_at.
         timestamps.push(await atividadeDasInvoices(invoiceIds))
 
+        await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('invoice_id, amount, payment_date, paid_at').in('invoice_id', invoiceIds),
           // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
@@ -212,7 +213,7 @@ export default function RidesPage() {
           const expenses = expensesBy.get(inv.id) || []
 
           // FL tax pela lei (lib/flTax): OWNER & DESTINATION deste carro, senão o endereço do cliente
-          const money = invoiceMoneyFor(inv, ride.title_scope, clientTax.get((inv as any).client_id || ride.client_id) || null, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
+          const money = docMoneyFor(inv, ride.title_scope, clientTax.get((inv as any).client_id || ride.client_id) || null, parts.map(p => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), services.map(sv => parseFloat(sv.price) || 0))
           const partsSubTotal = money.parts
           const floridaTaxesAmount = money.tax
           const grandTotal = money.grand

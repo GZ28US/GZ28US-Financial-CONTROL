@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, isClientTitledCar, clientSpeaksPortuguese } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
@@ -325,6 +325,7 @@ export default function ViewRidePage() {
 
       const stats: Record<string, Stats> = {}
       await Promise.all(invoicesData.map(async (inv) => {
+        await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
         const [paymentsRes, expensesRes, partsRes, servicesRes] = await Promise.all([
           supabase.from('invoice_incomes').select('amount, payment_date, paid_at').eq('invoice_id', inv.id),
           // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
@@ -337,7 +338,7 @@ export default function ViewRidePage() {
         const expensesVivas = soOQueConta(expensesRes.data || [], valorDespesa, () => inv.id)
         const partsSubTotal = partsVivos.reduce((s, p) => s + (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0), 0)
         // FL SALES TAX PELA LEI (lib/flTax): OWNER & DESTINATION deste carro, senão o endereço do dono
-        const money = invoiceMoneyFor(inv, rideData.title_scope, clientRow, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
+        const money = docMoneyFor(inv, rideData.title_scope, clientRow, partsVivos.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (servicesRes.data || []).map((sv: any) => parseFloat(sv.price) || 0))
         const floridaTaxesAmount = money.tax
         const grandTotal = money.grand
 

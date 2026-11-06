@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { formatUSD } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
 
@@ -92,6 +92,7 @@ export default function InvoicesPage() {
     }
     let paysBy = new Map<string, any[]>(), expsBy = new Map<string, any[]>(), partsBy = new Map<string, any[]>(), svcsBy = new Map<string, any[]>()
     if (ids.length) {
+      await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
       const [pRes, eRes, prRes, sRes] = await Promise.all([
         supabase.from('invoice_incomes').select('invoice_id, amount, paid_at').in('invoice_id', ids),
         // cancel_status (+ order_number da despesa): estornado sai do total pela régua de lib/estorno.ts (14/set/2026).
@@ -111,7 +112,7 @@ export default function InvoicesPage() {
       const ipa = partsBy.get(inv.id) || []
       const isv = svcsBy.get(inv.id) || []
       const rideT = inv.ride_id ? rideTax.get(inv.ride_id) : null
-      const money = invoiceMoneyFor(inv, rideT?.title_scope, clientTax.get(inv.client_id || rideT?.client_id) || null, ipa.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), isv.map((sv: any) => parseFloat(sv.price) || 0))
+      const money = docMoneyFor(inv, rideT?.title_scope, clientTax.get(inv.client_id || rideT?.client_id) || null, ipa.map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), isv.map((sv: any) => parseFloat(sv.price) || 0))
       const partsSubTotal = money.parts
       const flTaxAmount = money.tax
       const flTaxPaid = isValidDate(inv.fl_tax_expense_date)

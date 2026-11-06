@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { invoiceMoneyFor } from '@/lib/flTax'
+import { docMoneyFor, primeApproved } from '@/lib/money'
 import { flowHorizonEnd } from '@/lib/flowHorizon'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
@@ -174,6 +174,7 @@ export default function HomePage() {
     const lossByInvoice = new Map<string, { amount: number; pct: number }>()
 
     // Resolve each invoice's client + car for the VIEW link/tooltip.
+    await primeApproved(supabase)   // signed documents: the approved revision is the money (lib/money.ts, M3)
     const [{ data: ridesD }, { data: clientsD }, { data: fixedCostExp }, { data: invSalesD }, { data: staffExp }, { data: seasonsD }, { data: staffD }] = await Promise.all([
       supabase.from('rides').select('id, project_code, project_name, model, version, client_id, plate, plate_expiry, title_scope, insurance_company, insurance_expiry'),
       supabase.from('clients').select('id, name, country, state'),
@@ -187,7 +188,7 @@ export default function HomePage() {
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
     const clientRow = new Map<string, any>(); (clientsD || []).forEach((c: any) => clientRow.set(c.id, c))
     // o imposto pela lei (lib/flTax): carro + cliente + itens + serviços da invoice
-    const taxOf = (inv: any) => { const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null; return invoiceMoneyFor(inv, ride?.title_scope, clientRow.get(inv.client_id || ride?.client_id) || null, (partsBy.get(inv.id) || []).map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (svcsBy.get(inv.id) || []).map((s: any) => parseFloat(s.price) || 0)).tax }
+    const taxOf = (inv: any) => { const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null; return docMoneyFor(inv, ride?.title_scope, clientRow.get(inv.client_id || ride?.client_id) || null, (partsBy.get(inv.id) || []).map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (svcsBy.get(inv.id) || []).map((s: any) => parseFloat(s.price) || 0)).tax }
     // Registration watch: only rides already expired or inside the warning window,
     // soonest first (the late ones lead, since their days are negative).
     setPlateAlerts((ridesD || [])
