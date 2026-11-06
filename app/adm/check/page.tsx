@@ -281,6 +281,24 @@ function applyDismiss(checks: Check[], auto: AutoSignal, bank: BankSignal): Chec
     return { ...c, items }
   })
 }
+// QUOTE PORTAL (§9 #11, M4): three cards computed on the server (/api/doc/checks) — appended after buildChecks, which stays as it was.
+type PortalSignal = { state: 'loading' | 'error' | 'ok'; data: any | null; error?: string }
+function portalChecks(p: PortalSignal): Check[] {
+  if (p.state !== 'ok' || !p.data) return []
+  const it = (r: any, extra: string): Item => ({ href: r.href, code: r.code, label: r.client || '—', extra, amount: r.amount })
+  return [
+    { group: 'INVOICES', key: 'closed-with-open-plan', title: 'Invoice CLOSED com parcela do plano em aberto', blocks: 'nada bloqueia (D-17 A) — mas é dinheiro a receber que o CLOSED esconde',
+      why: 'CLOSED continua sendo só datas (C-18). Uma parcela do plano do portal sem pagamento numa invoice fechada é recebível: o card lista para cobrar ou dar baixa no /doc.',
+      items: p.data.closedOpenPlan.map((r: any) => it(r, 'em aberto: ' + r.rows.join(' · '))) },
+    { group: 'INVOICES', key: 'signed-total-drift', title: 'Total ao vivo ≠ total ASSINADO', blocks: 'os relatórios leem o total assinado (lib/money); a tela do editor mostra outro',
+      why: 'Depois da assinatura o contrato é a revisão aprovada. Mudou o carro (OWNER & DESTINATION), o endereço do cliente, o desconto, ou entrou linha nova depois da assinatura: o total ao vivo diverge. Conserto: CHANGE ORDER no /doc (o cliente aprova) — ou desfazer a mudança.',
+      items: p.data.signedDrift.map((r: any) => it(r, 'assinado ' + r.signed.toFixed(2) + ' · ao vivo ' + r.live.toFixed(2))) },
+    { group: 'INVOICES', key: 'plan-sum-drift', title: 'Plano de pagamento ≠ total da invoice', blocks: 'o PAY da última parcela some do link do cliente até acertar',
+      why: 'A soma das parcelas (centavos congelados) não bate com o total ao vivo — estorno, linha incluída depois. Conserto: CHANGE ORDER no /doc (a última parcela em aberto absorve).',
+      items: p.data.planDrift.map((r: any) => it(r, 'diferença ' + (r.cents / 100).toFixed(2))) },
+  ]
+}
+
 function buildChecks(d: FinData, bank: BankSignal, tax: TaxSignal, duty: DutySignal, linker: LinkerSignal, wa: WaSignal, nature: NatureSignal, auto: AutoSignal, bucketSig: BucketSig, receipt: ReceiptSignal, engines: EnginesSignal, audit: AuditSignal, staffRate: StaffRateSignal, crossing: CrossingSignal): Check[] {
   const matched = bank.matched
   /* eslint-disable @typescript-eslint/no-explicit-any */
@@ -2156,6 +2174,7 @@ export default function DataCheckPage() {
   const [bulkValue, setBulkValue] = useState<Record<string, string>>({})   // valor do "marcar filtrados como" por card
   const [wa, setWa] = useState<WaSignal>({ state: 'loading', fails: [] })  // falhas de envio do WhatsApp (wa_send_log)
   const [staffRate, setStaffRate] = useState<StaffRateSignal>({ state: 'loading', rows: [] })   // taxa de staff sem data (12/set/2026)
+  const [portal, setPortal] = useState<PortalSignal>({ state: 'loading', data: null })   // QUOTE PORTAL cards (/api/doc/checks)
   const [crossing, setCrossing] = useState<CrossingSignal>({ state: 'loading', data: null })   // saldo das shopping invoices US ⇄ BR (DC 1.56.0)
   const [nature, setNature] = useState<NatureSignal>({ state: 'loading', needsMigration: false, totals: null, groups: [] })   // "o que é esta linha?" agrupado por fornecedor
   const [receipt, setReceipt] = useState<ReceiptSignal>({ state: 'loading', readings: {} })   // o que os recibos disseram (DC 1.47.0)
@@ -2167,6 +2186,7 @@ export default function DataCheckPage() {
       .then(([fin, payTrail]) => setD(Object.assign(fin, { payTrail }))).catch(e => setError(String(e?.message || e)))
     // CONTA CORRENTE GZ28BR (DC 1.56.0): o saldo das shopping invoices, a mesma rota do GZ-FLOW e do Balanço. Falha vira SINAL no card.
     setCrossing({ state: 'loading', data: null })
+    sessionHeaders().then(h => fetch(`${BASE_PATH}/api/doc/checks`, { headers: h, cache: 'no-store' })).then(async r => { const j = await r.json().catch(() => ({})); setPortal(r.ok && j.ok ? { state: 'ok', data: j } : { state: 'error', data: null, error: String(j.error || 'HTTP ' + r.status) }) }).catch(e => setPortal({ state: 'error', data: null, error: String((e as Error)?.message || e) }))
     sessionHeaders().then(h => fetch(`${BASE_PATH}/api/crossing/balance`, { headers: h, cache: 'no-store' })).then(async r => { const j = await r.json().catch(() => ({})); setCrossing(r.ok && j.ok ? { state: 'ok', data: j as CrossingBalance } : { state: 'error', data: null, error: String(j.error || 'HTTP ' + r.status) }) }).catch(e => setCrossing({ state: 'error', data: null, error: String((e as Error)?.message || e) }))
     // WA SEND LOG (caso Gui, 31/ago): falhas de envio dos últimos 14 dias.
     ;(async () => {
@@ -2300,7 +2320,7 @@ export default function DataCheckPage() {
     })()
   }, [reloadN])
 
-  const checks = useMemo(() => (d ? applyDismiss(buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing), auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing])
+  const checks = useMemo(() => (d ? applyDismiss([...buildChecks(d, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing), ...portalChecks(portal)], auto, bank) : []).map(c => ({ ...c, items: c.items.filter(i => !(i.fix && done.has(i.fix.rowId + '|' + fixField(i.fix)))) })), [d, done, bank, tax, duty, linker, wa, nature, auto, bucketSig, receipt, engines, audit, staffRate, crossing, portal])
   // Card BOM (good) não entra em pendência nenhuma — nem no total, nem no chip do grupo.
   // O chip BANK conta o que PERGUNTA a gente (BL 1.5.0 · DC 1.50.0): pergunta linha a linha + UMA por fornecedor, do mesmo plano do
   // cron (lib/bankLineState.server) — pendente, «vai casar», maturando e teto esperam o AUTO-LINK e não contam.

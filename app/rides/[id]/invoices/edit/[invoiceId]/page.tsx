@@ -1610,6 +1610,7 @@ export default function EditInvoicePage() {
     expenses.forEach((e, idx) => {
       if (isCostLine(e.item)) return
       if (foraImport.has(e)) return
+      if (String((e as { nature?: string | null }).nature || '').toUpperCase() === 'MONEY') return   // QUOTE PORTAL §9 #1: a MONEY row (Stripe fee, dispute fee…) is never a part to bill
       if ((e.export_status || 'FRESH') !== 'FRESH') return
       const desc = (e.item || '').trim()
       if (!desc) return

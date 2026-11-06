@@ -20,7 +20,7 @@ import { PAYER_RULE, HOUSE_PAYER, hiddenPayers, type PayerMode, type PayerTable 
 // 'GZ28US Regions DebitCard' (Márcio, 19/ago/2026): o cartão de débito da LLC é
 // forma de pagamento própria, SEM número — o final do cartão muda quando o banco
 // reemite; o nome não. 'CARD' fica para cartões que não são o débito da Regions.
-export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL'] as const
+export const PAYMENT_METHODS = ['CASH', 'ZELLE', 'GZ28US Regions DebitCard', 'WIRE', 'ACH', 'CARD', 'BANK ACCOUNT', 'CHECK', 'PAYPAL', 'STRIPE'] as const   // STRIPE: rows booked by the quote portal (§9 #7)
 // Dinheiro que cai numa conta BRASILEIRA se move por meios brasileiros — não
 // existe ACH nem Zelle no Brasil, nem PIX nos EUA. Quando PAID TO = GZ28BR, o
 // formulário troca a lista (Márcio, 26/ago/2026). São os métodos que de fato

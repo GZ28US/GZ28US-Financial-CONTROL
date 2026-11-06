@@ -143,7 +143,7 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     readAll(us, 'US', 'inventory', 'id, description, supplier, source_type, unit_price, quantity, purchase_date, payment_date, paid_from, paid_to, source, amount_brl, receipt_url, cancel_status, order_number', q => q.or(citaBR)),
     readAll(us, 'US', 'fixed_cost_expenses', 'id, supplier_id, description, amount, amount_brl, expense_date, payment_date, paid_from, paid_to, source, receipt_url', q => q.or(citaBR)),
     readAll(us, 'US', 'fixed_cost_suppliers', 'id, company, description, cost_type'),
-    readAll(us, 'US', 'invoice_incomes', 'id, invoice_id, amount, amount_brl, payment_date, paid_at, paid_to, description, receipt_url, receipt_kinds, mirror_expense_id, mirror_src', q => q.ilike('paid_to', 'gz28br')),
+    readAll(us, 'US', 'invoice_incomes', 'id, invoice_id, amount, amount_brl, payment_date, paid_at, paid_to, description, receipt_url, receipt_kinds, mirror_expense_id, mirror_src, installment_id', q => q.ilike('paid_to', 'gz28br')),
     readAll(us, 'US', 'intercompany_transfers', '*'),
   ])
   const usInvById = new Map(usInvoices.map(i => [i.id, i]))
@@ -247,7 +247,9 @@ export async function intercompanyLedger(dbs: CrossingDbs = crossingDbs()): Prom
     if (inv.client_id === US_CLIENT_GZ28BR) { out('shopping invoice 006.N (histórico do espelho)'); continue }
     if (p.mirror_expense_id) { out('espelho de despesa paga pelo cliente — não é caixa'); continue }
     if (!p.paid_at) { out('renda ainda não recebida'); continue }
-    const dia = ymd(p.payment_date) || dayIn(p.paid_at, 'America/New_York')
+    // QUOTE PORTAL §9 #10 (rules R2-06): a PLAN row (installment_id) is dated by the day the money landed (paid_at, Orlando); legacy rows keep
+    // today's dating (payment_date first) so no balance already reconciled moves.
+    const dia = p.installment_id ? (dayIn(p.paid_at, 'America/New_York') || ymd(p.payment_date)) : (ymd(p.payment_date) || dayIn(p.paid_at, 'America/New_York'))
     if (!dia) { out('sem dia da baixa'); continue }
     const brl: number | null = p.amount_brl != null && num(p.amount_brl) !== 0 ? r2(num(p.amount_brl)) : null
     if (brl == null) diasFx.add(dia)
