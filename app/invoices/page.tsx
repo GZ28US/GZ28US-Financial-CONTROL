@@ -50,6 +50,11 @@ export default function InvoicesPage() {
   const [reportFilter, setReportFilter] = useState<'ALL' | 'READY' | 'NOT'>('ALL')
   const [picker, setPicker] = useState(false)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  // QUOTE PORTAL M3 (06/11/2026; D-11 DEFAULT A): a real invoice left INCOMPLETE never enters the reports. The list says so on the card and
+  // offers ONE tap — SET ONLINE (REALTIME) — never an automatic change. Every flip leaves a data_fixes trail.
+  const [onlineId, setOnlineId] = useState<string | null>(null)
+  const [v2, setV2] = useState(false)
+  useEffect(() => { supabase.from('app_settings').select('value').eq('key', 'qi_v2.enabled').maybeSingle().then(({ data }) => setV2(data?.value === true), () => undefined) }, [])
   // SHOP area shows origin=SHOP invoices; the default (PROJECTS) shows origin=PROJECT.
   const [mode] = useState<'project' | 'shop'>(() => {
     if (typeof window === 'undefined') return 'project'
@@ -61,7 +66,7 @@ export default function InvoicesPage() {
   async function load() {
     const { data } = await supabase
       .from('invoices')
-      .select('id, invoice_code, ride_id, client_id, fl_tax_override, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
+      .select('id, invoice_code, ride_id, client_id, fl_tax_override, is_quote, hiring_date, entry_date, conclusion_date, delivery_date, expected_conclusion_date, mileage, service, florida_taxes, global_discount, fl_tax_expense_date, feed_status, live_status, created_at, updated_at, rides(project_code, project_name)')
       .eq('is_quote', false)
       .eq('origin', mode === 'shop' ? 'SHOP' : 'PROJECT')
       // Cinto e suspensório (AUTO-BOOK fase B, 4/set/2026): o .eq acima já
@@ -132,6 +137,17 @@ export default function InvoicesPage() {
     setLoading(false)
   }
 
+  async function setOnline(id: string) {
+    const inv = rows.find(r => r.id === id)
+    const { data, error } = await supabase.from('invoices').update({ live_status: 'REALTIME' }).eq('id', id).eq('live_status', 'INCOMPLETE').eq('is_quote', false).select('id')
+    if (error) { alert(error.message); return }
+    if (!data?.length) { alert('This invoice is no longer INCOMPLETE — reloading.'); setOnlineId(null); load(); return }
+    const { data: u } = await supabase.auth.getUser()
+    await supabase.from('data_fixes').insert({ check_key: 'set-online', table_name: 'invoices', row_id: id, field: 'live_status', old_value: 'INCOMPLETE', new_value: 'REALTIME', label: `SET ONLINE na lista /invoices · ${inv?.invoice_code || ''} · ${u?.user?.email || '?'}`.slice(0, 200) }).then(() => undefined, () => undefined)
+    setOnlineId(null)
+    load()
+  }
+
   async function removeInvoice(id: string) {
     const { error } = await supabase.from('invoices').delete().eq('id', id)
     if (error) { alert(error.message); return }
@@ -178,6 +194,18 @@ export default function InvoicesPage() {
             <div className="flex gap-4">
               <button onClick={() => setConfirmId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
               <button onClick={() => removeInvoice(confirmId)} className="flex-1 bg-red-700 hover:bg-red-600 px-5 py-4 rounded-2xl font-bold text-xl">REMOVE</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {onlineId && (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-sm w-full mx-4">
+            <h2 className="text-2xl font-bold mb-2">SET ONLINE</h2>
+            <p className="text-gray-400 text-lg mb-8">{rows.find(r => r.id === onlineId)?.invoice_code}: from now on this invoice enters the reports (REALTIME). Nothing else changes.</p>
+            <div className="flex gap-4">
+              <button onClick={() => setOnlineId(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-xl">CANCEL</button>
+              <button onClick={() => setOnline(onlineId)} className="flex-1 bg-blue-700 hover:bg-blue-600 px-5 py-4 rounded-2xl font-bold text-xl">SET ONLINE</button>
             </div>
           </div>
         </div>
@@ -234,11 +262,12 @@ export default function InvoicesPage() {
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${statusBadge.cls}`}>{statusBadge.label}</span>
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${liveBadge.cls}`}>{liveBadge.label}</span>
                     {feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
+                    {(inv.live_status || 'INCOMPLETE') === 'INCOMPLETE' && <span className="px-3 py-1 rounded-full text-sm font-bold bg-red-900 text-red-300">NOT IN REPORTS</span>}
                   </div>
                   {[ride?.project_code, ride?.project_name].some(Boolean) && <p className="text-lg text-gray-400">{inv.invoice_code}</p>}
                   {inv.service && <p className="text-lg text-gray-400">{inv.service}</p>}
                   <p className="text-lg font-bold text-gray-200">{s ? formatUSD(s.grandTotal) : '—'}</p>
-                  <p className="text-lg text-gray-400">{fmtDate(inv.hiring_date)}{inv.delivery_date ? ` — Delivery: ${fmtDate(inv.delivery_date)}` : ''}</p>
+                  <p className="text-lg text-gray-400">{fmtDate(inv.hiring_date)}{isValidDate(inv.expected_conclusion_date) && !isValidDate(inv.conclusion_date) ? ` — 🗓 PROMISED TO ${fmtDate(inv.expected_conclusion_date)}` : ''}{inv.delivery_date ? ` — Delivery: ${fmtDate(inv.delivery_date)}` : ''}</p>
 
                   {s && isRdy(inv) && (
                     <div className="flex gap-3 mt-3 flex-wrap">
@@ -250,6 +279,8 @@ export default function InvoicesPage() {
                   )}
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
+                  {(inv.live_status || 'INCOMPLETE') === 'INCOMPLETE' && <button onClick={() => setOnlineId(inv.id)} className="bg-blue-800 hover:bg-blue-700 px-5 py-3 rounded-2xl font-bold">SET ONLINE</button>}
+                  {v2 && <Link href={`/doc/${inv.id}`} className="bg-sky-800 hover:bg-sky-700 px-5 py-3 rounded-2xl font-bold">V2</Link>}
                   <Link href={`/rides/${inv.ride_id}/invoices/${inv.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`/rides/${inv.ride_id}/invoices/edit/${inv.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                   <button onClick={() => setConfirmId(inv.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>
