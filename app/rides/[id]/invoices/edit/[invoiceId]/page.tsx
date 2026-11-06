@@ -44,7 +44,7 @@ type Service = { id?: string; description: string; price: string; payment_date?:
 // receipt_kinds (17/out/2026, lib/receiptKinds.ts): o TIPO de cada arquivo do receipt_url — NF, entrada no BR (PIX/TED, provisório
 // no US até a remessa chegar) ou entrada na Regions. A direção 4 da travessia copia o BR_ENTRY pro espelho do BR e o cron da remessa
 // troca pelo REGIONS_ENTRY; arquivo sem tipo nunca é mexido — por isso a tela deixa o humano dar o tipo.
-type Payment = { id?: string; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; receipt_kinds?: Record<string, ReceiptKind>; description: string; date_label: string; paid_at: string }
+type Payment = { id?: string; installment_id?: string | null; amount: string; amount_brl?: string; payment_date: string; source: string; paid_to: string; receipt_url: string; receipt_kinds?: Record<string, ReceiptKind>; description: string; date_label: string; paid_at: string }
 type Note = { id?: string; note: string }
 // stock_source_type / stock_donor are the lineage carriers: when an item is
 // pulled FROM STOCK into this expense list, we copy the stock row's source_type
@@ -682,6 +682,7 @@ export default function EditInvoicePage() {
     const { data: paymentsData } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({
       id: p.id,
+      installment_id: p.installment_id || null,
       amount: String(p.amount),
       payment_date: p.payment_date || '',
       source: p.source || '',
@@ -1912,7 +1913,7 @@ export default function EditInvoicePage() {
   // row is excluded from otherServicesTotal, so setting it here can't feed back
   // into this effect's inputs — no loop. Persisted on SAVE CHANGES.
   useEffect(() => {
-    if (loading) return
+    if (loading || portalLock) return   // QUOTE PORTAL M3: a SENT revision freezes the labor line — the solver stands still
     const target = parseFloat((targetGrandTotal || '').replace(/,/g, ''))
     if (!target || target <= 0) return
     const discountFactor = 1 - (globalDiscountPct / 100)
@@ -1938,7 +1939,7 @@ export default function EditInvoicePage() {
       updated[li] = { ...updated[li], price: laborStr }
       return updated
     })
-  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading, flTaxStatusNow])
+  }, [targetGrandTotal, partsTotal, otherServicesTotal, globalDiscountPct, laborIndex, loading, flTaxStatusNow, portalLock])
 
   function addPart() {
     if (!newPart.description || !newPart.unit_price || !newPart.quantity) { alert('Please fill in all item fields'); return }
@@ -2113,10 +2114,11 @@ export default function EditInvoicePage() {
   }
   function removePayment(index: number) {
     const payment = payments[index]
+    if (payment.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in /doc (QUOTES v2).'); return }
     if (payment.id) setRemovedPaymentIds(prev => [...prev, payment.id!])
     setPayments(payments.filter((_, i) => i !== index))
   }
-  function startEditPayment(index: number) { setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }); setIncomeUploads([]) }
+  function startEditPayment(index: number) { if (payments[index]?.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in /doc (QUOTES v2).'); return } setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }); setIncomeUploads([]) }
   async function saveEditPayment() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
@@ -2807,7 +2809,7 @@ export default function EditInvoicePage() {
     // Persist the auto-calculated Full Project Labor on an existing row (the
     // CALCULATE button that used to write inline is gone).
     const laborSvc = services.find(s => s.id && s.description === FULL_PROJECT_LABOR)
-    if (laborSvc) {
+    if (laborSvc && !portalLock) {   // QUOTE PORTAL M3: frozen in the sent revision — never re-saved from here
       const { error: e } = await supabase.from('invoice_services').update({ price: parseFloat(laborSvc.price) || 0 }).eq('id', laborSvc.id)
       if (e) { alert(e.message); return }
     }
@@ -3732,7 +3734,9 @@ export default function EditInvoicePage() {
           </button>
         </div>
 
-        <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />
+        {portalLock && (portalLock.approved || portalLock.open) && isQuote
+          ? <div><label className="block mb-2 text-lg font-bold">HIRING DATE</label><div className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-2xl px-4 py-3">Approved online — the DEPOSIT converts this quote (RECORD DEPOSIT in /doc). Leave it empty here.</div></div>
+          : <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />}
         {isClient && (
           <div>
             <DatePicker label="HIRING DATE" value={clientHiringDate} onChange={setClientHiringDate} />
@@ -4362,7 +4366,7 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
           <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
+            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION in /doc' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
           </div>
         </div>
 
@@ -4374,14 +4378,14 @@ export default function EditInvoicePage() {
           <div className="flex items-center gap-3">
             <span className="text-gray-400 font-bold whitespace-nowrap">GLOBAL DISCOUNT</span>
             <div className="relative w-28">
-              <input type="text" inputMode="decimal" value={globalDiscount} onChange={(e) => { if (isNumeric(e.target.value)) setGlobalDiscount(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
+              <input type="text" inputMode="decimal" value={globalDiscount} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION in /doc' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setGlobalDiscount(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
             </div>
             <span className="text-xl font-bold ml-auto text-red-400">- {formatUSD(globalDiscountAmount)}</span>
           </div>
           <div className="flex items-center gap-3 flex-wrap">
             <span className="text-gray-400 font-bold whitespace-nowrap">FL SALES TAX</span>
-            <select value={flTaxOverride} onChange={(e) => setFlTaxOverride(e.target.value)} className={`${smallInputClass} w-52`} title="By law: the car's OWNER & DESTINATION (or the client's address) decides. Exception: override with a written reason.">
+            <select value={flTaxOverride} disabled={!!portalLock} onChange={(e) => setFlTaxOverride(e.target.value)} className={`${smallInputClass} w-52`} title="By law: the car's OWNER & DESTINATION (or the client's address) decides. Exception: override with a written reason.">
               <option value="">BY LAW</option>
               <option value="TAXABLE">EXCEPTION · CHARGE</option>
               <option value="EXEMPT">EXCEPTION · EXEMPT</option>
