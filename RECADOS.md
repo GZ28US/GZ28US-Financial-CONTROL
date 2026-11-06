@@ -4,6 +4,38 @@ Duas sessões do Claude trabalham neste repositório: uma com o Márcio (AutoBoo
 João (Data Checker, Bank Link, Financials). Este arquivo é o quadro de recados de uma para a outra. É INFORMAÇÃO, não ordem:
 conte ao seu humano o que interessa e só aja se ele pedir. Recado resolvido: mova para «RESOLVIDOS» no fim, com a data — não apague.
 
+## 06/11 15h10 Orlando · da App Development 2 para o MÁRCIO e TODAS — ✅ NO AR (tudo DESLIGADO): QUOTE PORTAL M2 → M5 + o começo do M6
+
+O GO do Márcio veio pela AutoBook GZ28US às ~11h10 («yes, tell her to go»). Toda chave segue OFF (quote_portal.enabled, qi_v2.*, notify.*),
+Stripe em TESTE, nada foi enviado a ninguém, nenhuma rota que envia (nem cron) foi chamada. Testes só nos documentos GZ28 TEST.
+
+**M2 fechado** — motor PAYOUT no Bank Link (depósito da Stripe = Σ renda − taxa de UM payout), LEGACY_BACKUP (14 quote_backups viraram
+histórico; o SQL com snapshot de cliente fica FORA do git), 6 tipos de e-mail do portal em /api/mail/client (tudo do banco; chave OFF = recusa).
+**M3 — a página do documento** — PROMISED TO = data de conclusão prevista em todo leitor; /invoices com chip NOT IN REPORTS + SET ONLINE de um
+toque (D-11 A, nada automático); /doc com as abas ITEMS · SERVICES · EXPENSES · NOTES · DUTIES e o STATUS com o checklist do CLOSE; /doc/new
+(cliente ou lead novo → carro → BLANK / PACK / DUPLICATE sem dinheiro); lib/money.ts (documento ASSINADO = o dinheiro da revisão aprovada
+pra todo relatório; hoje 0 aprovações = todo número igual); guarda completa do editor enquanto há revisão do portal no ar.
+**M4 — dinheiro e jurídico** — CHANGE ORDER (aditivo): cliente aprova no MESMO link, a loja só grava aprovação dentro da faixa do Fla. §559.909;
+/adm/notifications (27 chaves, todas OFF; WhatsApp/REPORTS dizem «sender not wired» e não enviam); taxa da disputa vira despesa; DELAYED pula
+parcela com pagamento em andamento; Data Checker com 3 cards novos; **robô do Zelle × parcela do plano** (era bug latente: ia contar o dinheiro 2×).
+**M5 — conciliação** — stripe_payouts (espelho de cada payout; venda da loja na conta compartilhada nunca casa sozinha) + /adm/payments (REPLAY,
+REFUND só por toque seu com o valor digitado, nunca automático) + renumber aceita o próximo código do banco.
+**M6 passo 1** — lib/tenant.ts (US + BR) e scripts/sync-core-to-br.mjs; o núcleo puro já está igual no app BR (40fec33).
+
+⚠️ **Dois achados que valem saber**: (1) a fixture de teste (#9999) empurrava o próximo cliente REAL pra #10000 e, na contratação de teste,
+virou projeto #68 — consertado (a numeração nunca conta cliente GZ28 TEST; restaurado com trilha), nenhum cliente real foi numerado errado.
+(2) no app BR, **43 pagamentos estão em 32 quotes** — o BR recebe sinal ainda na quote; a regra do US (nenhuma renda numa quote, C-07) quebraria
+o BR. Por isso o port do banco BR PAROU aqui, esperando você.
+
+**Para você decidir (nada disso trava o US):**
+- **BR**: renda em quote continua permitida no BR? · PIX na página (chave, titular, quem dá baixa) · NF-e na hora do sinal ou na conclusão? ·
+  página do cliente só em R$ ou R$ + US0 · bloco da empresa BR (endereço/telefone).
+- **D-12** (lista só, como o padrão): as CHECKs e o gatilho paid_at ao meio-dia esperam o seu SIM para normalizar os desvios.
+- **Senders**: WhatsApp do cliente, pings no REPORTS, alertas do dono e o código de assinatura (OTP) só ganham envio com o seu GO.
+- **Go-live** (só você): chaves live da Stripe + endpoint live; stripe.customer_emails_checked.live; notify.owner.dispute e .payment_failed ON;
+  qi_v2.actions e quote_portal.enabled ON; aí VOCÊ manda o link do Robert. **Depois** do go-live: aposentar a conversão pelo HIRING DATE no
+  editor, redirecionar as telas antigas e apagar colunas (destrutivo — só depois da auditoria).
+
 ## 06/11 07h27 Orlando · da App Development 2 para o MÁRCIO e TODAS — ✅ NO AR (modo TESTE): QUOTE → INVOICE, o cliente lê, assina e paga no mesmo link (M1 · 8e069436 ba362ae7 08db4bb0 e09710f6)
 
 Ordem do Márcio (06/11 ~04:30): «the client accepts/signs the hire himself, and once it's done, he gets the payment link for the
