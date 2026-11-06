@@ -362,7 +362,9 @@ export default function NewInvoicePage() {
       } catch (err) { alert('Invoice created, but the PERFORMANCE of the car was not: ' + String(err)) }
     }
 
-    router.push(`${basePath}/edit/${invoice.id}`)
+    // QUOTE PORTAL M3 (06/11/2026): /doc/new hands the PACK start here with ?from=doc — the new quote opens on the document page.
+    const fromDoc = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('from') === 'doc'
+    router.push(fromDoc ? `/doc/${invoice.id}` : `${basePath}/edit/${invoice.id}`)
   }
 
   // Copy a pack's PARTS / SERVICES / EXPENSES / NOTES onto the new invoice. All

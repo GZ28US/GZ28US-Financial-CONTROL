@@ -47,6 +47,7 @@ export default function NewClientPage() {
     ;(async () => {
       let q = supabase.from('clients').select('client_number')
       q = isShop ? q.eq('origin', 'SHOP') : q.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+      q = q.not('name', 'ilike', 'GZ28 TEST%')   // our test fixtures (#9999) never push the real numbering (06/11/2026)
       const { data: maxRow } = await q.order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
       setNextCode(clientCode({ is_quote: isQuote, origin: isShop ? 'SHOP' : 'PROJECT', client_number: (maxRow?.client_number ?? 0) + 1 }))
     })()
@@ -147,6 +148,7 @@ export default function NewClientPage() {
     const isShop = m === 'shop', isQuote = m === 'quote'
     let numQuery = supabase.from('clients').select('client_number')
     numQuery = isShop ? numQuery.eq('origin', 'SHOP') : numQuery.eq('origin', 'PROJECT').eq('is_quote', isQuote)
+    numQuery = numQuery.not('name', 'ilike', 'GZ28 TEST%')   // our test fixtures (#9999) never push the real numbering (06/11/2026)
     const { data: maxRow } = await numQuery.order('client_number', { ascending: false, nullsFirst: false }).limit(1).maybeSingle()
     const nextNumber = (maxRow?.client_number ?? 0) + 1
 
