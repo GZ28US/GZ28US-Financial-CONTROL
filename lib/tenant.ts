@@ -52,6 +52,42 @@ export function dayIn(t: Tenant, d: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: t.timeZone }).format(d)
 }
 
+// ── REFERENCE CURRENCY (Márcio, 06/11/2026, decision 6: «alongside») ─────────────────────────────────────────────────────────────
+// BR: R$ is the price the client signs and pays (PIX); US$ is printed NEXT to every line and total, for reference only. The rate is
+// FROZEN in the sent revision with its day, so a signed document never moves. House rule (lib/fx.ts BR): commercial bid + R$ 0,20.
+// The daily table has bid NULL on most Saturdays/holidays (memory fx-bid-vazio-sabado) — skip null/zero bids, take the last good day.
+export const REFERENCE: Record<TenantId, { currency: 'usd'; spread: number } | null> = { US: null, BR: { currency: 'usd', spread: 0.20 } }
+export type FrozenFx = { rate: number; spot: number; day: string }       // rate = spot + spread (R$ per US$), day = YYYY-MM-DD of the bid
+
+export function freezeFx(t: Tenant, rows: { day: string; bid: number | string | null }[], onDay: string): FrozenFx | null {
+  const ref = REFERENCE[t.id]
+  if (!ref) return null
+  const good = rows
+    .map(r => ({ day: String(r.day).slice(0, 10), spot: Number(r.bid) }))
+    .filter(r => r.day <= onDay && Number.isFinite(r.spot) && r.spot > 0)
+    .sort((a, b) => (a.day < b.day ? 1 : -1))[0]
+  if (!good) return null
+  const rate = Math.round((good.spot + ref.spread) * 10000) / 10000
+  if (rate < 3 || rate > 9) return null                                   // a rate outside this band is a broken feed, never a price
+  return { rate, spot: good.spot, day: good.day }
+}
+
+// «R$ 1.000,00 · US$ 189,04» — the main price, then the reference; the main price alone when there is no frozen rate
+export function alongside(t: Tenant, amount: number, fx: FrozenFx | null): string {
+  const main = moneyIn(t, amount)
+  const ref = REFERENCE[t.id]
+  if (!ref || !fx) return main
+  const usd = new Intl.NumberFormat(t.locale, { style: 'currency', currency: 'USD', minimumFractionDigits: 2 }).format(Number(amount || 0) / fx.rate)
+  return `${main} · ${usd}`
+}
+
+// the small print under the totals: «US$ apenas referência, câmbio de 06/11» / «US$ for reference, rate of 06/11»
+export function fxNote(fx: FrozenFx | null, lang: 'en' | 'pt'): string {
+  if (!fx) return ''
+  const dm = `${fx.day.slice(8, 10)}/${fx.day.slice(5, 7)}`
+  return lang === 'pt' ? `US$ apenas referência, câmbio de ${dm}` : `US$ for reference, rate of ${dm}`
+}
+
 // the deposit block as text, line by line (the BR client message prints it under «Dados pro Depósito:»); '' when the house has none
 export function depositText(t: Tenant, heading = 'Dados pro Depósito:'): string {
   const d = t.deposit
