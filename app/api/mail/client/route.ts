@@ -1,8 +1,13 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken } from '@/lib/streamMail.server'
 import { requireUser, sendKeyOk } from '@/lib/apiAuth.server'
 import { clientSpeaksPortuguese } from '@/lib/utils'
+import { requireStaff } from '@/lib/auth.server'
+import { serviceDb } from '@/lib/quoteDoc.server'
+import { maskEmail } from '@/lib/quotePublic.server'
+import { buildPortalMail, isPortalMailKind, PORTAL_MAIL_KINDS } from '@/lib/quoteMail.server'
 
 // Client e-mails sent BY THE APP (Graph, gz28us@hotmail.com) as real HTML with
 // a clickable button — the old mailto: composer produced plain text with a dead
@@ -17,6 +22,11 @@ import { clientSpeaksPortuguese } from '@/lib/utils'
 //   → quote/invoice PDF ATTACHED (fetched server-side, ONLY from our own
 //     public invoice-pdfs bucket) + button link; recipient = the invoice's
 //     client on file. Born from the Johnny/NiteKing dead-link quote (31/jul).
+//
+// QUOTE PORTAL (M2, 06/11/2026): POST { kind: 'quote-link'|'quote-signed'|'deposit-receipt'|'installment-due'|'quote-expiring'|'change-order',
+//   id: invoiceId, attempt_id? } — recipient, link and PDF all resolved from the database (lib/quoteMail.server.ts), never from the
+//   request. Gated: quote_portal.enabled (real) or notify.test_targets (test); robot kinds need their notify.client.* key; only
+//   quote-link from a HUMAN staff tap is unkeyed (SEND BY APP). Every send is an invoice_events NOTIFIED row.
 //
 // PORTÃO (13/set/2026): a rota manda e-mail da caixa da empresa para o cliente de
 // qualquer id — respondia a pedido anônimo. Agora só tela logada (sessionHeaders)
@@ -52,10 +62,11 @@ const PDF_PREFIX = `${process.env.NEXT_PUBLIC_SUPABASE_URL}/storage/v1/object/pu
 export async function POST(req: NextRequest) {
   if (!sendKeyOk(req) && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   const b = await req.json().catch(() => null)
+  if (isPortalMailKind(b?.kind)) return portalMail(req, b)
   const kind = b?.kind as 'car-photo' | 'client-form' | 'invoice-pdf'
   const id = String(b?.id || '')
   if (!['car-photo', 'client-form', 'invoice-pdf'].includes(kind) || !id) {
-    return NextResponse.json({ error: 'kind (car-photo|client-form|invoice-pdf) and id required' }, { status: 400 })
+    return NextResponse.json({ error: `kind (car-photo|client-form|invoice-pdf|${PORTAL_MAIL_KINDS.join('|')}) and id required` }, { status: 400 })
   }
 
   const db = streamDb()
@@ -158,4 +169,28 @@ export async function POST(req: NextRequest) {
   })
   if (!r.ok) return NextResponse.json({ error: (await r.text()).slice(0, 300) }, { status: 502 })
   return NextResponse.json({ ok: true, to: clientRow.email, subject })
+}
+
+async function portalMail(req: NextRequest, b: any) {
+  const staff = await requireStaff(req)   // a human JWT (machine accounts refused); the send key is a machine caller
+  const id = String(b?.id || '')
+  if (!/^[0-9a-f-]{36}$/i.test(id)) return NextResponse.json({ error: 'id (invoice uuid) required' }, { status: 400 })
+  const db = serviceDb()
+  const m = await buildPortalMail(db, b.kind, id, { human: !!staff, attemptId: b?.attempt_id ? String(b.attempt_id) : null })
+  if ('error' in m) return NextResponse.json({ error: m.error }, { status: m.status })
+  const mdb = streamDb()
+  const auth = await getMailAuth(mdb, 1)
+  if (!auth?.refresh_token) return NextResponse.json({ error: 'mailbox not connected' }, { status: 502 })
+  const token = await freshAccessToken(mdb, auth)
+  if (!token) return NextResponse.json({ error: 'mail token refresh failed' }, { status: 502 })
+  const r = await fetch(`${G}/me/sendMail`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message: { subject: m.subject, body: { contentType: 'HTML', content: m.html }, toRecipients: [{ emailAddress: { address: m.to } }],
+      attachments: m.attachments.map(a => ({ '@odata.type': '#microsoft.graph.fileAttachment', name: a.name, contentType: 'application/pdf', contentBytes: a.base64 })) }, saveToSentItems: true }),
+  })
+  if (!r.ok) return NextResponse.json({ error: (await r.text()).slice(0, 300) }, { status: 502 })
+  await db.rpc('doc_event', { p_invoice: m.invoiceId, p_revision: m.revisionId, p_kind: 'NOTIFIED', p_actor: staff ? 'STAFF' : 'SYSTEM', p_actor_id: staff?.email || 'send-key',
+    p_payload: { kind: b.kind, channel: 'EMAIL', to: maskEmail(m.to), by_app: !!staff, attachments: m.attachments.map(a => a.name) } })
+  return NextResponse.json({ ok: true, to: maskEmail(m.to), subject: m.subject, attached: m.attachments.map(a => a.name) })
 }
