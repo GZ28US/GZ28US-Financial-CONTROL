@@ -169,6 +169,8 @@ export async function GET(req: NextRequest) {
     ? `👋 *Bom dia! Este é o novo DAILY MEGA-REPORT da GZ28US.*\nA partir de hoje, todos os dias às 4am, este grupo recebe o resumo completo do dia da empresa: desenvolvimento no sistema, entradas e saídas de dinheiro com o saldo do dia, Staff Duties, registros, pedidos em trânsito (STREAM) e cobranças de APPS. Tudo automático, direto do Control App.\n\n`
     : ''
   const body = `${intro}📋 *DAILY MEGA-REPORT — ${day}*\n\n${lines.join('\n').trim() || 'Quiet day — no activity recorded.'}`
+  // ?dry=1 (06/11/2026, quote portal §9 #4): builds the body and returns it — sends NOTHING. Proves what the 03:00 run would say.
+  if (req.nextUrl.searchParams.get('dry') === '1') return NextResponse.json({ ok: true, dry: true, lines: lines.length, body })
   await sendStreamWhatsApp(body)
   return NextResponse.json({ ok: true, lines: lines.length })
 }
