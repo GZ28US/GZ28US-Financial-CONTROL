@@ -52,10 +52,14 @@ export async function GET(req: NextRequest) {
   //     pra ninguém ler lançamento como dinheiro.
   //   • ORÇAMENTO (is_quote) não entra em nada: nem rides novas, nem invoices novas (lei de 06/11: quote = no income, no reports).
   const isQuote = (e: any) => e.invoices?.is_quote === true
+  // PORTAL DE QUOTE (06/11/2026): documento de TESTE (quote_links.is_test) não entra em NADA deste report — estrutural, não chave.
+  const { data: testLinks } = await db.from('quote_links').select('invoice_id').eq('is_test', true)
+  const testInv = new Set(((testLinks || []) as any[]).map(l => l.invoice_id))
+  const isTest = (e: any) => testInv.has(e.invoice_id)
   const { data: payRaw } = await db.from('invoice_incomes')
-    .select('amount, paid_at, mirror_expense_id, invoices(invoice_code, is_quote)')
+    .select('amount, paid_at, mirror_expense_id, invoice_id, invoices(invoice_code, is_quote)')
     .gte('paid_at', since)
-  const pay = ((payRaw || []) as any[]).filter((p) => p.paid_at && !p.mirror_expense_id && !isQuote(p))
+  const pay = ((payRaw || []) as any[]).filter((p) => p.paid_at && !p.mirror_expense_id && !isQuote(p) && !isTest(p))
   const inTotal = pay.reduce((s, p: any) => s + (Number(p.amount) || 0), 0)
 
   // ── MONEY OUT — everything PAID in the window (by payment date).
@@ -122,9 +126,10 @@ export async function GET(req: NextRequest) {
   // ── INCOMES REGISTERED — lançados no dia, cada um com o status (received dd/mm · scheduled dd/mm · not received).
   // Aqui mora o «A RECEBER»: aparece como previsão, nunca como IN.
   const { data: incNew } = await db.from('invoice_incomes')
-    .select('amount, paid_at, payment_date, mirror_expense_id, invoices(invoice_code, is_quote)')
+    .select('amount, paid_at, payment_date, mirror_expense_id, invoice_id, installment_id, invoices(invoice_code, is_quote)')
     .gte('created_at', since).order('amount', { ascending: false })
-  const incHuman = ((incNew || []) as any[]).filter((p) => !p.mirror_expense_id && !isQuote(p))
+  // uma linha do PLANO ainda não paga (installment_id, sem paid_at) é previsão — vai dobrada na linha 🏁 HIRED, nunca aqui
+  const incHuman = ((incNew || []) as any[]).filter((p) => !p.mirror_expense_id && !isQuote(p) && !isTest(p) && !(p.installment_id && !p.paid_at))
   if (incHuman.length) {
     const total = incHuman.reduce((s, p: any) => s + (Number(p.amount) || 0), 0)
     lines.push(`💵 *${incHuman.length} ${incHuman.length === 1 ? 'income' : 'incomes'} registered* (${usd(total)}) — bookkeeping, not cash`)
@@ -143,9 +148,18 @@ export async function GET(req: NextRequest) {
   // ── STREAM movement: MORTO (STREAM LEGADO MORTO, NÃO APAGADO (Márcio, 30/ago/2026): "quero ele) — o
   // quadro velho não recebe mais movimento; o status dos itens vive na origem.
 
+  // ── 🏁 HIRED (portal) e ⚠ DISPUTA / FALHA DEPOIS DA COMPENSAÇÃO — dinheiro que se mexeu, estrutural (sem chave).
+  const { data: hev } = await db.from('invoice_events').select('invoice_id, kind, payload, at').in('kind', ['HIRED', 'DISPUTE_OPENED', 'DEPOSIT_FAILED']).gte('at', since)
+  for (const e of ((hev || []) as any[]).filter(x => !testInv.has(x.invoice_id))) {
+    const p = e.payload || {}
+    if (e.kind === 'HIRED') { const am = (p.plan?.amounts || []) as number[]; lines.push(`🏁 *HIRED* ${p.invoice_code_before || p.old_code || ''} → ${p.new_code || '(same car)'} · plan: ${am.length} × ${am.map(a => usd(a)).join(' / ')} (1 received)`) }
+    else lines.push(`⚠ *${e.kind === 'DISPUTE_OPENED' ? 'DISPUTE' : 'FAILED AFTER SETTLEMENT'}* — ${p.amount_cents ? usd(Number(p.amount_cents) / 100) : ''} · open /doc`)
+  }
+
   // ── New invoices / rides.
-  const { data: inv } = await db.from('invoices').select('invoice_code').gte('created_at', since).neq('is_quote', true)
-  if (inv?.length) lines.push(`🧾 *New invoices*: ${(inv as any[]).map((i) => i.invoice_code).join(', ')}`)
+  const { data: invRaw } = await db.from('invoices').select('id, invoice_code').gte('created_at', since).neq('is_quote', true)
+  const inv = ((invRaw || []) as any[]).filter((i) => !testInv.has(i.id))
+  if (inv.length) lines.push(`🧾 *New invoices*: ${inv.map((i) => i.invoice_code).join(', ')}`)
   const { data: rid } = await db.from('rides').select('project_code, project_name').gte('created_at', since).neq('is_quote', true)
   if (rid?.length) lines.push(`🚗 *New rides*: ${(rid as any[]).map((r) => `${r.project_code} ${r.project_name}`).join(', ')}`)
 

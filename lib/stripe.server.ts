@@ -32,7 +32,7 @@ let client: Stripe | null = null
 export function stripeClient(): Stripe {
   const key = process.env.STRIPE_SECRET_KEY
   if (!key) throw new Error('STRIPE_SECRET_KEY is not configured on this project')
-  if (!client) client = new Stripe(key)
+  if (!client) client = new Stripe(key, { apiVersion: Stripe.API_VERSION as Stripe.LatestApiVersion })   // pinned to the SDK (package.json locks 22.6.2) — payments P-29
   return client
 }
 

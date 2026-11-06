@@ -154,11 +154,23 @@ export async function GET(req: NextRequest) {
   // delayed_alert_sent_at so it never repeats.
   const { data: delayed, error: delayedErr } = await supabase
     .from('invoice_incomes')
-    .select('id, invoice_id, amount, payment_date, source, description')
+    .select('id, invoice_id, amount, payment_date, source, description, installment_id')
     .is('paid_at', null)
     .is('delayed_alert_sent_at', null)
     .not('payment_date', 'is', null)
     .lte('payment_date', today)
+  // PORTAL DE QUOTE (06/11/2026): documento de TESTE nunca; linha do PLANO (installment_id) só com a chave
+  // notify.reports.installment_delayed ligada (nasce false). Linha legada segue igual.
+  if (delayed && delayed.length) {
+    const { data: tl } = await supabase.from('quote_links').select('invoice_id').eq('is_test', true)
+    const testInv = new Set(((tl || []) as any[]).map(l => l.invoice_id))
+    const { data: key } = await supabase.from('app_settings').select('value').eq('key', 'notify.reports.installment_delayed').maybeSingle()
+    const planOn = key?.value === true
+    for (let i = delayed.length - 1; i >= 0; i--) {
+      const r = delayed[i] as any
+      if (testInv.has(r.invoice_id) || (r.installment_id && !planOn)) delayed.splice(i, 1)
+    }
+  }
 
   let delayedSent = 0
   let delayedFailed = 0

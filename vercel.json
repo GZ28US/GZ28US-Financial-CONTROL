@@ -67,6 +67,10 @@
     {
       "path": "/ca/api/cron/fx-daily",
       "schedule": "30 4 * * *"
+    },
+    {
+      "path": "/ca/api/cron/docs-housekeeping",
+      "schedule": "17 * * * *"
     }
   ]
 }

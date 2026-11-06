@@ -10,6 +10,18 @@ const nextConfig: NextConfig = {
   // www.gz28us.com/ . Everything else of the shop stays under /shop/* (assets, /shop/api/*, the live Stripe webhook
   // /shop/api/stripe-webhook, /shop/account logins) — proxied exactly as before.
   // basePath:false keeps the sources outside /ca.
+  // QUOTE PORTAL (06/11/2026): the client's quote page and its API never cache, never frame, never leak the URL in a Referer.
+  // Sources WITHOUT /ca — basePath is prepended automatically (RO-11).
+  async headers() {
+    const h = [
+      { key: 'Cache-Control', value: 'no-store' },
+      { key: 'Referrer-Policy', value: 'no-referrer' },
+      { key: 'X-Frame-Options', value: 'DENY' },
+      { key: 'Content-Security-Policy', value: "frame-ancestors 'none'" },
+      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+    ]
+    return [{ source: '/q/:path*', headers: h }, { source: '/api/q/:path*', headers: h }]
+  },
   async redirects() {
     return [
       {

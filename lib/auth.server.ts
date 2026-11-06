@@ -15,3 +15,25 @@ export async function requireUser(req: NextRequest): Promise<boolean> {
     return !error && !!data.user
   } catch { return false }
 }
+
+// STAFF (06/11/2026, quote portal — security R2-05): a HUMAN logged into /ca. Same JWT check as requireUser, plus the user's
+// e-mail, and MACHINE accounts refused (the BR bridge logs in with a real JWT but is a robot). Env MACHINE_ACCOUNTS (comma list)
+// adds to the built-in list. Every /api/doc/[id]/* route uses this and records the returned e-mail as the actor — never a body field.
+const MACHINE_DEFAULT = ['br-bridge@gz28us.com']
+export function machineAccounts(): string[] {
+  const env = String(process.env.MACHINE_ACCOUNTS || '').split(',').map(s => s.trim().toLowerCase()).filter(Boolean)
+  return [...new Set([...MACHINE_DEFAULT, ...env])]
+}
+export async function requireStaff(req: NextRequest): Promise<{ email: string } | null> {
+  const auth = req.headers.get('authorization') || ''
+  const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
+  if (!token) return null
+  try {
+    const anon = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { auth: { persistSession: false } })
+    const { data, error } = await anon.auth.getUser(token)
+    const email = String(data?.user?.email || '').toLowerCase()
+    if (error || !email) return null
+    if (machineAccounts().includes(email)) return null
+    return { email }
+  } catch { return null }
+}

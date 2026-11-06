@@ -282,10 +282,11 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
   // ATENÇÃO ao modelo (incidente QuickSilver 31/jul): em incomes, payment_date é
   // a data PREVISTA — quem marca "recebido" é paid_at. Previsões nunca reportam.
   const ip = await pageAll(() => db.from('invoice_incomes')
-    .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name))')
+    .select('id, amount, payment_date, paid_at, description, created_at, invoices(invoice_code, is_quote, rides(project_name, project_code), clients(name), quote_links(is_test))')
     .gte('updated_at', EPOCH).is('reported_at', null).not('paid_at', 'is', null).order('created_at').order('id'))
   for (const p of ip as any[]) {
     if (p.invoices?.is_quote) continue
+    if ((p.invoices?.quote_links || []).some((l: any) => l.is_test)) continue          // portal TEST document: never reported (06/11/2026)
     if (!(await claim('invoice_incomes', [p.id])).has(p.id)) continue
     const owner = ownerOf(p.invoices)
     const label = `INCOME ${p.invoices?.invoice_code || '—'} ${usd(p.amount)}`
@@ -294,7 +295,7 @@ export async function runExpenseReportNet(db: SupabaseClient): Promise<{ reporte
     if (!alreadySent(Number(p.amount)) && !jaAnunciado(anuncios, 'IN', Number(p.amount), paidOn) && isRecentMoney(paidOn)) {
       // `description` de invoice_incomes é onde o MEMO de quem mandou o dinheiro
       // (Zelle) é gravado: texto de terceiro, peneirado antes de ir pro grupo.
-      await sendReport([`*INCOME PAID* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, semMarcacao(String(p.description || '').slice(0, 160))].join('\n'))
+      await sendReport([`*${Number(p.amount) < 0 ? 'REFUND / CHARGEBACK' : 'INCOME PAID'}* ${p.invoices?.invoice_code || '—'}${owner ? ` — ${owner}` : ''}`, `${paidOn} — *${usd(p.amount)}*`, semMarcacao(String(p.description || '').slice(0, 160))].join('\n'))
       out.push(label)
     }
   }
