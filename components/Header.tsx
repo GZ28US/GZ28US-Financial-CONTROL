@@ -100,6 +100,7 @@ const MENU: MenuItem[] = [
       ['/whatsapp', 'INTERCOM'],
       ['/adm/reports', 'REPORTS'],
       ['/adm/notifications', 'NOTIFICATIONS'],
+      ['/adm/payments', 'PAYMENTS'],
     ],
   },
   {

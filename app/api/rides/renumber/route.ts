@@ -69,7 +69,15 @@ export async function POST(req: NextRequest) {
   const atualCode = String(ride.project_code || '').trim()
   const atualName = String(ride.project_name || '').trim()
   const retryFrom = String(b?.retryFrom || '').trim()
-  const newCode = String(b?.newCode ?? atualCode).trim()
+  // QUOTE PORTAL M5 (06/11/2026): {nextPrefix:'US'|'SC'|'WV'|'PO'|'US.QT'|'SHP'} asks the DATABASE allocator for the next free number — the same
+  // alloc_ride_code() the hire uses (parity with lib/rideCodes nextFreeCode proven by scripts/test-alloc-ride-code.mjs). An explicit newCode works as before.
+  let allocated: string | null = null
+  if (b?.nextPrefix && !b?.newCode) {
+    const { data: nc, error: eNc } = await us.rpc('alloc_ride_code', { p_prefix: String(b.nextPrefix).trim().toUpperCase() })
+    if (eNc || !nc) return NextResponse.json({ ok: false, error: 'alloc_ride_code: ' + (eNc?.message || 'sem resposta') }, { status: 502 })
+    allocated = String(nc)
+  }
+  const newCode = String(allocated ?? b?.newCode ?? atualCode).trim()
   const newName = b?.newName != null ? String(b.newName).trim() : atualName
   // Retomada: o banco já tem o código novo; os passos de fora partem do código antigo.
   const retomada = !!retryFrom && retryFrom !== atualCode && atualCode === newCode

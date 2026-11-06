@@ -270,6 +270,12 @@ export async function bookDispute(db: SupabaseClient, d: Stripe.Dispute, type: s
 }
 
 export async function payoutPaid(db: SupabaseClient, p: Stripe.Payout): Promise<StripeHandled> {
+  // M5: the whole payout is mirrored in stripe_payouts (members for the Bank Link MIXED match); M1's payout_id link stays inside it
+  try {
+    const { syncPayout } = await import('./stripePayouts.server')
+    const r = await syncPayout(db, p)
+    return r.members ? { handled: true, ref: p.id, note: `${r.members} member(s) · net ${r.net} · unresolved ${r.unresolved}` } : { handled: false, note: 'no Control App money in payout' }
+  } catch (e) { console.error('[payout sync]', p.id, (e as Error).message) }
   const ids: string[] = []
   for await (const bt of stripeClient().balanceTransactions.list({ payout: p.id, type: 'charge', limit: 100 })) ids.push(bt.id)
   if (!ids.length) return { handled: false, note: 'no charges in payout' }
@@ -320,6 +326,11 @@ export async function handleStripeEvent(ev: Stripe.Event): Promise<StripeHandled
     case 'charge.dispute.closed':
       return bookDispute(db, ev.data.object as Stripe.Dispute, ev.type, ev.created)
     case 'payout.paid': return payoutPaid(db, ev.data.object as Stripe.Payout)
+    case 'payout.failed': {   // M5: mirrored as failed; the Regions credit never comes — /adm/payments shows it
+      const { syncPayout } = await import('./stripePayouts.server')
+      const r = await syncPayout(db, ev.data.object as Stripe.Payout)
+      return { handled: r.members > 0, ref: r.id, note: 'payout failed' }
+    }
     default: return { handled: false }
   }
 }

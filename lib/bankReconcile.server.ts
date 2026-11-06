@@ -161,7 +161,7 @@ export function mixedFromPool(pool: Pool, lineAmount: number, members: Member[])
   }
   return { cands, missing, both, net: mixedNet(lineAmount, cands.map((c, n) => ({ table: c.table, id: c.id, amount: c.amount, side: sides[n] }))) }
 }
-export type Cand = { table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; href?: string; detail?: string; score?: number; dd?: number | null; supplier_id?: string | null }
+export type Cand = { payout_id?: string; table: string; id: string; label: string; date: string | null; amount: number; undated: boolean; group?: string | null; members?: Member[]; href?: string; detail?: string; score?: number; dd?: number | null; supplier_id?: string | null }
 // AUTO-BOOK (BL 0.8.0): `sched` = contas fixas AGENDADAS em aberto (sem pagamento
 // e sem elo com o banco) — a regra de fornecedor ADOTA a agendada do mês em vez
 // de criar uma segunda linha (risco #1 confirmado pela revisão: valor diferente
@@ -384,7 +384,6 @@ async function payoutCands(db: any, out: Cand[], inn: Cand[]): Promise<PayoutCan
   let atts: any[] = []
   try { atts = await fetchAll(db, 'payment_attempts', 'id, payout_id, income_id, charge_id, livemode, status, succeeded_at', (q: any) => q.not('payout_id', 'is', null).eq('livemode', true).eq('status', 'SUCCEEDED')) }
   catch { return [] }   // tabela ausente (BR antes do M6) = motor de sempre
-  if (!atts.length) return []
   const incById = new Map(inn.filter(c => c.table === 'invoice_incomes').map(c => [c.id, c]))
   const charges = [...new Set(atts.map(a => a.charge_id).filter(Boolean).map(String))]
   const fees = charges.length ? await fetchAll(db, 'invoice_expenses', 'id, payment_reference, supplier', (q: any) => q.in('payment_reference', charges.map(c => 'stripe:' + c)).eq('supplier', 'Stripe')) : []
@@ -394,7 +393,24 @@ async function payoutCands(db: any, out: Cand[], inn: Cand[]): Promise<PayoutCan
   const byPo = new Map<string, any[]>()
   for (const a of atts) byPo.set(String(a.payout_id), [...(byPo.get(String(a.payout_id)) || []), a])
   const res: PayoutCand[] = []
+  // M5: the mirrored payouts first (stripe_payouts — amount = the payout, members from its balance transactions, window from its arrival
+  // day). Only LIVE, paid, unmatched, with NOTHING unresolved (a payout carrying shop sales never auto-matches).
+  // a refund / chargeback income is negative — the pool moves it to the opposite side (ESTORNO), so a member is free if it is in EITHER side
+  const poolKeys = new Set([...inn, ...out].map(x => x.table + ':' + x.id))
+  const free = (m: Member) => poolKeys.has(m.table + ':' + m.id)
+  let mirrored: any[] = []
+  try { mirrored = await fetchAll(db, 'stripe_payouts', 'id, amount, arrival_date, members, members_net, unresolved_amount, status, livemode, bank_transaction_id', (q: any) => q.eq('livemode', true).eq('status', 'paid').is('bank_transaction_id', null)) } catch { mirrored = [] }
+  const seen = new Set<string>()
+  for (const p of mirrored) {
+    seen.add(String(p.id))
+    const ms: Member[] = Array.isArray(p.members) ? p.members : []
+    if (!ms.length || Math.abs(num(p.unresolved_amount)) >= 0.005 || Math.abs(num(p.members_net) - num(p.amount)) >= 0.005 || !ms.every(free)) continue
+    const d0 = new Date(String(p.arrival_date) + 'T12:00:00Z'); d0.setUTCDate(d0.getUTCDate() - 1)
+    res.push({ payout_id: String(p.id), net: num(p.amount), date: d0.toISOString().slice(0, 10), members: ms, n: ms.filter(m => m.table === 'invoice_incomes').length, label: `STRIPE PAYOUT ${p.id} · chega ${p.arrival_date}` })
+  }
+  if (!atts.length) return res
   byPo.forEach((as, po) => {
+    if (seen.has(po)) return   // the mirror already speaks for this payout
     let net = 0, date = '', ok = true
     const members: Member[] = []
     for (const a of as) {
@@ -970,7 +986,7 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     if (num(l.amount) < 0 && pool.payouts && pool.payouts.length && /STRIPE/i.test(String(l.merchant || '') + ' ' + String(l.name || ''))) {
       const hit = pool.payouts.filter(p => Math.abs(p.net - amt) < 0.005 && p.members.every(m => !used.has(m.table + ':' + m.id)) && !rejected.has(MIXED_GROUP + ':' + p.payout_id) && String(l.date) >= p.date && daysBetween(p.date, l.date) <= 10)
       if (hit.length === 1) {
-        const p = hit[0], c: Cand = { table: MIXED_GROUP, id: String(l.id), label: p.label, date: p.date, amount: p.net, undated: false, members: p.members, detail: `STRIPE PAYOUT ${p.payout_id}: ${p.n} cobrança(s) do portal − tarifa Stripe = ${p.net.toFixed(2)}` }
+        const p = hit[0], c: Cand = { payout_id: p.payout_id, table: MIXED_GROUP, id: String(l.id), label: p.label, date: p.date, amount: p.net, undated: false, members: p.members, detail: `STRIPE PAYOUT ${p.payout_id}: ${p.n} cobrança(s) do portal − tarifa Stripe = ${p.net.toFixed(2)}` }
         consume(c); plan.items.push({ line: l, cand: c, engine: 'PAYOUT', create: false }); continue
       }
       if (hit.length > 1) { if (cur) cur.cands = hit.map(p => ({ table: MIXED_GROUP, id: p.payout_id, label: p.label, date: p.date, amount: p.net, undated: false })); skip('payout Stripe ambíguo (2+ somam igual)'); continue }
@@ -2079,7 +2095,7 @@ export async function applyPlan(db: any, plan: Plan, opts: { max?: number; batch
       } else {
         const c = it.cand!
         const { backfill } = await writeMatch(db, l, c, { matched_note: `AUTO · ${it.engine} · ` + c.label.slice(0, 120), match_engine: it.engine, match_batch: batch, reviewed_at: new Date().toISOString() })
-        if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else if (it.engine === 'PAYOUT') res.payout = (res.payout || 0) + 1; else res.exact++
+        if (it.engine === 'FEE') res.fee_match++; else if (it.engine === 'NAME') res.name++; else if (it.engine === 'PAYOUT') { res.payout = (res.payout || 0) + 1; if (c.payout_id) await db.from('stripe_payouts').update({ bank_transaction_id: l.id, matched_at: new Date().toISOString() }).eq('id', c.payout_id).is('bank_transaction_id', null).then(() => undefined, () => undefined) } else res.exact++
         fixes.push(fix(l.id, `${it.engine} · ${lineLabel(l)} ⇄ ${c.label}${backfill.length ? ' → ' + backfill.map(b => `${b.t}.${b.f}=${b.v.slice(0, 10)}`).join(', ') : ''}`))
       }
     } catch (e) { res.errors.push(`${it.engine} ${lineLabel(l)}: ${String((e as Error).message || e)}`) }
