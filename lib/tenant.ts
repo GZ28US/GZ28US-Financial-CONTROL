@@ -15,6 +15,9 @@ export type Tenant = {
   rails: string[]                                       // what a client may pay with (page copy; Stripe rails also need payments.rails_enabled)
   tables: { lines: 'invoice_items' | 'invoice_parts'; incomes: 'invoice_incomes' | 'invoice_payments' }
   receivingHouse: 'GZ28US' | 'GZ28BR'
+  // the bank deposit the client pays into — ONE source for the client message and the quote page (Márcio, 06/11/2026: «the one that
+  // already goes in the message to the client»). null = this house shows no deposit block.
+  deposit: { holder: string; taxId: string; bank: string; branch: string; account: string; pix: string } | null
 }
 
 export const TENANTS: Record<TenantId, Tenant> = {
@@ -27,6 +30,7 @@ export const TENANTS: Record<TenantId, Tenant> = {
     rails: ['card', 'us_bank_account', 'ZELLE', 'WIRE'],
     tables: { lines: 'invoice_items', incomes: 'invoice_incomes' },
     receivingHouse: 'GZ28US',
+    deposit: null,
   },
   BR: {
     id: 'BR',
@@ -37,6 +41,7 @@ export const TENANTS: Record<TenantId, Tenant> = {
     rails: ['PIX_BR'],
     tables: { lines: 'invoice_parts', incomes: 'invoice_payments' },
     receivingHouse: 'GZ28BR',
+    deposit: { holder: 'GZ28 Comércio e Serviços para Automóveis Ltda.', taxId: 'CNPJ 58.377.183/0001-49', bank: 'Banco C6 S.A. (336)', branch: 'AG 0001', account: 'CC 35810689-3', pix: 'PIX 58377183000149' },
   },
 }
 
@@ -45,4 +50,10 @@ export function moneyIn(t: Tenant, n: number): string {
 }
 export function dayIn(t: Tenant, d: Date = new Date()): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: t.timeZone }).format(d)
+}
+
+// the deposit block as text, line by line (the BR client message prints it under «Dados pro Depósito:»); '' when the house has none
+export function depositText(t: Tenant, heading = 'Dados pro Depósito:'): string {
+  const d = t.deposit
+  return d ? [heading, d.holder, d.taxId, d.bank, d.branch, d.account, d.pix].join('\n') : ''
 }
