@@ -336,7 +336,7 @@ export default function ViewInvoicePage() {
       // line. Invoices are identical for both.
       // DELIVERY DATE without CONCLUSION DATE = the PROMISED TO date — carried
       // on every report, always.
-      const promisedLine = isValidDate(invoice.delivery_date) && !isValidDate(invoice.conclusion_date)
+      const promisedLine = isValidDate(invoice.expected_conclusion_date) && !isValidDate(invoice.conclusion_date)
         ? `\n🗓 PROMISED TO: *${formatDate(invoice.expected_conclusion_date)}*` : ''
       const head = `*GZ28 V8 SpeedShop*\n${isClient ? 'Shopping ' : ''}${docNoun} ${invoice.invoice_code}${ownerLbl ? ` — ${ownerLbl}` : ''}\nGrand Total: *${formatUSD(grandTotal)}*${promisedLine}`
       const markupLine = `MarkUp: *${formatUSD(finalProfit)} / ${finalProfitPct.toFixed(1)}%*`

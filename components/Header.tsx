@@ -112,6 +112,10 @@ const MENU: MenuItem[] = [
 
 export default function Header() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
+  // QUOTE PORTAL M3 (06/11/2026): the v2 document pages enter the menu only when qi_v2.enabled is ON (app_settings; OFF tonight).
+  const [v2, setV2] = useState(false)
+  useEffect(() => { supabase.from('app_settings').select('value').eq('key', 'qi_v2.enabled').maybeSingle().then(({ data }) => setV2(data?.value === true), () => undefined) }, [])
+  const menu: MenuItem[] = v2 ? MENU.map(m => m.type === 'dropdown' && m.label === 'QUOTES' ? { ...m, items: [...m.items, ['/doc', 'QUOTES v2'] as [string, string], ['/doc/new', '+ NEW QUOTE v2'] as [string, string]] } : m) : MENU
   const navRef = useRef<HTMLDivElement>(null)
   const linkClass = 'bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold'
 
@@ -133,7 +137,7 @@ export default function Header() {
       </h1>
 
       <div ref={navRef} className="flex gap-2 flex-wrap items-start">
-        {MENU.map((item) => item.type === 'link' ? (
+        {menu.map((item) => item.type === 'link' ? (
           <a
             key={item.label}
             href={`${BASE_PATH}${item.href === '/' ? '' : item.href}`}

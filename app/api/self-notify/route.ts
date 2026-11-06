@@ -285,9 +285,9 @@ async function avisoDuty(db: SupabaseClient, staffId: string, dutyId: string, ac
     rowSeconds = Number(d.time_seconds) || 0
     if (d.invoice_id) {
       const { data: inv, error: iErr } = await db.from('invoices')
-        .select('ride_id, delivery_date, conclusion_date').eq('id', d.invoice_id).maybeSingle()
+        .select('ride_id, expected_conclusion_date, conclusion_date').eq('id', d.invoice_id).maybeSingle()
       if (iErr) return erroDb('invoices', iErr)
-      promised = inv?.delivery_date && !inv?.conclusion_date ? String(inv.delivery_date) : null
+      promised = inv?.expected_conclusion_date && !inv?.conclusion_date ? String(inv.expected_conclusion_date) : null
       if (inv?.ride_id) {
         const { data: ride, error: rErr } = await db.from('rides').select('project_code, project_name').eq('id', inv.ride_id).maybeSingle()
         if (rErr) return erroDb('rides', rErr)

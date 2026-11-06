@@ -161,7 +161,7 @@ export default function StaffDutiesPage() {
     const invoiceIds = [...new Set((dutyRows || []).map((d: any) => d.invoice_id).filter(Boolean))]
     let invs: any[] = []
     if (invoiceIds.length) {
-      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, delivery_date, conclusion_date').in('id', invoiceIds)
+      const { data } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, expected_conclusion_date, conclusion_date').in('id', invoiceIds)
       invs = data || []
     }
     const invById = new Map<string, any>(); invs.forEach((i: any) => invById.set(i.id, i))
@@ -202,7 +202,7 @@ export default function StaffDutiesPage() {
         time_started_at: d.time_started_at || null,
         work_started_at: d.work_started_at || null,
         work_ended_at: d.work_ended_at || null,
-        promised: inv?.delivery_date && !inv?.conclusion_date ? inv.delivery_date : null,
+        promised: inv?.expected_conclusion_date && !inv?.conclusion_date ? inv.expected_conclusion_date : null,
       }
     }))
     setStaffList((staffRows || []) as { id: string; name: string; phone: string | null }[])
