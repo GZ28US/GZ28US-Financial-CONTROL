@@ -152,7 +152,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
     }
     case 'sign': {
       if (await limited(db, 'sign', req, link.id)) return err('err_rate', 429)
-      if (!s.live || !s.bundle.invoice.is_quote) return err('err_stale', 409)
+      const isCo = s.live?.kind === 'CHANGE_ORDER' && !s.bundle.invoice.is_quote   // M4: a change order is approved on the same link
+      if (!s.live || (!s.bundle.invoice.is_quote && !isCo)) return err('err_stale', 409)
       if (s.approvalOnLive) return err('already_approved', 409)
       if (!gateOk) return err('err_gate', 403, { gate: true })
       if (body.revision_id !== s.live.id || body.sha256 !== s.live.sha256) return err('err_stale', 409)
@@ -160,8 +161,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       const raw = String(body.signer_name || '')
       const name = cleanName(raw)
       if (name.length < 2) return err('err_name')
-      const c = body.consents || {}
+      const c = { ...(body.consents || {}) }
       if (c.erecords !== true || c.terms !== true) return err('err_consent')
+      if (isCo) { c.estimate = c.estimate || s.terms?.disclosure_choice || 'WAIVE'; c.parts_return = c.parts_return || s.terms?.parts_return_choice || 'NONE'; c.limit_amount = c.limit_amount ?? s.terms?.disclosure_limit ?? null }   // the elections of the signed quote carry over
       if (!['REQUEST', 'LIMIT', 'WAIVE'].includes(c.estimate) || !['RETURN', 'INSPECT', 'NONE'].includes(c.parts_return)) return err('err_choice')
       const limit = Number(c.limit_amount)
       if (c.estimate === 'LIMIT' && !(limit > 0)) return err('err_limit')
@@ -174,6 +176,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
         p_method: 'CLIENT_ESIGN', p_recorded_by: null, p_ip: ip && /^[0-9a-f.:]+$/i.test(ip) ? ip : null, p_user_agent: (ua || '').slice(0, 400),
         p_note: null, p_evidence_url: null, p_signature_path: null })
       if (error) return /stale|not live|changed|already/i.test(error.message) ? err('err_stale', 409) : (console.error('[q sign]', error.message), err('err_generic', 500))
+      if (isCo) { const ap = await db.rpc('change_order_apply', { p_revision: s.live.id, p_actor: 'client' }); if (ap.error) console.error('[q sign] change_order_apply', ap.error.message) }
       const s2 = await loadDocState(db, link.invoice_id)
       const pay = await payModeOk(!!link.is_test)
       return j(publicDto(s2!, link as any, { rails: await railsEnabled(), payOk: pay.ok, inApp: isInApp(ua), gateOk }))
@@ -181,6 +184,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
     case 'checkout': {
       if (await limited(db, 'checkout', req, link.id)) return err('err_rate', 429)
       if (!s.live || (!s.approvalOnLive && s.bundle.invoice.is_quote)) return err('not_approved', 409)
+      if (s.live.kind === 'CHANGE_ORDER' && !s.approvalOnLive) return err('co_pending', 409)   // M4: payments resume after the change order is approved
       const seq = Number(body.seq || 1)
       const rail = String(body.rail || 'card') as 'card' | 'us_bank_account'
       const enabled = await railsEnabled()

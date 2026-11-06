@@ -15,6 +15,7 @@ import { sessionHeaders } from '@/lib/sessionHeaders'
 import { STAGE_LABEL, SUB_LABEL } from '@/lib/quoteStage'
 import { fmtStamp, fmtDay } from '@/lib/orlando'
 import { DocTab, StatusSheet, TAB_KEYS, tabLabel, type TabKey } from '@/components/doc/DocTabs'
+import { ChangeOrderSheet } from '@/components/doc/ChangeOrderSheet'
 
 type S = Record<string, any>
 const usd = (n: number) => 'US$ ' + Number(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -26,7 +27,7 @@ export default function DocPage() {
   const [err, setErr] = useState('')
   const [msg, setMsg] = useState('')
   const [tab, setTab] = useState<'PLAN' | 'ACTIVITY' | TabKey>('PLAN')
-  const [sheet, setSheet] = useState<'' | 'send' | 'plan' | 'deposit' | 'approve' | 'extend' | 'void' | 'more' | 'status'>('')
+  const [sheet, setSheet] = useState<'' | 'send' | 'plan' | 'deposit' | 'approve' | 'extend' | 'void' | 'more' | 'status' | 'co'>('')
   const [out, setOut] = useState<{ url?: string; text?: string } | null>(null)
 
   const load = useCallback(async () => {
@@ -137,6 +138,7 @@ export default function DocPage() {
         {sheet === 'extend' && <Sheet title="EXTEND" close={() => setSheet('')}>{[7, 15, 30].map(d => <button key={d} onClick={async () => { if (await act('extend', { days: d })) setSheet('') }} className="mr-2 px-4 py-2 rounded bg-white text-black">+{d} days</button>)}</Sheet>}
         {sheet === 'void' && <VoidSheet s={s} close={() => setSheet('')} act={act} />}
         {sheet === 'status' && <StatusSheet s={s} close={() => setSheet('')} act={act} />}
+        {sheet === 'co' && <ChangeOrderSheet s={s} close={() => setSheet('')} act={act} />}
         {sheet === 'more' && <Sheet title="⋯" close={() => setSheet('')}>
           <div className="grid gap-2 text-sm">
             <Link href={editorUrl} className="px-3 py-2 rounded bg-gray-800">EDIT IN EDITOR →</Link>
@@ -149,6 +151,8 @@ export default function DocPage() {
             {s.liveLink && <button onClick={copyLink} className="px-3 py-2 rounded bg-gray-800 text-left">COPY LINK</button>}
             {s.liveLink?.gate === 'CONTACT' && <button onClick={() => act('gate-unlock')} className="px-3 py-2 rounded bg-gray-800 text-left">UNLOCK GATE</button>}
             {s.liveLink && <button onClick={() => act('rotate')} className="px-3 py-2 rounded bg-gray-800 text-left">ROTATE LINK (old link stops working)</button>}
+            {!isQuote && s.coBase && <button onClick={() => setSheet('co')} className="px-3 py-2 rounded bg-gray-800 text-left">+ CHANGE ORDER</button>}
+            {!isQuote && s.live?.kind === 'CHANGE_ORDER' && !s.approvalOnLive && <button onClick={() => setSheet('approve')} className="px-3 py-2 rounded bg-gray-800 text-left">RECORD CHANGE-ORDER APPROVAL (inside the §559.909 band)</button>}
             {!isQuote && <button onClick={() => setSheet('status')} className="px-3 py-2 rounded bg-gray-800 text-left">STATUS ▾ (ONLINE / CLOSE checklist)</button>}
             {isQuote && <button onClick={() => setSheet('void')} className="px-3 py-2 rounded bg-red-900 text-left">VOID</button>}
           </div></Sheet>}

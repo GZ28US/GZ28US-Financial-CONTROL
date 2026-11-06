@@ -184,6 +184,8 @@ function Actions(p: { d: Dto; lang: Lang; T: (k: string, v?: Record<string, stri
   if (stage === 'DECLINED') return <Card><p className="text-gray-300">{T('declined', { date: fmtDay(String(d.declined_at || '').slice(0, 10), lang) })}</p>
     <button disabled={busy} onClick={async () => { const r = await call('decline-withdraw', {}); if (r?.status === 200) p.refresh() }} className="mt-3 w-full min-h-[44px] rounded-lg border border-gray-600 text-white">{T('undo_decline')}</button></Card>
 
+  if (d.change_order) return <CoCard d={d} T={T} busy={busy} call={call} flash={flash} errMsg={errMsg} setD={setD} grand={grand} lang={lang} />
+
   if (!approved && stage !== 'INVOICE') return <>
     {stage === 'CHANGES' && <Card><p className="text-gray-300">{T('changes_received', { date: fmtDay(String(d.changes_at || '').slice(0, 10), lang) })}</p></Card>}
     <SignCard d={d} T={T} busy={busy} call={call} flash={flash} errMsg={errMsg} setD={setD} grand={grand} lang={lang} />
@@ -220,6 +222,52 @@ function Actions(p: { d: Dto; lang: Lang; T: (k: string, v?: Record<string, stri
     {!d.pay_ok && <p className="text-xs text-gray-400 mt-2">{T('err_pay_unavailable')}</p>}
     <ZelleSheet d={d} T={T} call={call} seq={nextDue.seq} flash={flash} />
     <p className="text-[11px] text-gray-500 mt-3">{T('stripe_foot')}</p>
+  </Card>
+}
+
+// M4 — CHANGE ORDER #n: exactly what changes (added / removed / changed lines, the total before → after, the new plan), and one
+// signature (name + the two consents; the estimate / replaced-parts elections of the signed quote carry over server-side).
+function CoCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: Dto; T: any; busy: boolean; call: any; flash: any; errMsg: any; setD: any; grand: number; lang: Lang }) {
+  const co = d.change_order, dl = co?.delta || {}
+  const [name, setName] = useState<string>(d.signer_default || '')
+  const [c1, setC1] = useState(false), [c2, setC2] = useState(false)
+  const [gate, setGate] = useState(''), [gateOk, setGateOk] = useState<boolean>(!!d.gate?.ok)
+  const sign = async () => {
+    if (name.trim().length < 2) return flash(T('err_name'))
+    if (!c1 || !c2) return flash(T('err_consent'))
+    if (d.gate?.needed && !gateOk) {
+      const g = await call('gate', { answer: gate })
+      if (!g) return
+      if (g.status !== 200) return flash(errMsg(g.data))
+      setGateOk(true)
+    }
+    const r = await call('sign', { revision_id: d.document.revision_id, sha256: d.document.sha256, terms_sha256: d.document.terms_sha256, signer_name: name,
+      consents: { erecords: c1, terms: c2 } })
+    if (!r) return
+    if (r.status === 200 && r.data.stage) { setD(r.data); return }
+    if (r.data?.error === 'err_stale') { flash(T('err_stale')); setTimeout(() => window.location.reload(), 2500); return }
+    flash(errMsg(r.data))
+  }
+  const row = (k: string, l: any, v: string) => <div key={k} className="flex justify-between gap-3 py-1 text-sm"><span className="text-gray-200">{l}</span><span className="shrink-0 text-white">{v}</span></div>
+  return <Card tone="blue">
+    <div className="text-xs font-bold tracking-widest text-gray-300 mb-2">{T('co_title', { n: co?.seq ?? '' })}</div>
+    <p className="text-sm text-gray-300 mb-3">{T('co_intro')}</p>
+    {(dl.added || []).length > 0 && <div className="mb-2"><div className="text-xs text-emerald-300 mb-1">+ {T('co_added')}</div>{dl.added.map((l: any) => row('a' + l.id, l.description, money(l.total, lang)))}</div>}
+    {(dl.removed || []).length > 0 && <div className="mb-2"><div className="text-xs text-red-300 mb-1">− {T('co_removed')}</div>{dl.removed.map((l: any) => row('r' + l.id, <s>{l.description}</s>, '− ' + money(l.total, lang)))}</div>}
+    {(dl.changed || []).length > 0 && <div className="mb-2"><div className="text-xs text-amber-300 mb-1">~ {T('co_changed')}</div>{dl.changed.map((l: any) => row('c' + l.id, l.after.description, `${money(l.before.total, lang)} → ${money(l.after.total, lang)}`))}</div>}
+    <div className="text-sm font-semibold text-white mt-2">{T('co_total', { before: money(Number(dl.grand_before || 0), lang), after: money(grand, lang) })}</div>
+    <div className="text-xs text-gray-400 mt-3 mb-1">{T('co_plan')}</div>
+    {(d.plan || []).map((p: any) => row('p' + p.seq, `${p.seq}  ${p.label}`, moneyCents(p.amount_cents, lang) + (p.paid ? ` ✓ ${T('paid')}` : '')))}
+    <label className="text-xs text-gray-400 mt-4 block">{T('sign_name')}</label>
+    <input value={name} onChange={e => setName(e.target.value)} className="w-full mt-1 mb-3 bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" autoComplete="name" />
+    <label className="flex gap-3 items-start text-sm text-gray-200 mb-2"><input type="checkbox" checked={c1} onChange={e => setC1(e.target.checked)} className="mt-1 w-5 h-5" />{T('consent_erecords')}</label>
+    <label className="flex gap-3 items-start text-sm text-gray-200 mb-3"><input type="checkbox" checked={c2} onChange={e => setC2(e.target.checked)} className="mt-1 w-5 h-5" />{T('co_consent')}</label>
+    {d.gate?.needed && !gateOk && <div className="mb-3">
+      <div className="text-sm text-gray-200 mb-1">{d.gate.hint?.kind === 'phone' ? T('gate_phone', { last2: d.gate.hint.last2 }) : T('gate_email', { masked: d.gate.hint?.masked || '' })}</div>
+      <input value={gate} onChange={e => setGate(e.target.value)} placeholder={d.gate.hint?.kind === 'phone' ? T('gate_phone_ph') : T('gate_email_ph')}
+        inputMode={d.gate.hint?.kind === 'phone' ? 'numeric' : 'email'} className="w-full bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" /></div>}
+    <button disabled={busy} onClick={sign} className="w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold disabled:opacity-60">{T('co_approve_btn', { amount: money(grand, lang) })}</button>
+    <p className="text-xs text-gray-400 mt-2">{T('co_pending_pay')}</p>
   </Card>
 }
 

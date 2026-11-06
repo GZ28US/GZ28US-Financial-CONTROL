@@ -9,10 +9,13 @@ import { orlandoToday } from '@/lib/orlando'
 import { moneyCents, type Lang } from '@/lib/quoteStrings'
 import { staffRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/docFiles.server'
 import { tabsExtras, tabAction } from '@/lib/docTabs.server'
+import { buildChangeOrder, coBand, approvedRevision } from '@/lib/changeOrder.server'
 
 // STAFF ACTIONS ON ONE DOCUMENT (06/11/2026; blueprint §2.3). /ca/api/doc/<invoiceId>/<action>
 //   GET  state · link · preview
 //   POST seed · send · revision · rotate · gate-unlock · plan · approve-manual · deposit-manual · extend · void · note-hide
+//   M4 change-order {edits, valid_days?, preview?} (lib/changeOrder.server.ts → change_order_send; approve-manual on a CO only inside the
+//   §559.909 band, then change_order_apply)
 //   M3 tabs (lib/docTabs.server.ts): item-add/save/del · service-add/save/del · note-add/save/del · duty-add/toggle/save/del · status
 // Every call: requireStaff (a HUMAN JWT — machine accounts refused; the actor recorded is ALWAYS the JWT e-mail, never a body
 // field). Every mutation except `seed`: actionsAllow = app_settings qi_v2.actions OR the document is a test document → else 409.
@@ -96,7 +99,8 @@ function staffState(s: DocState) {
     revisions: s.revisions.map(r => ({ id: r.id, seq: r.seq, kind: r.kind, sha256: r.sha256, grand_total: r.grand_total, fl_tax: r.fl_tax, fl_tax_status: r.fl_tax_status,
       sent_at: r.sent_at, sent_channel: r.sent_channel, sent_to: r.sent_to, superseded_at: r.superseded_at, created_by: r.created_by, created_at: r.created_at,
       installments: r.document?.installments || [] })),
-    live: s.live ? { id: s.live.id, seq: s.live.seq } : null,
+    live: s.live ? { id: s.live.id, seq: s.live.seq, kind: s.live.kind } : null,
+    coBase: (() => { const r = !s.bundle.invoice.is_quote ? approvedRevision(s) : null; return r ? { seq: r.seq, lines: r.document?.lines || [] } : null })(),
     approvals: s.approvals, approvalOnLive: s.approvalOnLive, links: s.links, liveLink: s.liveLink, attempts: s.attempts, events: s.events,
     clientNotes: s.clientNotes, stage: s.stage, presentedDrift: s.presentedDrift, planDrift: s.planDrift, signedDrift: s.signedDrift, isTest: s.isTest,
     readiness: s.terms ? buildRevision(s.bundle, s.terms, s.plan).problems : ['no terms yet'],
@@ -255,13 +259,25 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
       const name = String(body.signer_name || '').trim(), note = String(body.note || '').trim()
       if (name.length < 2 || !note) return bad('signer name and note are required')
       if (s.approvalOnLive) return bad('already approved', 409)
-      const fr = await freezeRecorded(db, s, actor)
+      const isCo = s.live?.kind === 'CHANGE_ORDER'
+      if (isCo) {
+        const d = s.live!.delta || s.live!.document?.change_order?.delta
+        const band = coBand(Number(d?.grand_before || 0), Number(d?.grand_after || 0))
+        if (!band.staffMayRecord) return bad(`above the Fla. §559.909 band (+US$ ${band.increase.toFixed(2)} > US$ ${band.band.toFixed(2)}) — the client approves this change order on the link`, 409)
+      }
+      const fr = isCo ? null : await freezeRecorded(db, s, actor)
       if (fr) return bad(fr)
       s = (await loadDocState(db, id))!
       const { data, error } = await db.rpc('quote_approve', { p_invoice: id, p_link: null, p_revision: s.live!.id, p_sha256: s.live!.sha256, p_terms_sha256: s.live!.terms_sha256,
         p_signer_name: name.slice(0, 80), p_signer_contact: null, p_consents: { recorded: true }, p_attribution: {}, p_method: method, p_recorded_by: actor,
         p_ip: null, p_user_agent: null, p_note: note.slice(0, 500), p_evidence_url: body.evidence_url || null, p_signature_path: null })
-      return error ? rpcErr(error.message) : NextResponse.json({ ok: true, approval_id: data })
+      if (error) return rpcErr(error.message)
+      if (isCo) {
+        const ap = await db.rpc('change_order_apply', { p_revision: s.live!.id, p_actor: actor })
+        if (ap.error) return rpcErr(ap.error.message)
+        return NextResponse.json({ ok: true, approval_id: data, applied: ap.data })
+      }
+      return NextResponse.json({ ok: true, approval_id: data })
     }
     case 'deposit-manual': {
       // WHITELIST only — livemode / reported_at / mute are decided server-side.
@@ -310,6 +326,19 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
         after(() => afterHire(id, data as Record<string, any>).catch(e => console.error('[hire ladder]', id, e?.message || e)))
       }
       return NextResponse.json({ ok: true, result: data })
+    }
+    case 'change-order': {
+      const days = Math.max(1, Math.min(90, Number(body.valid_days) || 15))
+      const co = buildChangeOrder(s!, body.edits || {}, { validUntil: addDays(orlandoToday(), days) })
+      if (!('document' in co)) return NextResponse.json({ error: co.problems.join(' · '), problems: co.problems }, { status: 409 })
+      if (body.preview) return NextResponse.json({ ok: true, preview: true, problems: co.problems, delta: co.delta, band: co.band, grand: co.grand, fl_tax: co.fl_tax,
+        installments: (co.document!.installments || []).map((i: any) => ({ seq: i.seq, label: i.label_text, amount_cents: i.amount_cents, paid: !!s!.stage.paidBySeq[i.seq] })) })
+      if (co.problems.length) return NextResponse.json({ error: co.problems.join(' · '), problems: co.problems }, { status: 409 })
+      const { data, error } = await db.rpc('change_order_send', { p_invoice: id, p_actor: actor, p_document: co.document, p_sha256: co.sha256,
+        p_presented_sha256: co.presented_sha256, p_terms_sha256: co.terms_sha256, p_grand: co.grand, p_fl_tax: co.fl_tax, p_fl_status: co.fl_status,
+        p_delta: co.delta, p_valid_days: days })
+      if (error) return rpcErr(error.message)
+      return NextResponse.json({ ok: true, result: data, delta: co.delta, band: co.band })
     }
     default: {
       const r = await tabAction(db, s, action, body, actor)   // M3 tabs: items · services · notes · duties · status

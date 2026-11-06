@@ -195,6 +195,9 @@ export function publicDto(s: DocState, link: { id: string; gate: string; gate_ti
     } : null,
     terms_text: TERMS_TEXT[lang], terms_sha256_now: termsSha256(lang), fl_estimate_text: FL_ESTIMATE_TEXT[lang],
     plan, last_seq: lastSeq, balance_pending_update: s.planDrift !== 0,
+    // M4: a change order waiting for the client — what changes, in the client's language (lines are the frozen CO revision's)
+    change_order: live && live.kind === 'CHANGE_ORDER' && !ap ? { seq: live.seq, delta: live.delta || doc?.change_order?.delta || null } : null,
+    change_order_applied: [...s.events].reverse().find(e => e.kind === 'CHANGE_ORDER_APPLIED')?.payload?.seq ?? null,
     rails: (s.terms?.rails || []).filter(r => r === 'ZELLE' || r === 'WIRE' || r === 'PIX_BR' || opts.rails.includes(r)),
     pay_ok: opts.payOk, in_app: opts.inApp,
     approval: ap ? { signer_name: ap.signer_name, method: ap.method, signed_at: ap.signed_at, document_sha256: ap.document_sha256,

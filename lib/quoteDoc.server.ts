@@ -228,7 +228,7 @@ export async function loadDocState(db: SupabaseClient, invoiceId: string): Promi
     is_quote: !!bundle.invoice.is_quote,
     link: latestLink ? { revoked_at: latestLink.revoked_at, first_viewed_at: latestLink.first_viewed_at } : null,
     liveLink: !!liveLink,
-    live: live ? { id: live.id, seq: live.seq, created_at: live.created_at } : null,
+    live: live ? { id: live.id, seq: live.seq, created_at: live.created_at, kind: live.kind } : null,
     hasSuperseded: revisions.some(r => r.superseded_at && r.kind !== 'LEGACY_BACKUP'),
     approvalOnLive: !!approvalOnLive, anyApproval: approvals.length > 0,
     attempts: attempts.map(a => ({ status: a.status, installment_id: a.installment_id, seq: a.seq, verification: a.verification, created_at: a.created_at, revision_id: a.revision_id })),

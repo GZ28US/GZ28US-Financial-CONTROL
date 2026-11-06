@@ -6,13 +6,13 @@
 // installment they reverse, so a refund brings the installment back to unpaid).
 
 export type Stage = 'VOID' | 'INVOICE' | 'SIGNED' | 'DRAFT' | 'EXPIRED' | 'DECLINED' | 'CHANGES' | 'VIEWED' | 'SENT'
-export type SubStage = 'DEPOSIT_PENDING' | 'DEPOSIT_CLEARING' | 'DEPOSIT_FAILED' | 'DEPOSIT_RECEIVED' | 'DEPOSIT_REFUNDED' | 'NEW_VERSION_PENDING' | null
+export type SubStage = 'DEPOSIT_PENDING' | 'DEPOSIT_CLEARING' | 'DEPOSIT_FAILED' | 'DEPOSIT_RECEIVED' | 'DEPOSIT_REFUNDED' | 'NEW_VERSION_PENDING' | 'CHANGE_ORDER_PENDING' | null
 
 export type StageInput = {
   is_quote: boolean
   link: { revoked_at: string | null; first_viewed_at: string | null } | null       // latest link (live, or the revoked one if none is live)
   liveLink: boolean                                                                  // a non-revoked link exists
-  live: { id: string; seq: number; created_at: string } | null                       // live revision (QUOTE/CHANGE_ORDER, not superseded)
+  live: { id: string; seq: number; created_at: string; kind?: string } | null        // live revision (QUOTE/CHANGE_ORDER, not superseded)
   hasSuperseded: boolean
   approvalOnLive: boolean
   anyApproval: boolean
@@ -44,6 +44,7 @@ export function quoteStage(d: StageInput): StageOut {
   const latest = [...d.attempts].sort((a, b) => b.created_at.localeCompare(a.created_at))[0]
   if (!d.is_quote) {
     if (!d.live && !d.anyApproval) return out('INVOICE')
+    if (d.live?.kind === 'CHANGE_ORDER' && !d.approvalOnLive) return out('INVOICE', 'CHANGE_ORDER_PENDING')   // M4: the client approves the CO on the link
     const first = d.plan.find(p => p.seq === 1)
     if (first) {
       if (paid[1]) return out('INVOICE', 'DEPOSIT_RECEIVED')
@@ -94,5 +95,5 @@ export const STAGE_LABEL: Record<Stage, string> = {
 }
 export const SUB_LABEL: Record<Exclude<SubStage, null>, string> = {
   DEPOSIT_PENDING: 'deposit pending', DEPOSIT_CLEARING: 'deposit clearing', DEPOSIT_FAILED: 'deposit failed',
-  DEPOSIT_RECEIVED: 'deposit received', DEPOSIT_REFUNDED: 'deposit refunded', NEW_VERSION_PENDING: 'new version pending',
+  DEPOSIT_RECEIVED: 'deposit received', DEPOSIT_REFUNDED: 'deposit refunded', NEW_VERSION_PENDING: 'new version pending', CHANGE_ORDER_PENDING: 'change order awaiting approval',
 }
