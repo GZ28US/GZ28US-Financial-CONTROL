@@ -81,6 +81,8 @@ const OPCIONAIS: Record<string, string> = {
   STT_BASE_URL: 'idem',
   STT_MODEL: 'idem',
   BRL_USD_RATE: 'câmbio de emergência quando a cotação não responde',
+  STRIPE_SECRET_KEY: 'lida pelo portal de quote (pagamento da 1ª parcela) — 06/11/2026; sk_test_ = modo teste',
+  STRIPE_WEBHOOK_SECRET: 'lida por /api/stripe/webhook (endpoint próprio do Control App) — 06/11/2026',
 }
 
 const olhar = (nomes: Record<string, string>) => {
