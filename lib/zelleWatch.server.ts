@@ -161,6 +161,10 @@ type Destino = {
   code: string
   // A linha de "Pending balance" que este dinheiro quita, quando bate exato.
   quita?: { id: string; amount: number }
+  // QUOTE PORTAL (§9 #3, 06/11/2026): a PARCELA DO PLANO (installment_id) que bate ao centavo — recebe a baixa NA PRÓPRIA LINHA
+  // (income_settle), nunca uma renda nova + apagar: linha do plano não se apaga (trg_plan_row_no_delete), e o par insert+delete
+  // deixaria o dinheiro contado duas vezes.
+  settle?: { id: string; amount: number }
   // Como se chegou aqui — vai no aviso, para o palpite nunca se passar por certeza.
   via: 'VALOR EXATO' | 'VALOR PROXIMO' | 'PALPITE: invoice aberta mais nova' | 'PALPITE: historico'
   diferenca?: number
@@ -177,8 +181,16 @@ async function destinoPorValor(db: SupabaseClient, clientId: string, amount: num
   // de caixa do app, e o editor cria essa linha como "Pending balance".
   const { data: abertas } = await db.from('invoice_incomes')
     .select('id, invoice_id, amount, payment_date, description')
-    .in('invoice_id', ids).is('payment_date', null)
+    .in('invoice_id', ids).is('payment_date', null).is('installment_id', null)
   const cands = (abertas || []) as Array<Record<string, unknown>>
+  // A PARCELA DO PLANO em aberto é paid_at vazio (payment_date dela pode ser a data prevista). Exata e única → baixa nela, primeiro.
+  const { data: plano } = await db.from('invoice_incomes').select('id, invoice_id, amount').in('invoice_id', ids).not('installment_id', 'is', null).is('paid_at', null)
+  const planoExatas = ((plano || []) as Array<Record<string, unknown>>).filter(p => Math.abs(Number(p.amount) - amount) < 0.005)
+  if (planoExatas.length === 1) {
+    const p = planoExatas[0]
+    return { invoice_id: String(p.invoice_id), code: code.get(String(p.invoice_id)) || '?', settle: { id: String(p.id), amount: Number(p.amount) }, via: 'VALOR EXATO' }
+  }
+  if (planoExatas.length > 1) return null   // duas parcelas iguais: empate não é resposta
 
   const exatas = cands.filter(p => Math.abs(Number(p.amount) - amount) < 0.005)
   if (exatas.length === 1) {
@@ -206,7 +218,7 @@ async function destinoPorValor(db: SupabaseClient, clientId: string, amount: num
 // lá) e mexeu na conta entre as empresas. Destino numa 006.N não é destino: vira
 // pergunta.
 type Recusado = { recusado: string }
-async function targetInvoice(db: SupabaseClient, party: string, amount: number): Promise<Destino | Recusado | null> {
+export async function targetInvoice(db: SupabaseClient, party: string, amount: number): Promise<Destino | Recusado | null> {
   const words = party.trim().split(/\s+/).filter(w => w.length > 2)
   if (!words.length) return null
 
@@ -219,6 +231,14 @@ async function targetInvoice(db: SupabaseClient, party: string, amount: number):
     // O VALOR PRIMEIRO — a dívida em aberto diz a invoice melhor que a data.
     const porValor = await destinoPorValor(db, String(client.id), amount)
     if (porValor) return porValor
+    // QUOTE PORTAL: cliente com parcela do plano em aberto e nenhum valor exato — NUNCA palpite (renda solta num documento com plano
+    // desmontaria o plano); vira pergunta, e a baixa é RECORD PAYMENT no /doc.
+    const { data: suas } = await db.from('invoices').select('id').eq('client_id', client.id).eq('is_quote', false)
+    const suasIds = (suas || []).map(i => String((i as Record<string, unknown>).id))
+    if (suasIds.length) {
+      const { count } = await db.from('invoice_incomes').select('id', { count: 'exact', head: true }).in('invoice_id', suasIds).not('installment_id', 'is', null).is('paid_at', null)
+      if ((count || 0) > 0) return { recusado: 'o cliente tem parcela do plano de pagamento em aberto e o valor não bate exato com nenhuma — dê a baixa em RECORD PAYMENT no /doc (QUOTES v2)' }
+    }
 
     // Sem dívida que case: aí sim o palpite antigo — invoice viva mais recente
     // (nunca quote, nunca concluída). Vai rotulado como palpite no aviso.
@@ -290,6 +310,20 @@ export async function runZelleWatch(db: SupabaseClient): Promise<{ booked: strin
       const target = alvo && !('recusado' in alvo) ? alvo : null
       if (target) {
         const recibo = await guardaComprovante(db, target.invoice_id, hit, String(m.body?.content || ''))
+        if (target.settle) {
+          // a parcela do plano recebe a baixa na própria linha; nasce REPORTED (o balão abaixo É o report), descrição intacta
+          const { error: se } = await db.rpc('income_settle', { p_income: target.settle.id, p_attempt: null, p_muted: true, p_money: {
+            paid_on: hit.when, amount_cents: Math.round(hit.amount * 100), source: 'ZELLE', paid_to: 'GZ28US', receipt_url: recibo || undefined,
+            payment_reference: `zelle:${hit.conf}` } })
+          if (se) {
+            pending.push(`${hit.party} ${hit.amount} (parcela do plano: ${se.message})`)
+            await wa(MARCIO_US, `⚠️ *ZELLE RECEBIDO — PARCELA NÃO BAIXADA*\n${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nInvoice ${target.code}\nConf ${hit.conf} · Regions •9336\n\nA parcela do plano não aceitou a baixa (${semMarcacao(se.message).slice(0, 120)}). Dê a baixa em RECORD PAYMENT no /doc.`)
+            continue
+          }
+          booked.push(`${hit.party} ${hit.amount} → ${target.code} (parcela do plano)`)
+          await wa(MARCIO_US, `💰 *ZELLE RECEBIDO — LANÇADO*\n${hit.amount.toFixed(2)} de ${semMarcacao(hit.party)}\nInvoice ${target.code}\n✅ baixa na parcela do plano de ${target.settle.amount.toFixed(2)}\nConf ${hit.conf} · Regions •9336${recibo ? '\n📎 comprovante anexado' : '\n⚠️ sem comprovante anexado'}`)
+          continue
+        }
         await db.from('invoice_incomes').insert({
           invoice_id: target.invoice_id, amount: hit.amount, payment_date: hit.when, source: 'ZELLE', paid_to: 'GZ28US',
           description: `Zelle from ${hit.party} — conf ${hit.conf} (Regions •9336)`,
