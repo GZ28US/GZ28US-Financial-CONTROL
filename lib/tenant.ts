@@ -5,7 +5,7 @@
 export type TenantId = 'US' | 'BR'
 export type Tenant = {
   id: TenantId
-  company: { name: string; address: string; phone: string; email: string }
+  company: { name: string; taxId: string; address: string; phone: string; email: string }
   currency: 'usd' | 'brl'
   locale: 'en-US' | 'pt-BR'
   defaultLanguage: 'en' | 'pt'
@@ -20,10 +20,16 @@ export type Tenant = {
   deposit: { holder: string; taxId: string; bank: string; branch: string; account: string; pix: string } | null
 }
 
+// BR company (Márcio, 06/11/2026, decision 7): the legal entity is the SAME one the client pays (deposit below reads it from here).
+// Address, phone and e-mail copied from the BR client paper (app/rides/[id]/invoices/[invoiceId]/page.tsx, «pi-company»), not retyped
+// from memory (D-03). The paper prints the brand «GZ28 V8 SpeedShop BR» on top; this block is the legal name under it.
+const BR_COMPANY = { name: 'GZ28 Comércio e Serviços para Automóveis Ltda.', taxId: '58.377.183/0001-49',
+  address: 'Av Arq Carlos Bratke 954, 04728-002, São Paulo / SP', phone: '(11) 98121.5678', email: 'gz28br@hotmail.com' }
+
 export const TENANTS: Record<TenantId, Tenant> = {
   US: {
     id: 'US',
-    company: { name: 'GZ28 V8 SpeedShop USA LLC', address: '11320 Space Blvd, 32837, Orlando / FL', phone: '(321) 315.0973', email: 'gz28us@hotmail.com' },
+    company: { name: 'GZ28 V8 SpeedShop USA LLC', taxId: '', address: '11320 Space Blvd, 32837, Orlando / FL', phone: '(321) 315.0973', email: 'gz28us@hotmail.com' },
     currency: 'usd', locale: 'en-US', defaultLanguage: 'en', timeZone: 'America/New_York',
     publicBase: 'https://www.gz28us.com/ca',
     contact: { whatsapp: '+1 (321) 315-0973', email: 'gz28us@hotmail.com', instagram: '@gz28us', facebook: 'Dema De Maria' },
@@ -34,14 +40,14 @@ export const TENANTS: Record<TenantId, Tenant> = {
   },
   BR: {
     id: 'BR',
-    company: { name: 'GZ28 V8 SpeedShop', address: '', phone: '', email: 'gz28br@hotmail.com' },   // BR address/phone: the owner's block (decision pending)
+    company: BR_COMPANY,
     currency: 'brl', locale: 'pt-BR', defaultLanguage: 'pt', timeZone: 'America/Sao_Paulo',
     publicBase: 'https://www.gz28br.com/ca',
-    contact: { whatsapp: '', email: 'gz28br@hotmail.com', instagram: '@gz28br', facebook: '' },
+    contact: { whatsapp: '', email: 'gz28br@hotmail.com', instagram: '@gz28br', facebook: 'galpaoz28' },
     rails: ['PIX_BR'],
     tables: { lines: 'invoice_parts', incomes: 'invoice_payments' },
     receivingHouse: 'GZ28BR',
-    deposit: { holder: 'GZ28 Comércio e Serviços para Automóveis Ltda.', taxId: 'CNPJ 58.377.183/0001-49', bank: 'Banco C6 S.A. (336)', branch: 'AG 0001', account: 'CC 35810689-3', pix: 'PIX 58377183000149' },
+    deposit: { holder: BR_COMPANY.name, taxId: 'CNPJ ' + BR_COMPANY.taxId, bank: 'Banco C6 S.A. (336)', branch: 'AG 0001', account: 'CC 35810689-3', pix: 'PIX 58377183000149' },
   },
 }
 
