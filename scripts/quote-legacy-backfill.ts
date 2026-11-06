@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
 // QUOTE PORTAL M2 — LEGACY_BACKUP backfill (06/11/2026; blueprint §4.6 #3, §16 M2).
 // Every `quote_backups` row (the pristine quote the editor saved right before converting it to an invoice) becomes one
 // `invoice_revisions` row kind LEGACY_BACKUP, seq 0, so the document's history starts with what the client was quoted.
@@ -5,6 +6,7 @@
 // This script only READS and WRITES TWO SQL FILES for review; the migration runs through scripts/roda-sql.mjs.
 //   npx jiti scripts/quote-legacy-backfill.ts
 import fs from 'node:fs'
+import os from 'node:os'
 import { createClient } from '@supabase/supabase-js'
 import { invoiceMoneyFor } from '../lib/flTax'
 import { foraDoDinheiro } from '../lib/estorno'
@@ -48,7 +50,7 @@ async function main() {
   const sql = `${head}begin;\ninsert into public.invoice_revisions (invoice_id, seq, kind, document, sha256, presented_sha256, terms_sha256, grand_total, fl_tax, fl_tax_status, created_by, created_at) values\n${rows.join(',\n')}\non conflict (invoice_id, seq) do nothing;\ninsert into public.data_fixes (check_key, table_name, row_id, field, old_value, new_value, label)\nselect 'quote-portal-legacy', 'invoice_revisions', id::text, 'migration', null, 'LEGACY_BACKUP', 'backfill de quote_backups (M2)' from public.invoice_revisions where kind = 'LEGACY_BACKUP' and created_by = 'legacy-backfill';\ncommit;\n`
   const rb = `-- ROLLBACK of MIGRATION_quote_portal_legacy_backup.sql — removes ONLY the backfilled LEGACY_BACKUP rows.\n-- invoice_revisions is append-only: the delete passes through the test_cleanup escape (postgres/service_role only).\nbegin;\nselect set_config('gz28.test_cleanup', gen_random_uuid()::text, true);\ndelete from public.invoice_revisions where kind = 'LEGACY_BACKUP' and created_by = 'legacy-backfill';\ninsert into public.data_fixes (check_key, table_name, row_id, field, old_value, new_value, label) values ('quote-portal-legacy', 'invoice_revisions', 'all', 'migration', 'LEGACY_BACKUP', null, 'rollback do backfill');\ncommit;\n`
   // the generated SQL carries client snapshots — it never goes into git; written next to the system temp folder
-  const outDir = process.env.LEGACY_OUT || require('node:os').tmpdir()
+  const outDir = process.env.LEGACY_OUT || os.tmpdir()
   fs.writeFileSync(outDir + '/MIGRATION_quote_portal_legacy_backup.sql', sql)
   fs.writeFileSync('ROLLBACK_quote_portal_legacy_backup.sql', rb)
   console.log(report.join('\n')); console.log(`\n${rows.length} rows → MIGRATION_quote_portal_legacy_backup.sql · skipped ${skipped.length}:`); for (const x of skipped) console.log('  ' + x)
