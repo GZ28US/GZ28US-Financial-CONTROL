@@ -778,6 +778,7 @@ export default function ViewInvoicePage() {
       {/* SCREEN UI */}
       <main className="min-h-screen bg-black text-white p-8 pb-28 no-print">
         <Header />
+        <div className="print:hidden mb-3 text-right"><a href={`${BASE_PATH}/doc/${invoiceId}`} className="text-xs font-semibold text-sky-300 underline">OPEN IN V2 (quote portal) →</a></div>
 
         {showDuplicate && <DocPicker type="quote" duplicateFrom={invoiceId} onClose={() => setShowDuplicate(false)} />}
 

@@ -386,6 +386,24 @@ export default function EditInvoicePage() {
   const pathname = usePathname()
   const ownerId = String(params.id)
   const invoiceId = String(params.invoiceId)
+  // QUOTE PORTAL GUARD (06/11/2026; blueprint §9 #2): a SENT revision freezes the presented prices (the DB trigger refuses the
+  // change — C-16). Here the editor says so up front and points to /doc, where NEW REVISION / RECORD DEPOSIT live. Legacy quotes
+  // (no portal revision) see nothing. ?from=doc makes SAVE & EXIT return to /doc.
+  const [portalLock, setPortalLock] = useState<{ seq: number; approved: boolean; open: boolean } | null>(null)
+  useEffect(() => {
+    let on = true
+    ;(async () => {
+      const { data: rv } = await supabase.from('invoice_revisions').select('id, seq').eq('invoice_id', invoiceId).is('superseded_at', null).in('kind', ['QUOTE', 'CHANGE_ORDER']).order('seq', { ascending: false }).limit(1)
+      if (!on || !rv?.length) return
+      const [{ count: ap }, { count: at }] = await Promise.all([
+        supabase.from('invoice_approvals').select('id', { count: 'exact', head: true }).eq('invoice_id', invoiceId),
+        supabase.from('payment_attempts').select('id', { count: 'exact', head: true }).eq('invoice_id', invoiceId).in('status', ['OPEN', 'PROCESSING']),
+      ])
+      if (on) setPortalLock({ seq: rv[0].seq, approved: (ap || 0) > 0, open: (at || 0) > 0 })
+    })()
+    return () => { on = false }
+  }, [invoiceId])
+  const fromDoc = typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('from') === 'doc'
   const isClient = (pathname || '').includes('/clients/')
   const basePath = isClient ? `/clients/${ownerId}/invoices` : `/rides/${ownerId}/invoices`
 
@@ -2680,7 +2698,7 @@ export default function EditInvoicePage() {
     // Salvou: os recibos das expenses vão para a pasta da invoice com o nome de
     // agora. Roda solto — sair da tela não pode esperar por Dropbox.
     syncInvoiceReceipts(invoiceId)
-    if (exitAfterSaveRef.current) { router.push(basePath); return }
+    if (exitAfterSaveRef.current) { router.push(fromDoc ? `/doc/${invoiceId}` : basePath); return }
     await loadData(true)
     setSavedFlash(true)
     setTimeout(() => setSavedFlash(false), 2500)
@@ -3199,6 +3217,13 @@ export default function EditInvoicePage() {
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
+      {portalLock && (
+        <div className="mb-4 rounded-xl border border-red-700 bg-red-950/60 p-3 text-sm text-red-100">
+          <b>SENT rev {portalLock.seq} — prices locked (C-16).</b> Add lines freely; to change a price, discount or FL tax tap NEW REVISION in{' '}
+          <a href={`${BASE_PATH}/doc/${invoiceId}`} className="underline font-semibold">/doc →</a>
+          {(portalLock.approved || portalLock.open) && <div className="mt-1">Approved online — the deposit converts this quote: leave HIRING DATE empty and use RECORD DEPOSIT in /doc.</div>}
+        </div>
+      )}
 
       {showStockModal && (
         <div className="fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 p-4">

@@ -742,7 +742,8 @@ begin
     insert into data_fixes (check_key, table_name, row_id, field, old_value, new_value, label)
     values ('quote-hire', 'clients', v_client.id::text, 'client_number', v_client.client_number::text, v_num::text, 'quote portal hire ' || p_attempt);
     if v_inv.ride_id is null then
-      v_old_pad := lpad(coalesce(v_client.client_number, 0)::text, 3, '0'); v_new_pad := lpad(v_num::text, 3, '0');
+      v_old_pad := lpad(coalesce(v_client.client_number, 0)::text, greatest(3, length(coalesce(v_client.client_number, 0)::text)), '0');
+      v_new_pad := lpad(v_num::text, greatest(3, length(v_num::text)), '0');
       for r in select id, invoice_code from invoices where client_id = v_client.id and ride_id is null and invoice_code like v_old_pad || '.%' loop
         update invoices set invoice_code = v_new_pad || substr(r.invoice_code, length(v_old_pad) + 1), updated_at = now() where id = r.id;
         insert into data_fixes (check_key, table_name, row_id, field, old_value, new_value, label)

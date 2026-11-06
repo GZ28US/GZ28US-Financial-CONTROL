@@ -265,7 +265,7 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
         inputMode={d.gate.hint?.kind === 'phone' ? 'numeric' : 'email'} className="w-full bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" /></div>}
     <button disabled={busy} onClick={sign} className="w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold disabled:opacity-60">{T('approve_btn', { amount: money(grand, lang) })}</button>
     {dep && <p className="text-xs text-gray-400 mt-2">{T('next_pay', { amount: moneyCents(dep.amount_cents, lang) })}</p>}
-    <button onClick={() => setOpen(false)} className="text-xs text-gray-500 mt-3 underline">{T('not_now')}</button>
+    <button onClick={() => setOpen(false)} className="text-xs text-gray-500 mt-2 underline min-h-[44px]">{T('not_now')}</button>
   </Card>
 }
 
