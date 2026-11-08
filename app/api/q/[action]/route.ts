@@ -9,6 +9,9 @@ import {
 import { openDepositCheckout, claimAndFulfil } from '@/lib/stripeEvents.server'
 import type { Lang } from '@/lib/quoteStrings'
 import { clientRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/docFiles.server'
+import { settingOn } from '@/lib/appSettings.server'
+import { supabaseOtpStore, otpSignGate, otpConsume, otpIssue, otpVerify, otpChannelFor, otpPassLive } from '@/lib/quoteOtp.server'
+import { toWaNumber } from '@/lib/utils'
 
 // THE CLIENT'S QUOTE PAGE — server side (06/11/2026; blueprint §2.1, §5). /ca/api/q/<action>, all POST, all JSON.
 //   open      {token}                      → sets the per-link httpOnly cookie, returns the document DTO
@@ -17,6 +20,9 @@ import { clientRevisionPdf, attemptReceiptPdf, pdfResponseHeaders } from '@/lib/
 // The token travels once (open); afterwards only {link_id} + the cookie. A REAL document answers {state:'inactive'} and refuses
 // every mutation while app_settings quote_portal.enabled is false; a TEST document (quote_links.is_test) works. Nothing here
 // messages anyone; every client act is an invoice_events row.
+// M4 (08/11/2026) — SIGNING CODE, only while app_settings quote_portal.sign_otp is ON: otp-send · otp-verify, and `sign` asks for a
+// verified code (lib/quoteOtp.server). OFF → those two actions do not exist (404 unknown), the DTO has no `otp` field and `sign` is the
+// pre-OTP code path. The ONE message this file can cause is that code, to the client on file (lib/notify.server sendOtpMessage).
 
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
@@ -33,6 +39,17 @@ const cleanName = (s: string) => s.normalize('NFC').replace(/[^\p{L}\p{M}\s'.\-]
 async function ev(db: ReturnType<typeof serviceDb>, invoiceId: string, revisionId: string | null, kind: string, payload: Record<string, unknown> = {}) {
   await db.rpc('doc_event', { p_invoice: invoiceId, p_revision: revisionId, p_kind: kind, p_actor: 'CLIENT', p_actor_id: null, p_payload: payload })
 }
+
+// The signing code's channel for this document: the client on file + the channel the live revision went on (§5.2 (5)).
+const OTP_SETTING = 'quote_portal.sign_otp'
+function otpTarget(s: NonNullable<Awaited<ReturnType<typeof loadDocState>>>) {
+  const c = s.bundle.client
+  const n = toWaNumber(c?.phone, c?.country)
+  return otpChannelFor(s.live?.sent_channel, n && n.length >= 10 ? `${n}@c.us` : null, c?.email)
+}
+const otpHint = (t: { channel: string; to: string } | null) => !t ? null : t.channel === 'EMAIL'
+  ? { channel: 'EMAIL', masked: (() => { const [u, d] = t.to.split('@'); return `${u?.[0] || ''}•••@${d || ''}` })() }
+  : { channel: 'WHATSAPP', masked: '••' + t.to.replace(/\D/g, '').slice(-4) }
 
 // GET /ca/api/q/pdf?link_id=…[&rev=n] · /ca/api/q/receipt?link_id=…&attempt=… — the CLIENT copies (masked certificate), from the private
 // bucket. Cookie required; behind the CONTACT gate when the link has one (security R2-07). Same budget as the page.
@@ -102,7 +119,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
   const gateOk = link.gate !== 'CONTACT' || gatePassOk(link.id, req.cookies.get(gateCookieName(link.id))?.value)
   const dto = async () => {
     const pay = await payModeOk(!!link.is_test)
-    return publicDto(s, link as any, { rails: await railsEnabled(), payOk: pay.ok, inApp: isInApp(ua), gateOk })
+    const base = publicDto(s, link as any, { rails: await railsEnabled(), payOk: pay.ok, inApp: isInApp(ua), gateOk })
+    if (!(await settingOn(OTP_SETTING))) return base                    // OFF → the DTO is exactly the pre-OTP one
+    const tg = otpTarget(s)
+    const verified = s.live ? await otpPassLive(supabaseOtpStore(db), link.id, s.live.id).catch(() => false) : false
+    return { ...base, otp: { needed: !!tg, verified, hint: otpHint(tg) } }
   }
 
   switch (action) {
@@ -169,13 +190,17 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       if (c.estimate === 'LIMIT' && !(limit > 0)) return err('err_limit')
       const consents = { erecords: true, terms: true, estimate: c.estimate, limit_amount: c.estimate === 'LIMIT' ? limit : null, parts_return: c.parts_return,
         signer_name_sha256: createHash('sha256').update(raw).digest('hex'), consent_text: 'consent_erecords+consent_terms', language: lang }
+      const otpOn = await settingOn(OTP_SETTING)
+      const otp = otpOn ? await otpSignGate({ on: true, store: supabaseOtpStore(db), linkId: link.id, revisionId: s.live.id, channelAvailable: !!otpTarget(s) }) : null
+      if (otp && !otp.ok) return err(otp.error, 403, { otp: true })
       const ip = (req.headers.get('x-real-ip') || req.headers.get('x-vercel-forwarded-for') || '').trim() || null
       const { error } = await db.rpc('quote_approve', { p_invoice: link.invoice_id, p_link: link.id, p_revision: s.live.id, p_sha256: s.live.sha256,
         p_terms_sha256: s.live.terms_sha256, p_signer_name: name, p_signer_contact: null, p_consents: consents,
-        p_attribution: attribution(req, { gate_tier: link.gate === 'CONTACT' ? link.gate_tier : null, gate_ok: gateOk }),
+        p_attribution: attribution(req, { gate_tier: link.gate === 'CONTACT' ? link.gate_tier : null, gate_ok: gateOk, ...(otp?.ok ? otp.attribution : {}) }),
         p_method: 'CLIENT_ESIGN', p_recorded_by: null, p_ip: ip && /^[0-9a-f.:]+$/i.test(ip) ? ip : null, p_user_agent: (ua || '').slice(0, 400),
         p_note: null, p_evidence_url: null, p_signature_path: null })
       if (error) return /stale|not live|changed|already/i.test(error.message) ? err('err_stale', 409) : (console.error('[q sign]', error.message), err('err_generic', 500))
+      if (otp?.ok) await otpConsume(supabaseOtpStore(db), link.id).catch(e => console.error('[q sign] otp consume', (e as Error).message))
       if (isCo) { const ap = await db.rpc('change_order_apply', { p_revision: s.live.id, p_actor: 'client' }); if (ap.error) console.error('[q sign] change_order_apply', ap.error.message) }
       { const inv0 = link.invoice_id, rev0 = s.live.id; nextAfter(() => import('@/lib/notify.server').then(m => m.notifyAll(serviceDb(), ['notify.client.signed_copy', 'notify.reports.quote_signed'], { invoiceId: inv0, revisionId: rev0 })).catch(e => console.error('[q sign notify]', e?.message || e))) }   // M4 switchboard (keys OFF → NOTIFY_SKIPPED)
       const s2 = await loadDocState(db, link.invoice_id)
@@ -258,6 +283,28 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       if (await limited(db, 'renewal', req, link.id)) return j({ ok: true, already: true })
       await ev(db, link.invoice_id, s.live?.id || null, 'RENEWAL_REQUESTED', {})
       return j({ ok: true })
+    }
+    case 'otp-send':
+    case 'otp-verify': {
+      if (!(await settingOn(OTP_SETTING))) return err('unknown', 404)       // OFF → these actions do not exist
+      if (await limited(db, 'otp', req, link.id)) return err('err_rate', 429)
+      if (!s.live || s.approvalOnLive) return err('err_stale', 409)
+      if (!gateOk) return err('err_gate', 403, { gate: true })
+      const store = supabaseOtpStore(db)
+      if (action === 'otp-verify') {
+        const v = await otpVerify(store, { linkId: link.id, revisionId: s.live.id, code: String(body.code || '') })
+        if (v.ok) return j({ ok: true, verified_at: v.verified_at })
+        return err(v.error, v.error === 'err_otp_locked' ? 429 : 403, v)
+      }
+      const tg = otpTarget(s)
+      if (!tg) return err('err_otp_no_channel', 409)
+      const iss = await otpIssue(store, { linkId: link.id, revisionId: s.live.id, channel: tg.channel })
+      if (!iss.ok) return err(iss.error, iss.error === 'err_generic' ? 500 : 429, iss)
+      const { sendOtpMessage } = await import('@/lib/notify.server')
+      const sent = await sendOtpMessage(db, { invoiceId: link.invoice_id, revisionId: s.live.id, isTest: !!link.is_test, channel: tg.channel, to: tg.to, code: iss.code,
+        lang, docCode: String(s.live.document?.header?.display_code || s.bundle.invoice.invoice_code || '') })
+      if (!sent.sent) return err('err_otp_send', 502)
+      return j({ ok: true, hint: otpHint(tg) })
     }
     default:
       return err('unknown', 404)

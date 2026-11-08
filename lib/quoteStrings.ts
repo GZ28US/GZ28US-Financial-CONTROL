@@ -95,6 +95,18 @@ const EN: Dict = {
   certificate: 'SIGNATURE CERTIFICATE', hash_hint: 'Document fingerprint (SHA-256)', signed_copy: '⬇ Your signed copy',
   'method.SHOP_PHONE': 'by phone', 'method.SHOP_IN_PERSON': 'in person', 'method.SHOP_TEXT': 'by text message', 'method.SHOP_EMAIL': 'by e-mail',
   'method.CLIENT_ESIGN': 'e-signature', 'method.LEGACY_HIRING_DATE': 'recorded by GZ28',
+  // M4 signing code (OTP) — only shown while quote_portal.sign_otp is ON
+  otp_intro_WHATSAPP: 'To sign, we will send a 6-digit code by WhatsApp to the number ending in {masked}.',
+  otp_intro_EMAIL: 'To sign, we will send a 6-digit code by e-mail to {masked}.',
+  otp_send: 'Send me the code', otp_resend: 'Send a new code', otp_resend_wait: 'New code in {seconds}s',
+  otp_sent: 'Code sent — it expires in 10 minutes.', otp_ph: '6-digit code', otp_verified: '✓ Code confirmed',
+  err_otp: "That code doesn't match — {left} tries left", err_otp_locked: 'Too many wrong codes — try again in {minutes} minutes or contact GZ28',
+  err_otp_expired: 'This code expired — ask for a new one', err_otp_wait: 'Wait {seconds}s before asking for a new code',
+  err_otp_required: 'Enter the code we sent you', err_otp_none: 'Ask for a code first',
+  err_otp_send: "We couldn't send the code — try again or contact GZ28", err_otp_no_channel: 'We have no phone or e-mail to send the code to — contact GZ28',
+  otp_message: 'GZ28 V8 SpeedShop — your code to sign {code}: {otp}. It expires in 10 minutes. Never share this code.',
+  otp_mail_subject: 'Your signing code — {code}', otp_mail_intro: 'Here is your code to sign {code}:',
+  otp_mail_foot: "It expires in 10 minutes. If you didn't ask for it, ignore this e-mail and never share the code.",
 }
 const PT: Dict = {
   brand: 'GZ28 V8 SpeedShop',
@@ -153,6 +165,17 @@ const PT: Dict = {
   certificate: 'CERTIFICADO DE ASSINATURA', hash_hint: 'Impressão digital do documento (SHA-256)', signed_copy: '⬇ Sua cópia assinada',
   'method.SHOP_PHONE': 'por telefone', 'method.SHOP_IN_PERSON': 'pessoalmente', 'method.SHOP_TEXT': 'por mensagem', 'method.SHOP_EMAIL': 'por e-mail',
   'method.CLIENT_ESIGN': 'assinatura eletrônica', 'method.LEGACY_HIRING_DATE': 'registrado pela GZ28',
+  otp_intro_WHATSAPP: 'Para assinar, vamos enviar um código de 6 dígitos pelo WhatsApp para o número terminado em {masked}.',
+  otp_intro_EMAIL: 'Para assinar, vamos enviar um código de 6 dígitos por e-mail para {masked}.',
+  otp_send: 'Enviar o código', otp_resend: 'Enviar um novo código', otp_resend_wait: 'Novo código em {seconds}s',
+  otp_sent: 'Código enviado — vale por 10 minutos.', otp_ph: 'código de 6 dígitos', otp_verified: '✓ Código confirmado',
+  err_otp: 'Código não confere — restam {left} tentativas', err_otp_locked: 'Muitos códigos errados — tente em {minutes} minutos ou fale com a GZ28',
+  err_otp_expired: 'Este código venceu — peça um novo', err_otp_wait: 'Espere {seconds}s para pedir um novo código',
+  err_otp_required: 'Digite o código que enviamos', err_otp_none: 'Peça um código primeiro',
+  err_otp_send: 'Não conseguimos enviar o código — tente de novo ou fale com a GZ28', err_otp_no_channel: 'Não temos telefone nem e-mail para enviar o código — fale com a GZ28',
+  otp_message: 'GZ28 V8 SpeedShop — seu código para assinar {code}: {otp}. Vale por 10 minutos. Nunca compartilhe este código.',
+  otp_mail_subject: 'Seu código de assinatura — {code}', otp_mail_intro: 'Aqui está o seu código para assinar {code}:',
+  otp_mail_foot: 'Vale por 10 minutos. Se você não pediu, ignore este e-mail e nunca compartilhe o código.',
 }
 
 export const STRINGS: Record<Lang, Dict> = { en: EN, pt: PT }

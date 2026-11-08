@@ -2,11 +2,13 @@
 // /ca/api/adm/notifications — QUOTE PORTAL M4 (06/11/2026; blueprint §8.1). GET: every switch of the portal's robot messages (the
 // lib/notify.server.ts registry) with its value, whether a sender is wired, and the last 60 decisions (NOTIFIED / NOTIFY_SKIPPED).
 // POST {key, on}: flips ONE registry key (a human login only — machine accounts refused); every flip is a data_fixes row.
-// POST {test_targets: string[]}: the only addresses a TEST document may ever be mailed to. Nothing here sends anything.
+// POST {test_targets: string[]}: the only destinations a TEST document may ever reach — e-mails and WhatsApp numbers / chat ids.
+// POST {test_key}: SEND TEST TO ME (08/11/2026) — a human tap; one test message on that key's channel ONLY to notify.test_targets
+// (never a client, never the REPORTS group). Nothing else here sends anything.
 import { NextRequest, NextResponse } from 'next/server'
 import { requireStaff } from '@/lib/auth.server'
 import { serviceDb } from '@/lib/quoteDoc.server'
-import { NOTIFY_KEYS, wired } from '@/lib/notify.server'
+import { NOTIFY_KEYS, wired, sendTest } from '@/lib/notify.server'
 import { readSetting, writeSetting } from '@/lib/appSettings.server'
 
 export const dynamic = 'force-dynamic'
@@ -35,12 +37,20 @@ export async function POST(req: NextRequest) {
   const b = await req.json().catch(() => ({})) as any
   const db = serviceDb()
   if (Array.isArray(b.test_targets)) {
-    const list = [...new Set(b.test_targets.map((x: unknown) => String(x).trim().toLowerCase()).filter((x: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x)))].slice(0, 10)
+    // an e-mail, a WhatsApp number with country code (spaces / dashes / brackets dropped), or a chat id <digits>@c.us / @g.us
+    const clean = (x: unknown) => { const v = String(x).trim().toLowerCase(); return v.includes('@') ? v : v.replace(/[\s().-]/g, '') }
+    const okEntry = (x: string) => /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(x) || /^\d{10,20}(-\d+)?@(c|g)\.us$/.test(x) || /^\+?\d{10,15}$/.test(x)
+    const list = [...new Set(b.test_targets.map(clean).filter(okEntry))].slice(0, 10)
     const before = (await readSetting<string[]>('notify.test_targets')) || []
-    const e = await writeSetting('notify.test_targets', list, staff.email, 'addresses a TEST document may be mailed to')
+    const e = await writeSetting('notify.test_targets', list, staff.email, 'destinations a TEST document may reach (e-mails, WhatsApp numbers / chat ids)')
     if (e) return bad(e, 500)
     await db.from('data_fixes').insert({ check_key: 'notify-switch', table_name: 'app_settings', row_id: 'notify.test_targets', field: 'value', old_value: JSON.stringify(before), new_value: JSON.stringify(list), label: `/adm/notifications · ${staff.email}` }).then(() => undefined, () => undefined)
     return NextResponse.json({ ok: true, test_targets: list })
+  }
+  if (typeof b.test_key === 'string') {
+    const r = await sendTest(b.test_key, staff.email)
+    await db.from('data_fixes').insert({ check_key: 'notify-send-test', table_name: 'app_settings', row_id: b.test_key, field: 'send-test', old_value: null, new_value: JSON.stringify(r.results), label: `/adm/notifications SEND TEST · ${staff.email}` }).then(() => undefined, () => undefined)
+    return r.error ? bad(r.error, 409) : NextResponse.json(r)
   }
   const k = NOTIFY_KEYS.find(x => x.key === String(b.key || ''))
   if (!k) return bad('unknown key — only the registry keys flip here')

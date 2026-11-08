@@ -184,10 +184,13 @@ async function e2e(id: string) {
   // public page after hire
   const after = await q('state', { link_id: dto.link_id }, jar)
   ok(after.data.stage === 'INVOICE' && after.data.sub === 'DEPOSIT_RECEIVED' && after.data.plan[0].paid, 'public page: INVOICE · DEPOSIT RECEIVED, seq 1 PAID', [after.data.stage, after.data.sub])
-  // A-12 the 03:00 report never sees the fixture
-  const rk = fs.readFileSync(MEM + 'whatsapp-read-key.txt', 'utf8').replace(/\s+/g, '')
-  const hk = await fetch(`${BASE}/api/cron/docs-housekeeping?dry=1`, { headers: { 'x-read-key': rk } }).then(r => r.json()).catch(e => ({ error: String(e) }))
-  ok(Array.isArray(hk.test_links), 'housekeeping dry run lists the test links', { links: hk.test_links?.length, cleaned: hk.test_cleaned })
+  // A-12 the 03:00 report never sees the fixture. The housekeeping CRON is a route that can send (reports), so it is NOT called by
+  // default (house rule: no route that can send, not even dry) — only with the explicit flag --with-housekeeping.
+  if (process.argv.includes('--with-housekeeping')) {
+    const rk = fs.readFileSync(MEM + 'whatsapp-read-key.txt', 'utf8').replace(/\s+/g, '')
+    const hk = await fetch(`${BASE}/api/cron/docs-housekeeping?dry=1`, { headers: { 'x-read-key': rk } }).then(r => r.json()).catch(e => ({ error: String(e) }))
+    ok(Array.isArray(hk.test_links), 'housekeeping dry run lists the test links', { links: hk.test_links?.length, cleaned: hk.test_cleaned })
+  } else console.log('  (A-12 housekeeping cron skipped — a sending route; pass --with-housekeeping to include it)')
   // expire the test session at Stripe (it was never paid — the payment came through the simulated PI)
   try { await stripe.checkout.sessions.expire(att.checkout_session_id) } catch { /* already */ }
   console.log(fails ? `\n✖ ${fails} assertion(s) failed` : '\n✓ all assertions passed')

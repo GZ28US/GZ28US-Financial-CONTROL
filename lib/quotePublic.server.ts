@@ -103,6 +103,7 @@ const BUDGET: Record<string, { link?: number; ip?: number; windowSec: number }> 
   decline: { link: 6, ip: 10, windowSec: 86400 },
   promised: { link: 3, ip: 10, windowSec: 86400 },
   renewal: { link: 1, ip: 5, windowSec: 86400 },
+  otp: { link: 20, ip: 20, windowSec: 3600 },          // M4 signing code (send + verify), only when quote_portal.sign_otp is ON
 }
 export async function limited(db: SupabaseClient, route: string, req: NextRequest, linkId?: string | null): Promise<boolean> {
   const b = BUDGET[route]; if (!b) return false

@@ -3,6 +3,7 @@ import { createClient } from '@supabase/supabase-js'
 import { waSelfBlockReason } from '@/lib/waSelfGuard.server'
 import { mencoesDoTexto } from '@/lib/waMentions'
 import { requireUser, sendKeyOk } from '@/lib/apiAuth.server'
+import { withSignature, normalizeTo } from '@/lib/waSignature'
 
 // WA SEND LOG (31/ago/2026, caso Gui): o aviso de duty morreu calado e ninguém
 // soube. TODA tentativa de envio — sucesso e falha — fica em wa_send_log; o
@@ -17,30 +18,8 @@ async function logSend(row: { destination: string | null; group_name: string | n
   } catch { /* nunca derruba o envio */ }
 }
 
-// Every message — internal report or message to a client — ends with this
-// registered signature line. Centralized here so it's guaranteed on EVERY message
-// that goes through this route, no matter which page built it.
-const SIGNATURE = 'Sent by GZ28US Control App®'
-
-// Append the signature as the last line, after stripping the legacy footer some
-// report builders still add, and without double-adding it.
-function withSignature(raw: string): string {
-  const text = (raw || '').replace(/\n*Sent by GZ28(US)? Control App®?\s*$/i, '').trimEnd()
-  if (text.endsWith(SIGNATURE)) return text
-  return text ? `${text}\n\n${SIGNATURE}` : SIGNATURE
-}
-
-// UltraMsg requires the `to` in chat format: <digits>@c.us for a person or
-// <id>@g.us for a group. A bare phone number (just digits) is rejected with
-// "Wrong 'to' format". So: pass through anything that already has an @ (groups,
-// or an already-formatted contact), and turn a bare number into <digits>@c.us.
-function normalizeTo(raw: string | null | undefined): string {
-  const v = String(raw || '').trim()
-  if (!v) return ''
-  if (v.includes('@')) return v
-  const digits = v.replace(/\D/g, '')
-  return digits ? `${digits}@c.us` : ''
-}
+// The house signature and the `to` normalisation live in lib/waSignature.ts (08/11/2026) — one rule for this route and the
+// quote-portal switchboard (lib/notify.server.ts). Same code, moved byte for byte.
 
 // Sends WhatsApp messages through UltraMsg to the reports group.
 // Secrets live in environment variables, never in the code:

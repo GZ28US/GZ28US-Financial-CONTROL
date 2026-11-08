@@ -176,7 +176,9 @@ function Actions(p: { d: Dto; lang: Lang; T: (k: string, v?: Record<string, stri
     setBusy(true)
     try { return await api(path, { link_id: d.link_id, ...body }) } catch { flash(T('offline')); return null } finally { setBusy(false) }
   }
-  const errMsg = (data: any) => data?.error === 'err_gate_locked' ? T('err_gate_locked', { minutes: data.minutes || 15 }) : T(String(data?.error || 'err_generic'))
+  const errMsg = (data: any) => data?.error === 'err_gate_locked' ? T('err_gate_locked', { minutes: data.minutes || 15 })
+    : String(data?.error || '').startsWith('err_otp') ? T(String(data.error), { left: data.left ?? '', minutes: data.minutes || 15, seconds: data.seconds || 60 })
+    : T(String(data?.error || 'err_generic'))
 
   if (stage === 'VOID') return <Card><p className="text-gray-300">{T('void')}</p></Card>
   if (stage === 'DRAFT') return <Card><p className="text-gray-300">{T('superseded')}</p></Card>
@@ -232,6 +234,7 @@ function CoCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: Dto
   const [name, setName] = useState<string>(d.signer_default || '')
   const [c1, setC1] = useState(false), [c2, setC2] = useState(false)
   const [gate, setGate] = useState(''), [gateOk, setGateOk] = useState<boolean>(!!d.gate?.ok)
+  const otp = useOtp(d, T, call, flash, errMsg, busy)
   const sign = async () => {
     if (name.trim().length < 2) return flash(T('err_name'))
     if (!c1 || !c2) return flash(T('err_consent'))
@@ -241,6 +244,7 @@ function CoCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: Dto
       if (g.status !== 200) return flash(errMsg(g.data))
       setGateOk(true)
     }
+    if (!(await otp.ensure())) return
     const r = await call('sign', { revision_id: d.document.revision_id, sha256: d.document.sha256, terms_sha256: d.document.terms_sha256, signer_name: name,
       consents: { erecords: c1, terms: c2 } })
     if (!r) return
@@ -266,6 +270,7 @@ function CoCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: Dto
       <div className="text-sm text-gray-200 mb-1">{d.gate.hint?.kind === 'phone' ? T('gate_phone', { last2: d.gate.hint.last2 }) : T('gate_email', { masked: d.gate.hint?.masked || '' })}</div>
       <input value={gate} onChange={e => setGate(e.target.value)} placeholder={d.gate.hint?.kind === 'phone' ? T('gate_phone_ph') : T('gate_email_ph')}
         inputMode={d.gate.hint?.kind === 'phone' ? 'numeric' : 'email'} className="w-full bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" /></div>}
+    {otp.ui}
     <button disabled={busy} onClick={sign} className="w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold disabled:opacity-60">{T('co_approve_btn', { amount: money(grand, lang) })}</button>
     <p className="text-xs text-gray-400 mt-2">{T('co_pending_pay')}</p>
   </Card>
@@ -277,6 +282,7 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
   const [c1, setC1] = useState(false), [c2, setC2] = useState(false)
   const [est, setEst] = useState<string>(''), [lim, setLim] = useState<string>(''), [parts, setParts] = useState<string>('')
   const [gate, setGate] = useState(''), [gateOk, setGateOk] = useState<boolean>(!!d.gate?.ok)
+  const otp = useOtp(d, T, call, flash, errMsg, busy)
   const dep = (d.plan || [])[0]
   if (!open) return <button onClick={() => setOpen(true)} className="w-full text-left text-white my-3">{T('approve_reopen')}</button>
   const sign = async () => {
@@ -290,6 +296,7 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
       if (g.status !== 200) return flash(errMsg(g.data))
       setGateOk(true)
     }
+    if (!(await otp.ensure())) return
     const r = await call('sign', { revision_id: d.document.revision_id, sha256: d.document.sha256, terms_sha256: d.document.terms_sha256, signer_name: name,
       consents: { erecords: c1, terms: c2, estimate: est, limit_amount: est === 'LIMIT' ? Number(lim) : null, parts_return: parts } })
     if (!r) return
@@ -313,10 +320,50 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
       <div className="text-sm text-gray-200 mb-1">{d.gate.hint?.kind === 'phone' ? T('gate_phone', { last2: d.gate.hint.last2 }) : T('gate_email', { masked: d.gate.hint?.masked || '' })}</div>
       <input value={gate} onChange={e => setGate(e.target.value)} placeholder={d.gate.hint?.kind === 'phone' ? T('gate_phone_ph') : T('gate_email_ph')}
         inputMode={d.gate.hint?.kind === 'phone' ? 'numeric' : 'email'} className="w-full bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" /></div>}
+    {otp.ui}
     <button disabled={busy} onClick={sign} className="w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold disabled:opacity-60">{T('approve_btn', { amount: money(grand, lang) })}</button>
     {dep && <p className="text-xs text-gray-400 mt-2">{T('next_pay', { amount: moneyCents(dep.amount_cents, lang) })}</p>}
     <button onClick={() => setOpen(false)} className="text-xs text-gray-500 mt-2 underline min-h-[44px]">{T('not_now')}</button>
   </Card>
+}
+
+// M4 — the SIGNING CODE (OTP). Present only when the server says so (`d.otp`, sent only while quote_portal.sign_otp is ON); otherwise
+// `ensure()` is a no-op and `ui` is null — the sign flow is the pre-OTP one. The code is asked on the channel the quote went on.
+function useOtp(d: Dto, T: any, call: any, flash: any, errMsg: any, busy: boolean) {
+  const need = !!d.otp?.needed
+  const [ok, setOk] = useState<boolean>(!!d.otp?.verified)
+  const [code, setCode] = useState('')
+  const [sentAt, setSentAt] = useState(0)
+  const [now, setNow] = useState(0)
+  useEffect(() => { if (!sentAt) return; const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i) }, [sentAt])
+  const wait = sentAt ? Math.max(0, 60 - Math.floor((now - sentAt) / 1000)) : 0
+  const send = async () => {
+    const r = await call('otp-send', {})
+    if (!r) return
+    if (r.status === 200) { const t0 = Date.now(); setSentAt(t0); setNow(t0); flash(T('otp_sent')); return }
+    flash(errMsg(r.data))
+  }
+  const ensure = async (): Promise<boolean> => {
+    if (!need || ok) return true
+    const c = code.replace(/D/g, '')
+    if (c.length !== 6) { flash(T(sentAt ? 'err_otp_required' : 'err_otp_none')); return false }
+    const r = await call('otp-verify', { code: c })
+    if (!r) return false
+    if (r.status === 200) { setOk(true); return true }
+    flash(errMsg(r.data))
+    return false
+  }
+  if (!need) return { ensure, ui: null }
+  if (ok) return { ensure, ui: <p className="text-xs text-emerald-300 mb-3">{T('otp_verified')}</p> }
+  const hint = d.otp?.hint
+  const ui = <div className="mb-3">
+    <div className="text-sm text-gray-200 mb-2">{T('otp_intro_' + (hint?.channel === 'EMAIL' ? 'EMAIL' : 'WHATSAPP'), { masked: hint?.masked || '' })}</div>
+    {sentAt > 0 && <input value={code} onChange={e => setCode(e.target.value.replace(/D/g, '').slice(0, 6))} placeholder={T('otp_ph')} inputMode="numeric" autoComplete="one-time-code"
+      className="w-full mb-2 bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white tracking-[0.4em]" />}
+    <button type="button" disabled={busy || wait > 0} onClick={send} className="w-full min-h-[44px] rounded-lg border border-gray-600 text-white text-sm disabled:opacity-60">
+      {wait > 0 ? T('otp_resend_wait', { seconds: wait }) : sentAt ? T('otp_resend') : T('otp_send')}</button>
+  </div>
+  return { ensure, ui }
 }
 
 function ChangesDecline({ T, call, refresh, flash, d }: { T: any; call: any; refresh: () => void; flash: any; d: Dto }) {

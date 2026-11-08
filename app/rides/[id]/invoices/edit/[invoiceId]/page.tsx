@@ -390,6 +390,16 @@ export default function EditInvoicePage() {
   // change — C-16). Here the editor says so up front and points to /doc, where NEW REVISION / RECORD DEPOSIT live. Legacy quotes
   // (no portal revision) see nothing. ?from=doc makes SAVE & EXIT return to /doc.
   const [portalLock, setPortalLock] = useState<{ seq: number; approved: boolean; open: boolean } | null>(null)
+  // GO-LIVE RETIREMENT (06–08/11/2026, design v3 §16 «retire the editor's HIRING DATE conversion»): once app_settings
+  // quote_portal.enabled is ON, a quote is hired ONLY by its deposit (the portal / RECORD DEPOSIT in /doc) — HIRING DATE here no
+  // longer converts. While the switch is OFF (today) the editor behaves exactly as before. Read fails → treated as OFF (legacy).
+  const [portalLive, setPortalLive] = useState(false)
+  useEffect(() => {
+    let on = true
+    supabase.from('app_settings').select('value').eq('key', 'quote_portal.enabled').maybeSingle()
+      .then(({ data }) => { if (on) setPortalLive(data?.value === true || data?.value === 'true') })
+    return () => { on = false }
+  }, [])
   useEffect(() => {
     let on = true
     ;(async () => {
@@ -2725,7 +2735,8 @@ export default function EditInvoicePage() {
     // HIRING DATE is hiringDate; for a client shopping quote it's clientHiringDate
     // (its REQUEST DATE never converts it).
     const conversionDate = isClient ? clientHiringDate : hiringDate
-    const nextIsQuote = isQuote && !isValidDate(conversionDate)
+    const nextIsQuote = isQuote && (portalLive || !isValidDate(conversionDate))   // portal live: only the deposit hires
+    if (isQuote && portalLive && isValidDate(conversionDate)) alert('The quote portal is live: HIRING DATE no longer converts a quote.\nRecord the deposit in /doc (RECORD DEPOSIT) — that creates the project.')
     // A quote may carry CLOSED in quote-land ("quote done"); the newborn INVOICE must
     // come up ONLINE — it can never be born CLOSED (CLOSED requires zero balance).
     if (isQuote && !nextIsQuote && effectiveLive === 'CLOSED') {
@@ -3735,13 +3746,13 @@ export default function EditInvoicePage() {
           </button>
         </div>
 
-        {portalLock && (portalLock.approved || portalLock.open) && isQuote
-          ? <div><label className="block mb-2 text-lg font-bold">HIRING DATE</label><div className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-2xl px-4 py-3">Approved online — the DEPOSIT converts this quote (RECORD DEPOSIT in /doc). Leave it empty here.</div></div>
+        {isQuote && (portalLive || (portalLock && (portalLock.approved || portalLock.open)))
+          ? <div><label className="block mb-2 text-lg font-bold">HIRING DATE</label><div className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-2xl px-4 py-3">{portalLock && (portalLock.approved || portalLock.open) ? 'Approved online — ' : 'Quote portal live — '}the DEPOSIT converts this quote (RECORD DEPOSIT in /doc). Leave it empty here.</div></div>
           : <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />}
         {isClient && (
           <div>
             <DatePicker label="HIRING DATE" value={clientHiringDate} onChange={setClientHiringDate} />
-            {isQuote && <p className="text-sm text-yellow-400 mt-1">Setting a HIRING DATE turns this shopping quote into an invoice on save.</p>}
+            {isQuote && <p className="text-sm text-yellow-400 mt-1">{portalLive ? 'Quote portal live: the DEPOSIT turns this quote into an invoice (RECORD DEPOSIT in /doc).' : 'Setting a HIRING DATE turns this shopping quote into an invoice on save.'}</p>}
           </div>
         )}
         {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}

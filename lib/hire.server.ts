@@ -85,9 +85,9 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
       const code = String(s.bundle.invoice.invoice_code || ''), car = String(r2?.project_name || '')
       const files: { filename: string; buf: Buffer }[] = []
       const signed = await clientRevisionPdf(db, s)
-      if (signed) files.push({ filename: `${code} ${car} - Quote rev ${s.live?.seq ?? ''} signed.pdf`.replace(/s+/g, ' '), buf: signed.buf })
+      if (signed) files.push({ filename: `${code} ${car} - Quote rev ${s.live?.seq ?? ''} signed.pdf`.replace(/\s+/g, ' '), buf: signed.buf })
       const paidAttempt = s.attempts.find(a => a.status === 'SUCCEEDED' && a.id === hire.attempt_id) || s.attempts.find(a => a.status === 'SUCCEEDED')
-      if (paidAttempt) { const rc = await attemptReceiptPdf(db, s, paidAttempt.id); if (rc) files.push({ filename: `${code} ${car} - Deposit receipt.pdf`.replace(/s+/g, ' '), buf: rc.buf }) }
+      if (paidAttempt) { const rc = await attemptReceiptPdf(db, s, paidAttempt.id); if (rc) files.push({ filename: `${code} ${car} - Deposit receipt.pdf`.replace(/\s+/g, ' '), buf: rc.buf }) }
       for (const f of files) await post('/api/ride-folder', { action: 'upload', zone: 'US', code: r2?.project_code, name: car, invoiceCode: code,
         invoiceName: s.bundle.invoice.service || '', filename: f.filename, contentBase64: f.buf.toString('base64') })
       return files.map(f => f.filename).join(' · ')
