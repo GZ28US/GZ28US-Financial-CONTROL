@@ -5,6 +5,7 @@ import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { pageAll } from '@/lib/pageAll'
+import { isClientInvoice, invoiceGrand, receivableOf } from '@/lib/receivables'
 import { docMoneyFor, primeApproved } from '@/lib/money'
 import { flowHorizonEnd } from '@/lib/flowHorizon'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
@@ -134,7 +135,7 @@ type FlowItem = { date: string; code: string; label: string; href: string; signe
 
 export default function HomePage() {
   const [s, setS] = useState<GlobalStats>({ cashFlow: 0, cashFlowPct: 0, dueClients: 0, markup: 0, markupPct: 0, dueGz: 0 })
-  const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[] }>({ income: [], expense: [], tax: [], loss: [] })
+  const [rows, setRows] = useState<{ income: Row[]; expense: Row[]; tax: Row[]; loss: Row[]; warn: Row[] }>({ income: [], expense: [], tax: [], loss: [], warn: [] })
   // Rides whose registration is expired or about to expire (see lib/plateExpiry).
   const [plateAlerts, setPlateAlerts] = useState<{ id: string; code: string; name: string; plate: string; expiry: string | null; st: PlateStatus }[]>([])
   // USA-fleet cars whose insurance is expiring/expired (rides.insurance_expiry).
@@ -148,7 +149,7 @@ export default function HomePage() {
     await ensureFixedCostPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     // As invoices vêm primeiro; as filhas só das invoices que passaram (ver childRows).
-    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, global_discount, fl_tax_override, fl_tax_expense_date').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
+    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, global_discount, fl_tax_override, fl_tax_expense_date, import_margin').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
     const invIds = (invs || []).map((i: any) => String(i.id))
     const [pays, expsTodas, partsTodos, svcsTodos] = await Promise.all([
       childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
@@ -189,6 +190,8 @@ export default function HomePage() {
     const clientsById = new Map<string, string>(); (clientsD || []).forEach((c: any) => clientsById.set(c.id, c.name || ''))
     const clientRow = new Map<string, any>(); (clientsD || []).forEach((c: any) => clientRow.set(c.id, c))
     // o imposto pela lei (lib/flTax): carro + cliente + itens + serviços da invoice
+    const moneyOf = (inv: any) => { const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null; return docMoneyFor(inv, ride?.title_scope, clientRow.get(inv.client_id || ride?.client_id) || null, (partsBy.get(inv.id) || []).map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (svcsBy.get(inv.id) || []).map((s: any) => parseFloat(s.price) || 0)) }
+    const scopeOf = (inv: any) => (inv.ride_id ? ridesById.get(inv.ride_id)?.title_scope : null) || null
     const taxOf = (inv: any) => { const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null; return docMoneyFor(inv, ride?.title_scope, clientRow.get(inv.client_id || ride?.client_id) || null, (partsBy.get(inv.id) || []).map((p: any) => (parseFloat(p.unit_price) || 0) * (parseFloat(p.quantity) || 0)), (svcsBy.get(inv.id) || []).map((s: any) => parseFloat(s.price) || 0)).tax }
     // Registration watch: only rides already expired or inside the warning window,
     // soonest first (the late ones lead, since their days are negative).
@@ -262,7 +265,6 @@ export default function HomePage() {
       const expensesTotalGlobal = flTaxAmount + ie.reduce((x: number, e: any) => x + expenseLine(e), 0)
       const expensesTotalPaid = (flTaxPaid ? flTaxAmount : 0) + ie.filter((e: any) => isValidDate(e.payment_date)).reduce((x: number, e: any) => x + expenseLine(e), 0)
       cashFlow += totalPaid - expensesTotalPaid
-      dueClients += totalIncomeAll - totalPaid
       // FINAL MARKUP = listed income − expenses (the invoice's real result, matching its card);
       // a negative value = LOSS invoice. Pending balances are collected via the editor's
       // ADD PENDING BALANCE button, so they don't auto-mask a loss here.
@@ -282,20 +284,34 @@ export default function HomePage() {
     // payment_date (e.g. an installment due-date), UNDATED if it has none.
     // Income rows show the CLIENT NAME (the description is the label's rollover); the code's
     // rollover is car — invoice.
+    // A RECEBER CALCULADO (lib/receivables, 09/11/2026 — regra sagrada do Márcio): por invoice de CLIENTE,
+    // GRAND − incomes pagas. Parcela datada no futuro vai pro fluxo; datada vencida = DELAYED; marco fica no marco;
+    // o resto vira UMA linha UNDATED por invoice. Carro da casa (OWN/TOOL/PART_OUT) e 006/085 não entram.
     const income: Row[] = []
-    for (const p of pays || []) {
-      const code = codeById.get(p.invoice_id); if (!code) continue
-      if (p.paid_at) continue
-      const amount = parseFloat(p.amount) || 0; if (!amount) continue
-      const dated = isValidDate(p.payment_date)
-      const m = metaFor(p.invoice_id, code)
-      const desc = p.description || p.source || 'Income'
-      income.push({ code, label: m.clientName || desc, amount, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: canonMilestone(p.date_label) })
+    const warn: Row[] = []
+    const todayR = todayYmd()
+    for (const inv of invs || []) {
+      if (!isClientInvoice(inv.invoice_code, scopeOf(inv))) continue
+      const m = metaFor(inv.id, inv.invoice_code)
+      const ip = (paysBy.get(inv.id) || []) as any[]
+      const expSum = (expsBy.get(inv.id) || []).reduce((x: number, e: any) => x + expenseLine(e), 0)
+      const grand = invoiceGrand(moneyOf(inv).grand, { shopping: !inv.ride_id, expenseSum: expSum, importMargin: inv.import_margin })
+      const r = receivableOf(grand, ip, todayR, canonMilestone)
+      const push = (p: any, dated: boolean) => { const desc = p.description || p.source || 'Income'; income.push({ code: inv.invoice_code, label: m.clientName || desc, amount: parseFloat(p.amount) || 0, dated, date: dated ? fmtD(p.payment_date) : null, href: m.href, tip: m.carInvTip, labelTip: desc, milestone: canonMilestone(p.date_label) }) }
+      for (const p of [...r.future, ...r.delayed]) push(p, true)
+      for (const p of r.milestone) push(p, false)
+      if (r.undated > 0.005) {
+        const why = r.undatedRows.length ? r.undatedRows.map((p: any) => (p.description || p.source || 'Income') + ' ' + (parseFloat(p.amount) || 0).toFixed(2)).join(' · ') : 'sem income lançada'
+        income.push({ code: inv.invoice_code, label: m.clientName || m.carName || inv.invoice_code, amount: r.undated, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: `Grand ${grand.toFixed(2)} − pago ${r.paid.toFixed(2)} − datado/marco = ${r.undated.toFixed(2)} · ${why}` })
+      }
+      if (Math.abs(r.mismatch) > 0.01) warn.push({ code: inv.invoice_code, label: m.clientName || m.carName || inv.invoice_code, amount: r.mismatch, dated: false, date: null, href: m.href, tip: m.carInvTip, labelTip: `incomes listadas ${r.listed.toFixed(2)} ≠ grand ${grand.toFixed(2)}` })
     }
+    warn.sort((a, b) => Math.abs(b.amount) - Math.abs(a.amount))
     // LOSS group: invoices whose FINAL MARKUP is negative (shown last, separate from incomes).
     const loss: Row[] = []
     for (const inv of invs || []) {
       const lm = lossByInvoice.get(inv.id); if (!lm) continue
+      if (!isClientInvoice(inv.invoice_code, scopeOf(inv))) continue   // LOSS = só cliente (Márcio 09/11): casa, SC/WV, 006 não
       const m = metaFor(inv.id, inv.invoice_code)
       const pctLabel = `${lm.pct.toFixed(1)}%`
       // LOSS rows label with the CAR NAME; the invoice name is the label's rollover.
@@ -395,7 +411,7 @@ export default function HomePage() {
     const allDatedExpense = expense.filter(r => r.dated && r.date)
     allDatedExpense.forEach(r => { if ((r.date as string) <= today) r.delayed = true })
     const datedExpense = allDatedExpense.filter(r => !r.delayed)
-    dueClients -= datedIncome.reduce((x, r) => x + r.amount, 0)
+    dueClients = income.filter(r => !datedIncome.includes(r)).reduce((x, r) => x + r.amount, 0)
     dueGz += datedExpense.reduce((x, r) => x + r.amount, 0)
     // FLORIDA TAXES move to their own box below — drop them from the DUE by GZ28US total too.
     dueGz += tax.reduce((x, r) => x + r.amount, 0)
@@ -411,7 +427,7 @@ export default function HomePage() {
       markup, markupPct: sumExpGlobal > 0 ? (markup / sumExpGlobal) * 100 : 0,
       dueGz,
     })
-    setRows({ income, expense, tax, loss })
+    setRows({ income, expense, tax, loss, warn })
     setLoading(false)
   }
 
@@ -481,7 +497,20 @@ export default function HomePage() {
       ) : (
         <>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-3xl">
-            <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor="text-green-400" rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
+            <div>
+              <DetailColumn label="DUE by CLIENTS" value={formatUSD(s.dueClients)} valueColor="text-green-400" rows={rows.income} undatedColor="text-amber-400" taxRows={rows.loss} taxLabel="LOSS" taxColor="text-red-500" />
+              {rows.warn.length > 0 && (
+                <div className="mt-2 bg-gray-900 border border-yellow-700/60 rounded-2xl p-4">
+                  <p className="text-xs font-bold text-yellow-400 uppercase mb-1">⚠ Incomes listed ≠ Grand total — fix the invoice</p>
+                  {rows.warn.map((r, i) => (
+                    <div key={i} className="flex justify-between gap-3 py-1 text-sm border-b border-gray-800/60 last:border-0">
+                      <span className="text-gray-300 truncate"><a href={r.href} target="_blank" rel="noopener noreferrer" title={r.tip} className="text-gray-500 hover:text-blue-400 hover:underline">{r.code}</a> · <span title={r.labelTip || undefined}>{r.label}</span></span>
+                      <span className="font-bold shrink-0 text-yellow-400" title={r.labelTip || undefined}>{r.amount > 0 ? '+' : ''}{formatUSD(r.amount)}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
             <DetailColumn label="DUE by GZ28US" value={formatUSD(s.dueGz)} valueColor="text-orange-400" rows={rows.expense} undatedColor="text-orange-400" />
           </div>
           {rows.tax.length > 0 && (
