@@ -71,6 +71,10 @@
     {
       "path": "/ca/api/cron/docs-housekeeping",
       "schedule": "17 * * * *"
+    },
+    {
+      "path": "/ca/api/cron/social-health",
+      "schedule": "13 11 * * *"
     }
   ]
 }
