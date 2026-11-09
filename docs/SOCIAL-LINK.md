@@ -137,8 +137,8 @@ so the value never appears on screen. Then redeploy.
 | Integration | Code | Waiting on |
 |---|---|---|
 | `SOCIAL_TOKEN_KEY` | ✅ set in Vercel, live | — |
-| YouTube | live, OFF | Márcio: **2-step verification on the Google account** (Cloud console blocks him without it) → I enable APIs + redirect URI |
-| Google (Business Profile · Calendar · Ads) | live, OFF | same 2SV; then GBP API access form (Google review, days), Ads developer token (application) |
+| YouTube | live, OFF | ✅ Cloud done 09/11 (project gz28-mail: YouTube Data + Analytics enabled, redirect URI added, consent screen In production). Márcio: switch ON + CONNECT |
+| Google (Business Profile · Calendar · Ads) | live, OFF | ✅ Cloud done 09/11 (Calendar, Business Account Mgmt, Business Information, Performance, Google Ads enabled; redirect URI added). Márcio: switch ON + CONNECT; GBP API access form (quota 0 until Google approves; v4 reviews API hidden until then); Ads developer token |
 | Meta (FB · IG · DMs · Business Suite · Ads) | live, OFF | Márcio: create the Meta developer app + 2 env vars. No App Review for own assets |
 | TikTok | live, OFF | Márcio: developer app + sandbox target user + 2 env vars; TikTok audit before public posts |
 | eBay purchases | live, OFF | Márcio: production keyset + RuName + 3 env vars |
