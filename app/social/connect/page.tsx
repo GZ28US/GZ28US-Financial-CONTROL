@@ -29,6 +29,16 @@ const CARDS = [
     hint: 'On the Google screen choose the @gz28us channel (not the personal account).' },
   { p: 'TIKTOK', label: 'TIKTOK', sw: 'social.tiktok.enabled', env: ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'], route: '/api/social/tiktok/auth',
     hint: 'Sign in as @gz28.v8.speedshop.' },
+  { p: 'GOOGLE', label: 'GOOGLE — BUSINESS PROFILE · CALENDAR · ADS', sw: 'social.google.enabled', env: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'], route: '/api/social/google/auth',
+    hint: 'Sign in as gz28us@gmail.com (owner of the GZ28 V8 SpeedShop USA LLC listing). Google Ads also needs GOOGLE_ADS_DEVELOPER_TOKEN.' },
+  { p: 'EBAY', label: 'EBAY — PURCHASES', sw: 'social.ebay.enabled', env: ['EBAY_CLIENT_ID', 'EBAY_CLIENT_SECRET', 'EBAY_RUNAME'], route: '/api/social/ebay/auth',
+    hint: 'Sign in with the eBay account the shop buys parts with. Read only; AutoBook books what comes in.' },
+] as const
+
+// No login, only the app's own keys in Vercel — just a switch each.
+const APP_CREDS = [
+  { sw: 'paypal.read.enabled', label: 'PAYPAL — transactions (read)', env: ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET'] },
+  { sw: 'carriers.track.enabled', label: 'UPS · FEDEX · USPS — tracking (read)', env: ['UPS_CLIENT_ID', 'UPS_CLIENT_SECRET', 'FEDEX_CLIENT_ID', 'FEDEX_CLIENT_SECRET', 'USPS_CLIENT_ID', 'USPS_CLIENT_SECRET'] },
 ] as const
 
 const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false })
@@ -117,6 +127,20 @@ export default function SocialConnectPage() {
                   className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-6 py-3 rounded-2xl text-lg font-bold">
                   {busy === c.p ? 'STARTING…' : accts.length ? 'RECONNECT' : 'CONNECT'}
                 </button>
+              </section>
+            )
+          })}
+          {APP_CREDS.map(c => {
+            const on = !!st.switches[c.sw]
+            const missing = c.env.filter(e => !st.env[e])
+            return (
+              <section key={c.sw} className="bg-gray-900 border border-gray-700 rounded-3xl p-6 flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <h2 className="text-xl font-bold">{c.label}</h2>
+                  <button onClick={() => flip(c.sw, !on)} disabled={!!busy}
+                    className={`px-4 py-2 rounded-xl font-bold text-sm ${on ? 'bg-green-700' : 'bg-gray-700'}`}>{c.sw}: {on ? 'ON' : 'OFF'}</button>
+                </div>
+                {missing.length > 0 ? <p className="text-amber-400 text-sm">Missing in Vercel: {missing.join(', ')}</p> : <p className="text-green-400 text-sm">Keys present.</p>}
               </section>
             )
           })}

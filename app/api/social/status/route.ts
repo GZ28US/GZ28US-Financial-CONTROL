@@ -11,11 +11,14 @@ import { sealingReady } from '@/lib/socialCrypto.server'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const KEYS = [...Object.values(SWITCH), PUBLISH_SWITCH]
-const ENVS: Record<Platform, string[]> = {
+const KEYS = [...Object.values(SWITCH), PUBLISH_SWITCH, 'paypal.read.enabled', 'carriers.track.enabled']
+const ENVS: Record<Platform | 'APP_CREDS', string[]> = {
   META: ['META_APP_ID', 'META_APP_SECRET'],
   YOUTUBE: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],
   TIKTOK: ['TIKTOK_CLIENT_KEY', 'TIKTOK_CLIENT_SECRET'],
+  GOOGLE: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'GOOGLE_ADS_DEVELOPER_TOKEN'],
+  EBAY: ['EBAY_CLIENT_ID', 'EBAY_CLIENT_SECRET', 'EBAY_RUNAME'],
+  APP_CREDS: ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'UPS_CLIENT_ID', 'UPS_CLIENT_SECRET', 'FEDEX_CLIENT_ID', 'FEDEX_CLIENT_SECRET', 'USPS_CLIENT_ID', 'USPS_CLIENT_SECRET'],
 }
 
 export async function GET(req: NextRequest) {

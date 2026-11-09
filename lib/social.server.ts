@@ -19,13 +19,15 @@ import { createHash, randomBytes } from 'node:crypto'
 import { seal, unseal } from './socialCrypto.server'
 import { settingOn } from './appSettings.server'
 
-export type Platform = 'META' | 'YOUTUBE' | 'TIKTOK'
-export type Kind = 'META_USER' | 'FB_PAGE' | 'IG_ACCOUNT' | 'YT_CHANNEL' | 'TT_ACCOUNT'
+export type Platform = 'META' | 'YOUTUBE' | 'TIKTOK' | 'GOOGLE' | 'EBAY'
+export type Kind = 'META_USER' | 'FB_PAGE' | 'IG_ACCOUNT' | 'YT_CHANNEL' | 'TT_ACCOUNT' | 'GOOGLE_ACCOUNT' | 'EBAY_USER'
 
 export const SWITCH: Record<Platform, string> = {
   META: 'social.meta.enabled',
   YOUTUBE: 'social.youtube.enabled',
   TIKTOK: 'social.tiktok.enabled',
+  GOOGLE: 'social.google.enabled',
+  EBAY: 'social.ebay.enabled',
 }
 export const PUBLISH_SWITCH = 'social.publish.enabled'
 
@@ -38,6 +40,7 @@ export const META_SCOPES = [
   'pages_show_list', 'pages_read_engagement', 'pages_read_user_content', 'pages_manage_metadata', 'pages_manage_posts',
   'pages_manage_engagement', 'pages_messaging', 'read_insights', 'business_management',
   'instagram_basic', 'instagram_manage_comments', 'instagram_manage_insights', 'instagram_manage_messages', 'instagram_content_publish',
+  'ads_read',                                                   // Meta Ads spend per campaign (step 2, read only)
 ]
 export const YOUTUBE_SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
@@ -45,6 +48,16 @@ export const YOUTUBE_SCOPES = [
   'https://www.googleapis.com/auth/youtube.upload',
   'https://www.googleapis.com/auth/yt-analytics.readonly',
 ]
+// Step 2 (09/11): ONE Google consent on gz28us@gmail.com — Business Profile (reviews, hours, photos, insights), Calendar, Google Ads.
+// Writes inside these scopes (review reply, calendar event) are not built; when they are, they sit behind their own switch + his OK.
+export const GOOGLE_SCOPES = [
+  'openid', 'email',
+  'https://www.googleapis.com/auth/business.manage',
+  'https://www.googleapis.com/auth/calendar',
+  'https://www.googleapis.com/auth/adwords',
+]
+// eBay buyer side: identity + the Trading API (GetMyeBayBuying) through the base scope.
+export const EBAY_SCOPES = ['https://api.ebay.com/oauth/api_scope', 'https://api.ebay.com/oauth/api_scope/commerce.identity.readonly']
 export const TIKTOK_SCOPES = ['user.info.basic', 'user.info.profile', 'user.info.stats', 'video.list', 'video.upload', 'video.publish']
 
 export function socialDb(): SupabaseClient {
@@ -141,6 +154,15 @@ async function refreshGoogle(rt: string) {
   return r.json()
 }
 
+async function refreshEbay(rt: string) {
+  const basic = Buffer.from(`${process.env.EBAY_CLIENT_ID || ''}:${process.env.EBAY_CLIENT_SECRET || ''}`).toString('base64')
+  const r = await fetch('https://api.ebay.com/identity/v1/oauth2/token', {
+    method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', Authorization: `Basic ${basic}` },
+    body: new URLSearchParams({ grant_type: 'refresh_token', refresh_token: rt, scope: EBAY_SCOPES.join(' ') }),
+  })
+  return r.json()
+}
+
 async function refreshTiktok(rt: string) {
   const r = await fetch('https://open.tiktokapis.com/v2/oauth/token/', {
     method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -167,7 +189,7 @@ export async function accessToken(db: SupabaseClient, row: SocialRow, force = fa
   }
   const rt = unseal(row.refresh_token_enc)
   if (!rt) { await mark(db, row.id, { status: 'EXPIRED', last_error: 'no refresh token' }); throw new Error(`${row.account}: no refresh token — reconnect`) }
-  const j = row.platform === 'YOUTUBE' ? await refreshGoogle(rt) : await refreshTiktok(rt)
+  const j = row.platform === 'YOUTUBE' || row.platform === 'GOOGLE' ? await refreshGoogle(rt) : row.platform === 'EBAY' ? await refreshEbay(rt) : await refreshTiktok(rt)
   if (!j?.access_token) {
     const why = String(j?.error_description || j?.error?.message || j?.error || j?.message || 'refresh failed')
     const dead = /invalid_grant|expired|revoked/i.test(why)
