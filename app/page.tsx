@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { pageAll } from '@/lib/pageAll'
 import { docMoneyFor, primeApproved } from '@/lib/money'
 import { flowHorizonEnd } from '@/lib/flowHorizon'
 import { BASE_PATH, formatShortDate, flowClientLabel, insuresCar } from '@/lib/utils'
@@ -24,7 +25,7 @@ async function ensureFixedCostPayments() {
   const { data: sups } = await supabase.from('fixed_cost_suppliers')
     .select('id, description, company, date_entry, date_conclusion, periodicity, cost_type, payment_day_1, amount_1, payment_day_2, amount_2')
   if (!sups || sups.length === 0) return
-  const { data: existing } = await supabase.from('fixed_cost_expenses').select('supplier_id, expense_date')
+  const existing = await pageAll(() => supabase.from('fixed_cost_expenses').select('id, supplier_id, expense_date'))
   const existsBySup = new Map<string, Set<string>>()
   // APP subscriptions schedule at most ONE row per month (real charges arrive from
   // the Gmail receipts at whatever day they land) — so track months too.

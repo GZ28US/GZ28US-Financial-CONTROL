@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { pageAll } from '@/lib/pageAll'
 import { formatUSD } from '@/lib/utils'
 import { lateFeeFor } from '@/lib/lateFee'
 
@@ -101,7 +102,7 @@ export default function FixedCostSuppliersPage() {
     setNextDue(m)
     // Soma de todos os pagamentos por fornecedor — alimenta a média final dos
     // contratos encerrados (pagamentos ÷ vigência), incluindo refunds negativos.
-    const { data: allExp } = await supabase.from('fixed_cost_expenses').select('supplier_id, amount')
+    const allExp = await pageAll(() => supabase.from('fixed_cost_expenses').select('id, supplier_id, amount'))
     const totals = new Map<string, number>()
     for (const e of (allExp || [])) {
       if (!e.supplier_id) continue

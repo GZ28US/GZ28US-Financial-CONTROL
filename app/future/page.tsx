@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { pageAll } from '@/lib/pageAll'
 import { docMoneyFor, primeApproved } from '@/lib/money'
 import { BASE_PATH, formatShortDate, flowClientLabel } from '@/lib/utils'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
@@ -33,7 +34,7 @@ async function ensureFixedCostPayments() {
   const { data: sups } = await supabase.from('fixed_cost_suppliers')
     .select('id, description, company, date_entry, date_conclusion, periodicity, payment_day_1, amount_1, payment_day_2, amount_2')
   if (!sups || sups.length === 0) return
-  const { data: existing } = await supabase.from('fixed_cost_expenses').select('supplier_id, expense_date')
+  const existing = await pageAll(() => supabase.from('fixed_cost_expenses').select('id, supplier_id, expense_date'))
   const existsBySup = new Map<string, Set<string>>()
   // AUTO-BOOK (BL 0.8.0): mês que já tem tantas linhas quanto slots não ganha outra.
   const countBySupMonth = new Map<string, number>()
