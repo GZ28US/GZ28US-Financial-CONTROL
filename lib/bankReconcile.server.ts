@@ -168,7 +168,20 @@ export type Cand = { payout_id?: string; table: string; id: string; label: strin
 // nos centavos duplicava a conta e deixava um "a pagar" fantasma).
 export type Sched = { id: string; supplier_id: string; expense_date: string; amount: number; description: string | null; paid_from: string | null }
 // shadow: registros da FOLHA pagos por outra conta (brPaid) — não casam, mas guardam contra gêmeo (CASAR COM AJUSTE).
-export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[]; payouts?: PayoutCand[] }
+export type Pool = { out: Cand[]; inn: Cand[]; sched: Sched[]; shadow: Cand[]; payouts?: PayoutCand[]; apps?: { id: string; name: string }[] }
+// ASSINATURA CADASTRADA NUNCA VAI PRO BALDE (09/11/2026, caso Amazon Prime mar–ago): mês de APP não é agendado de antemão
+// (só o recibo do Gmail cria a linha), então a cobrança que chega ANTES do recibo não tinha par e a regra BUCKET a lançava
+// na A ATRIBUIR — e o recibo lançava de novo no APPS. Linha cujo texto do banco traz TODAS as palavras do nome de um APP
+// cadastrado espera o recibo/agendada (o EXACT casa quando ele chegar) em vez de virar balde ou insumo.
+export function appHomeOf(line: any, apps: { id: string; name: string }[] | undefined): { id: string; name: string } | null {
+  if (!apps || !apps.length) return null
+  const bank = ' ' + ((line.merchant || '') + ' ' + (line.name || '')).toLowerCase().replace(/[^a-z0-9]+/g, ' ') + ' '
+  for (const a of apps) {
+    const ws = String(a.name || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').split(' ').filter(w => w.length >= 3)
+    if (ws.length && ws.every(w => bank.includes(' ' + w + ' '))) return a
+  }
+  return null
+}
 // STRIPE PAYOUT (quote portal M2, 06/11/2026; blueprint §7.5): um depósito da Stripe na Regions = Σ(renda − tarifa) das cobranças
 // que a Stripe juntou naquele payout (payment_attempts.payout_id, gravado pelo webhook payout.paid). Só cobrança LIVE e SUCCEEDED;
 // cada membro precisa estar LIVRE no pool (nem casado, nem BR). Payout com cobrança da LOJA (mesma conta Stripe, sem attempt) não fecha a
@@ -377,7 +390,8 @@ const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to =
   }
   groups.forEach((g, id) => { if (g.n > 1) push(out, { table: 'purchase_group', id, label: `${g.label} · ${g.n} itens`, date: g.date, amount: g.amount, undated: g.undated, members: g.members, detail: `PEDIDO: soma de ${g.n} itens comprados juntos — o banco cobra o pedido inteiro de uma vez` }) })
   const payouts = await payoutCands(db, out, inn)
-  return { out, inn, sched, shadow, payouts }
+  const apps = suppliers.filter((x: any) => x.cost_type === 'APP').map((x: any) => ({ id: String(x.id), name: String(x.company || x.description || '') })).filter((x: any) => x.name.trim().length >= 3)
+  return { out, inn, sched, shadow, payouts, apps }
 }
 
 async function payoutCands(db: any, out: Cand[], inn: Cand[]): Promise<PayoutCand[]> {
@@ -1015,6 +1029,8 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
           const age = Math.max(opts.minCreateAge || 0, RULE_AGE_DAYS)
           const tail0 = Math.max(0.30, 0.005 * amt)
           const twin0 = arr.filter(x => free(x) && notRejected(x) && x.amount >= amt / 1.10 && x.amount <= amt + tail0 && x.date && daysBetween(x.date, l.date) <= 10 && (nameHit(l, x) || shortNameHit(l, x)))
+          const appCap = appHomeOf(l, pool.apps)
+          if (appCap && num(l.amount) > 0) { skip('assinatura APP cadastrada (' + appCap.name + ') — espera o recibo/agendada do mês; nunca balde'); continue }
           if (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && capped.r.target !== 'IGNORE' && signedDays(l.date, today) >= age && !twin0.length) { plan.items.push({ line: l, cand: null, engine: 'BUCKET', create: true, rule: capped.r, cls, reason: why }); continue }
           if (twin0.length) { if (cur) cur.cands = twin0; skip('quase-gêmeo no app (nome + valor na faixa do imposto) — decida'); continue }
           skip(why + (num(l.amount) > 0 && capped.r.target !== 'TRANSFER' && capped.r.target !== 'IGNORE' ? '' : ' — não vai pro balde')); continue
@@ -1043,6 +1059,8 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
         const doCarro = arr.filter(x => free(x) && notRejected(x) && x.table === 'invoice_expenses' && Math.abs(x.amount - amt) <= 0.10 + 1e-9 && x.date && daysBetween(x.date, l.date) <= 3 && FUEL_WORDS.test(semSelo(x)) && !FUEL_VETO.test(semSelo(x)))
         if (doCarro.length) { if (cur) cur.cands = doCarro; skip('abastecimento de carro já lançado no app (±3 d, ±US$ 0,10) — case com a despesa do carro, não com a Frota'); continue }
       }
+      // APP cadastrado: só a regra que ADOTA/CRIA a conta do próprio fornecedor (FIXED_EXPENSE) segue; balde e insumo esperam o recibo.
+      if (rule.r.target !== 'FIXED_EXPENSE') { const appR = appHomeOf(l, pool.apps); if (appR) { skip('assinatura APP cadastrada (' + appR.name + ') — espera o recibo/agendada do mês; nunca ' + (rule.r.target === 'BUCKET' ? 'balde' : 'lançamento avulso')); continue } }
       if (rule.r.target === 'BUCKET') {
         // BALDE (fase B): despesa real no mesmo dia, sem dono. Maturidade de 7 dias
         // também no APLICAR humano (a nota escaneada 3 dias depois costuma estar ali);
