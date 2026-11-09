@@ -102,7 +102,11 @@ type Kind =
 // é fatura de FORNECEDOR paga por link (a T1 cobra assim) — em 2026-08-06 os
 // $1.908,61 dos bicos ID1750 do MudMonster viraram "app intuit.com" duplicando
 // a expense da invoice US.040. Fatura de vendor pertence à invoice do carro.
-const NOT_AN_APP = /ebay|tixr|amazon|mercado\s?livre|aliexpress|rockauto|summit\s?racing|jegs|paypal|walmart|bestbuy|intuit|quickbooks|bill\.com|melio|freshbooks|waveapps|square(up)?\.com|authorize\.net/i
+// Maquininha (POS) também não (09/11/2026): o recibo Clover «Your receipt from EARTH MOTORCARS-LOTUS OF» de US$ 2.060
+// (sinal + taxa de um CARRO, cobrado UMA vez no Visa) nasceu APP MENSAL e plantou 22 parcelas-fantasma no FUTURE.
+const NOT_AN_APP = /ebay|tixr|amazon|mercado\s?livre|aliexpress|rockauto|summit\s?racing|jegs|paypal|walmart|bestbuy|intuit|quickbooks|bill\.com|melio|freshbooks|waveapps|square(up)?\.com|authorize\.net|clover\.com|toasttab|spoton|heartland|lightspeed|shopify|venmo/i
+// App NOVO só nasce sozinho com valor de assinatura: fora do catálogo e acima disto, o recibo não cria app (ver registerReceipt).
+const NEW_APP_MAX = 500
 
 function classify(subject: string, from: string): Kind {
   if (NOT_AN_APP.test(from)) return { kind: 'vendor-mail' }
@@ -380,6 +384,13 @@ async function registerReceipt(
   // o e-mail não é arquivado e a próxima passada tenta de novo.
   const settle: OpenPick = row ? await openRowToSettle(db, row.id, info.payDate, amount) : { id: null, scheduled: false, multi: false }
 
+  // 09/11/2026: fora do catálogo e acima de US$ 500 o mais provável é compra ÚNICA com recibo no formato Stripe/POS
+  // (caso EARTH MOTORCARS, US$ 2.060) — nada é criado, o e-mail fica e o erro aparece na varredura: gente decide.
+  // Assinatura cara de verdade entra pelo catálogo (APP_ALIASES) ou à mão em COSTS → APPS.
+  if (!row && amount > NEW_APP_MAX && !knownApp(`${info.vendor} ${info.from}`)) {
+    out.errors.push(`${appName}: recibo de ${amount.toFixed(2)} de fornecedor fora do catálogo (> US$ ${NEW_APP_MAX}) — NÃO virou app mensal, e-mail mantido (${info.box})`)
+    return { row: null, registered: false, keep: true }
+  }
   if (!row) {
     const { data: created, error } = await db.from('fixed_cost_suppliers').insert({
       description: appName,

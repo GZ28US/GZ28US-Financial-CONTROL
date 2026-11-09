@@ -1096,6 +1096,16 @@ export function buildPlan(lines: any[], pool: Pool, rules: MerchantRule[] = [], 
     const rep45 = sorted.filter(o => o !== l && key(o) === key(l) && daysBetween(o.date, l.date) <= 45).length
     if (rep45 >= 2) { skip('série (≥3× em 45d)'); continue }
     if (!nameHit(l, c)) { skip('tem gêmeo no app — nome não bate'); continue }
+    // O DINHEIRO JÁ TEM DONO PAGO (09/11/2026, caso Salvaggio): o wire de 28/10 de US$ 28.000 pagou a parcela 3/5, lançada à mão
+    // como PAGA em 28/10 por 28.023 (28.000 + taxa do wire em extra) e sem elo com o banco. Valor ≠ → ela nem entrava no `same`,
+    // e o EXACT deu o wire à parcela 4/5 EM ABERTO (28.000 cravado), baixando-a com a data do wire: a dívida real sumiu do
+    // CURRENT Flow. Candidato EM ABERTO nunca leva a linha se o app já tem um registro PAGO, do mesmo nome, a ±3 dias do banco,
+    // com o mesmo valor ou o valor + taxa (até $50 ou 0,5%): a linha é dele — vira pergunta com os dois.
+    if (c.undated) {
+      const tail = Math.max(50, 0.005 * amt)
+      const paidTwin = arr.filter(x => x !== c && free(x) && !x.undated && x.date && daysBetween(x.date, l.date) <= 3 && x.amount >= amt - 0.011 && x.amount <= amt + tail && (nameHit(l, x) || shortNameHit(l, x)))
+      if (paidTwin.length) { if (cur) cur.cands = [...paidTwin, c]; skip('o app já tem registro PAGO nesta data com este valor (± taxa) — a linha é dele, não da conta em aberto: case com o pago'); continue }
+    }
     // Valor redondo só assusta em dinheiro-movimento (Zelle/wire pra gente): com nome batendo, candidato único,
     // ≤3 d e sem gêmea, $100/$250/$500 de fornecedor é prova como outra qualquer (BL 1.3.0).
     if (amt % 50 === 0 && amt < 1000 && ['TRANSFER', 'INCOME', 'BANK_FEE'].includes(String(cls.klass))) { skip('valor redondo < $1k'); continue }
