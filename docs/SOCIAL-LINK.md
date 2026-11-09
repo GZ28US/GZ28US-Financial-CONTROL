@@ -82,15 +82,67 @@ Nothing in this step posts, replies or DMs. Writes come later behind `social.pub
 - Note: the Higgsfield connector already has its own TikTok publish path (`tiktok_connect` / `tiktok_prepare_publish`). It is a
   separate door and does not give the app reading access.
 
+## Step 2: «do all worth it» (commit 8de13ef4, all READ ONLY, switches OFF)
+
+New `what=` on `/ca/api/social/read`: `meta_ad_accounts`, `meta_ads_insights(id=act_…)`, `gbp_accounts`, `gbp_locations`,
+`gbp_reviews(id=location)`, `gbp_insights(id=location)`, `cal_list`, `cal_events(id=calendar, default primary)`, `gads_customers`,
+`gads_campaigns(id=customer)`, `ebay_purchases`. App-credential reads: `/ca/api/integrations/read?what=paypal_transactions` and
+`?what=track&carrier=ups|fedex|usps&id=<number>`. Migration `MIGRATION_integrations_2.sql`, rollback `ROLLBACK_integrations_2.sql`.
+
+### Google: Business Profile, Calendar and Google Ads (one consent on gz28us@gmail.com) · switch `social.google.enabled`
+- **Business Profile API:** not open by default. Quota starts at **0**; Márcio files the access request form
+  ("GBP API access request", Google Business Profile API contact form) for the Cloud project. Approval usually takes days.
+  Once approved, enable: My Business Account Management, Business Information, Business Profile Performance, and My Business v4 (reviews).
+  Review replies are not built; when they are, they sit behind a switch plus his OK for each reply.
+- **Calendar API:** enable it; no review is needed for his own account. Reading is built. Two-way sync of the shop schedule is the next
+  step, behind its own switch.
+- **Google Ads API:** a **developer token** from the Ads account's API Center (it needs a *manager* account; "Basic access" is an
+  application form, and the test token only reads test accounts). Env `GOOGLE_ADS_DEVELOPER_TOKEN` (+ `GOOGLE_ADS_LOGIN_CUSTOMER_ID` if
+  reading through a manager). API version set by `GOOGLE_ADS_API_VERSION` (default v22; Google sunsets each version after about a year).
+- Same Cloud blocker as YouTube: **the account needs 2-step verification first** (Google Cloud blocked access on 09/11).
+  Consent screen must be "In production".
+
+### Meta Ads · rides on `social.meta.enabled`
+`ads_read` was added to the Meta consent. In Development mode it works for his own ad accounts (Marketing API standard access);
+no review is needed for read-only use on accounts he owns.
+
+### eBay purchases · switch `social.ebay.enabled`
+- developer.ebay.com → production keyset (App ID = `EBAY_CLIENT_ID`, Cert ID = `EBAY_CLIENT_SECRET`) → User Tokens →
+  create a **RuName** with "auth accepted URL" `https://www.gz28us.com/ca/api/social/ebay/callback` → `EBAY_RUNAME`.
+- The buyer side is the Trading API `GetMyeBayBuying` (won/purchased items, last 60 days), which returns raw XML. Parsing it and booking
+  the orders is **AutoBook's** job. eBay asks new production keysets to subscribe to (or opt out of) Marketplace Account Deletion
+  notifications; opting out is allowed for an app that stores no eBay user data beyond its own tokens.
+
+### PayPal · switch `paypal.read.enabled`
+developer.paypal.com → Apps & Credentials → **Live** → create an app on the business account → enable **Transaction search** →
+`PAYPAL_CLIENT_ID` / `PAYPAL_CLIENT_SECRET`. Read: up to 31 days per call, with about 3 hours of lag on PayPal's side.
+
+### Amazon: not worth building
+Amazon has no API for a regular buyer's order history (SP-API is for sellers). The only option is the **Amazon Business** Reporting
+API, and only if the shop buys on an Amazon Business account. E-mail and AutoBook stay the source.
+
+### UPS · FedEx · USPS tracking · switch `carriers.track.enabled`
+- UPS: developer.ups.com → app with the **Tracking** product → `UPS_CLIENT_ID/SECRET` (a UPS account number is needed to create the app).
+- FedEx: developer.fedex.com → project with the **Track API** → production keys → `FEDEX_CLIENT_ID/SECRET`.
+- USPS: developers.usps.com → app → `USPS_CLIENT_ID/SECRET` (Tracking v3).
+- These are a second opinion next to 17TRACK, not a replacement. **Labels are not built**: each label is a purchase, so it will be
+  a separate step (UPS Shipping, FedEx Ship and USPS Labels APIs, which need payment accounts), behind a switch plus his OK for each label.
+
 ## One shared prerequisite
 `SOCIAL_TOKEN_KEY` (32 random bytes, base64) in Vercel Production. Without it every CONNECT answers 503 and nothing is stored.
 Generate it with `node -e "process.stdout.write(require('crypto').randomBytes(32).toString('base64'))" | npx vercel env add SOCIAL_TOKEN_KEY production`,
 so the value never appears on screen. Then redeploy.
 
 ## Status (09/11/2026)
-| Platform | Code | Waiting on |
+| Integration | Code | Waiting on |
 |---|---|---|
-| Meta (FB + IG + DMs + Business Suite) | live, OFF | Márcio: create the Meta app + 2 env vars + switch ON + CONNECT. No review needed for our own accounts. |
-| YouTube | live, OFF | Márcio: enable 2 APIs, add the redirect URI, consent screen in production, switch ON + CONNECT. |
-| TikTok | live, OFF | Márcio: developer app + Sandbox target user + 2 env vars + switch ON + CONNECT. Public posting waits on TikTok's audit. |
-| All | | `SOCIAL_TOKEN_KEY` in Vercel |
+| `SOCIAL_TOKEN_KEY` | ✅ set in Vercel, live | — |
+| YouTube | live, OFF | Márcio: **2-step verification on the Google account** (Cloud console blocks him without it) → I enable APIs + redirect URI |
+| Google (Business Profile · Calendar · Ads) | live, OFF | same 2SV; then GBP API access form (Google review, days), Ads developer token (application) |
+| Meta (FB · IG · DMs · Business Suite · Ads) | live, OFF | Márcio: create the Meta developer app + 2 env vars. No App Review for own assets |
+| TikTok | live, OFF | Márcio: developer app + sandbox target user + 2 env vars; TikTok audit before public posts |
+| eBay purchases | live, OFF | Márcio: production keyset + RuName + 3 env vars |
+| PayPal | live, OFF | Márcio: Live REST app with Transaction search + 2 env vars |
+| UPS / FedEx / USPS tracking | live, OFF | Márcio: 3 developer apps + 6 env vars (UPS needs the account number) |
+| Amazon | not built | no buyer API (only Amazon Business) |
+| Labels | not built | each label costs money: separate step, his OK each time |
