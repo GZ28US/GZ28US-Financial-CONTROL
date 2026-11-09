@@ -203,8 +203,12 @@ export default function HomePage() {
     await ensureStaffPayments()
     // EVERYTHING, all time — every REPORT-READY (non-quote, ONLINE/CLOSED) invoice and its children.
     // As invoices vêm primeiro; as filhas só das invoices que passaram (ver childRows).
-    const { data: invs } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, global_discount, fl_tax_override, fl_tax_expense_date, import_margin').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED'])
-    const invIds = (invs || []).map((i: any) => String(i.id))
+    // INCOMPLETE entra SÓ no A RECEBER (Márcio 09/11: «tudo o que temos pra receber de todos… tudo tem que aparecer aí» —
+    // US.021.1 Marcelo e US.017.1 DarkAngel sumiam). Caixa, markup, DUE by GZ28US e impostos seguem só REALTIME/CLOSED.
+    // A ATRIBUIR (origin BUCKET) nunca é de cliente.
+    const { data: invsAll } = await supabase.from('invoices').select('id, invoice_code, ride_id, client_id, service, global_discount, fl_tax_override, fl_tax_expense_date, import_margin, live_status, origin').eq('is_quote', false).in('live_status', ['REALTIME', 'CLOSED', 'INCOMPLETE']).or('origin.is.null,origin.neq.BUCKET')
+    const invs = (invsAll || []).filter((i: any) => i.live_status !== 'INCOMPLETE')
+    const invIds = (invsAll || []).map((i: any) => String(i.id))
     const [pays, expsTodas, partsTodos, svcsTodos] = await Promise.all([
       childRows('invoice_incomes', 'id, invoice_id, amount, paid_at, payment_date, source, description, date_label', invIds),
       childRows('invoice_expenses', 'id, invoice_id, price, quantity, expense_date, payment_date, tax, extra, item, supplier, order_number, cancel_status', invIds),
@@ -251,10 +255,10 @@ export default function HomePage() {
     const codeById = new Map<string, string>()
     const metaById = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string; carName: string; invoiceName: string }>()
     const metaByCode = new Map<string, { href: string; tip: string; carInvTip: string; clientName: string; carName: string; invoiceName: string }>()
-    for (const inv of invs || []) {
+    for (const inv of invsAll || []) {
       const ride = inv.ride_id ? ridesById.get(inv.ride_id) : null
       const cid = inv.client_id || ride?.client_id || null
-      codeById.set(inv.id, inv.invoice_code)
+      if (inv.live_status !== 'INCOMPLETE') codeById.set(inv.id, inv.invoice_code)   // filhas de INCOMPLETE ficam fora das outras listas
       const clientName = cid ? flowClientLabel(clientsById.get(cid) || '') : ''
       const carName = ride ? (ride.project_name || [ride.model, ride.version].filter(Boolean).join(' ')) : ''
       const invoiceName = inv.service || inv.invoice_code
@@ -316,7 +320,7 @@ export default function HomePage() {
     const income: Row[] = []
     const warn: Row[] = []
     const todayR = todayYmd()
-    for (const inv of invs || []) {
+    for (const inv of invsAll || []) {
       if (!isClientInvoice(inv.invoice_code, scopeOf(inv))) continue
       const m = metaFor(inv.id, inv.invoice_code)
       const ip = (paysBy.get(inv.id) || []) as any[]
