@@ -186,9 +186,23 @@ export async function enforceReceiptPaid(db: SupabaseClient): Promise<{ fixed: n
     if (!error) { fixed++; await hidden('invoice_expenses', e.id) }
   }
 
-  const { data: fc } = await db.from('fixed_cost_expenses')
-    .select('id, expense_date, created_at').not('receipt_url', 'is', null).is('payment_date', null)
-  for (const e of (fc || []) as any[]) {
+  // CUSTO FIXO COM CONTA ANEXADA NÃO É CUSTO PAGO (09/11/2026, achado do AutoBook US): esta perna não tinha a guarda que a
+  // invoice_expenses ganhou em 30/ago, e todo custo fixo com documento nascia pago — inclusive FATURA a vencer e FOLIO a
+  // debitar. O folio do Circus Circus (367,14, «A DEBITAR») foi reaberto 3 vezes e voltava pago na rodada seguinte; a
+  // fatura 7207 do galpão (11/2026), o e-CNPJ «A PAGAR» e as duas faturas Drummond «VENCE» sumiram das contas a pagar.
+  // Blindagem: (1) o CAMPO receipt_proves_payment=false (o mesmo da invoice_expenses; lido só se a coluna existir);
+  // (2) conta datada no FUTURO nunca é paga por anexo; (3) a descrição que diz que ainda se deve (A PAGAR / A DEBITAR /
+  // VENCE) — ponte até o campo existir: texto é frágil, por isso o campo é a trava de verdade.
+  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date())
+  const DEVE = /^\s*(a pagar|a debitar)\b|\bvence\b/i
+  let fcRes: { data: any[] | null; error: any } = await db.from('fixed_cost_expenses')
+    .select('id, expense_date, created_at, description, receipt_proves_payment').not('receipt_url', 'is', null).is('payment_date', null)
+  if (fcRes.error) fcRes = await db.from('fixed_cost_expenses')
+    .select('id, expense_date, created_at, description').not('receipt_url', 'is', null).is('payment_date', null)
+  for (const e of (fcRes.data || []) as any[]) {
+    if (e.receipt_proves_payment === false) continue
+    if (e.expense_date && String(e.expense_date).slice(0, 10) > hoje) continue
+    if (DEVE.test(String(e.description || ''))) continue
     const d = dateOf(e); if (!d) continue
     const { error } = await db.from('fixed_cost_expenses').update({ payment_date: d }).eq('id', e.id)
     // Custo fixo não escolhe pagador: PAID FROM e PAID TO nascem GZ28US com o pagamento, só se vazios.
