@@ -102,8 +102,8 @@ const S = (x: unknown) => semMarcacao(String(x ?? '')).replace(/[*_~`]/g, '').tr
 const OWNER = (v: WaVars, what: string) => `🔴 *OWNER ALERT* — ${what}\n${v.code}${v.client ? ' · ' + v.client : ''}\n${v.docUrl}`
 export const WA_COPY: Record<string, (v: WaVars) => string> = {
   'notify.client.quote_sent.whatsapp': v => v.lang === 'pt'
-    ? `Olá${v.first ? ', ' + v.first : ''}! Aqui está o seu orçamento ${v.code}${v.car ? ' — ' + v.car : ''} (${v.total}). Você pode ler, aprovar e pagar o sinal no mesmo link${v.until ? ` (válido até ${v.until})` : ''}: ${v.link}`
-    : `Hi${v.first ? ' ' + v.first : ''}! Here is your quote ${v.code}${v.car ? ' — ' + v.car : ''} (${v.total}). You can read it, approve it and pay the deposit on the same link${v.until ? ` (valid until ${v.until})` : ''}: ${v.link}`,
+    ? `Olá${v.first ? ', ' + v.first : ''}! Aqui está o seu orçamento ${v.code}${v.car ? ' — ' + v.car : ''} (${v.total}). Você pode ler tudo, aprovar e assinar no link${v.until ? ` (válido até ${v.until})` : ''}: ${v.link}`
+    : `Hi${v.first ? ' ' + v.first : ''}! Here is your quote ${v.code}${v.car ? ' — ' + v.car : ''} (${v.total}). You can read it all, approve and sign on the link${v.until ? ` (valid until ${v.until})` : ''}: ${v.link}`,
   'notify.reports.quote_sent': v => `📤 *QUOTE SENT* ${v.code}${v.car ? ' — ' + v.car : ''} · ${v.client} · ${v.total}${v.channel ? ' · via ' + v.channel : ''}${v.until ? ' · valid until ' + v.until : ''}`,
   'notify.reports.quote_viewed': v => `👁 quote viewed ${v.code} — ${v.client}`,
   'notify.reports.changes_requested': v => `✏️ *CHANGES REQUESTED* ${v.code} — ${v.client} · open ACTIVITY: ${v.docUrl}`,

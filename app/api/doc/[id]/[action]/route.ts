@@ -49,11 +49,11 @@ function sendText(s: DocState, url: string, lang: Lang, pay: boolean): string {
   if (lang === 'pt') {
     return pay
       ? `Olá${name ? ', ' + name : ''}! Obrigado pela aprovação. O sinal de ${dep ? moneyCents(dep.amount_cents, 'pt') : ''} pode ser pago aqui, com cartão (sem taxa para você): ${url}`
-      : `Olá${name ? ', ' + name : ''}! Aqui está o seu orçamento ${doc?.header?.display_code || ''} — ${doc?.header?.service || ''} (${grand}). Você pode ler, aprovar e pagar o sinal no mesmo link: ${url}`
+      : `Olá${name ? ', ' + name : ''}! Aqui está o seu orçamento ${doc?.header?.display_code || ''} — ${doc?.header?.service || ''} (${grand}). Você pode ler tudo, aprovar e assinar no link: ${url}`
   }
   return pay
     ? `Hi${name ? ' ' + name : ''}! Thanks for approving. Your ${dep ? moneyCents(dep.amount_cents, 'en') : ''} deposit can be paid here by card (no fee to you): ${url}`
-    : `Hi${name ? ' ' + name : ''}! Here is your quote ${doc?.header?.display_code || ''} — ${doc?.header?.service || ''} (${grand}). You can read it, approve it and pay the deposit on the same link: ${url}`
+    : `Hi${name ? ' ' + name : ''}! Here is your quote ${doc?.header?.display_code || ''} — ${doc?.header?.service || ''} (${grand}). You can read it all, approve and sign on the link: ${url}`
 }
 
 async function freezeRecorded(db: ReturnType<typeof serviceDb>, s: DocState, actor: string): Promise<string | null> {

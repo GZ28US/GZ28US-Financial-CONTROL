@@ -107,7 +107,8 @@ export default function QuotePublic({ token, attemptId, print, previewDto }: { t
         {!print && <Bar title={approved || isInvoice ? (lang === 'pt' ? 'Pagamento' : 'Payment') : (lang === 'pt' ? 'Aprovar e assinar' : 'Approve & sign')} />}
         {!print && <Actions d={d} lang={lang} T={T} busy={busy} setBusy={setBusy} flash={flash} setD={setD} preview={preview} refresh={refresh} stage={stage} sub={sub} approved={approved} nextDue={nextDue} grand={grand} />}
 
-        {!print && <Card>
+        {/* Márcio 10/11: nothing about paying shows before the client signs — payment is a second moment */}
+        {!print && (approved || isInvoice) && <Card>
           <p className="text-sm text-gray-300">{railsSentence(d, lang)}</p>
           {!preview && (d.attempts || []).filter((a: any) => a.status === 'SUCCEEDED').map((a: any) => (
             <a key={a.id} href={`${BASE_PATH}/api/q/receipt?link_id=${d.link_id}&attempt=${a.id}`} target="_blank" rel="noreferrer" className="block text-sm text-sky-300 underline mt-1 print:hidden">⬇ {lang === 'pt' ? 'Recibo' : 'Receipt'} — {moneyCents(a.amount_cents, lang)}</a>))}
@@ -264,7 +265,6 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
   const [est, setEst] = useState<string>(''), [lim, setLim] = useState<string>(''), [parts, setParts] = useState<string>('')
   const [gate, setGate] = useState(''), [gateOk, setGateOk] = useState<boolean>(!!d.gate?.ok)
   const otp = useOtp(d, T, call, flash, errMsg, busy)
-  const dep = (d.plan || [])[0]
   if (!open) return <button onClick={() => setOpen(true)} className="w-full text-left text-white my-3">{T('approve_reopen')}</button>
   const sign = async () => {
     if (name.trim().length < 2) return flash(T('err_name'))
@@ -303,7 +303,6 @@ function SignCard({ d, T, busy, call, flash, errMsg, setD, grand, lang }: { d: D
         inputMode={d.gate.hint?.kind === 'phone' ? 'numeric' : 'email'} className="w-full bg-black border border-gray-700 rounded-lg px-3 min-h-[44px] text-white" /></div>}
     {otp.ui}
     <button disabled={busy} onClick={sign} className="w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold disabled:opacity-60">{T('approve_btn', { amount: money(grand, lang) })}</button>
-    {dep && <p className="text-xs text-gray-400 mt-2">{T('next_pay', { amount: moneyCents(dep.amount_cents, lang) })}</p>}
     <button onClick={() => setOpen(false)} className="text-xs text-gray-500 mt-2 underline min-h-[44px]">{T('not_now')}</button>
   </Card>
 }

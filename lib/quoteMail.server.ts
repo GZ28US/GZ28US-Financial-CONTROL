@@ -33,8 +33,8 @@ export function portalMailCopy(kind: PortalMailKind, lang: Lang, v: { first: str
   const what = `<b>${esc(v.code)}</b>${v.car ? ' · ' + esc(v.car) : ''}`
   const C: Record<PortalMailKind, { subject: string; body: string; button: string }> = {
     'quote-link': pt
-      ? { subject: `Seu orçamento ${v.code} — GZ28 V8 SpeedShop`, body: `<p>Seu orçamento ${what} está pronto. No link você lê tudo, aprova e assina, e paga a 1ª parcela no mesmo lugar.${v.until ? ` Válido até ${esc(v.until)}.` : ''}</p>`, button: 'VER MEU ORÇAMENTO' }
-      : { subject: `Your quote ${v.code} — GZ28 V8 SpeedShop`, body: `<p>Your quote ${what} is ready. On the link you can read everything, approve and sign, and pay the 1st installment in the same place.${v.until ? ` Valid until ${esc(v.until)}.` : ''}</p>`, button: 'VIEW MY QUOTE' },
+      ? { subject: `Seu orçamento ${v.code} — GZ28 V8 SpeedShop`, body: `<p>Seu orçamento ${what} está pronto. No link você lê tudo, aprova e assina.${v.until ? ` Válido até ${esc(v.until)}.` : ''}</p>`, button: 'VER MEU ORÇAMENTO' }
+      : { subject: `Your quote ${v.code} — GZ28 V8 SpeedShop`, body: `<p>Your quote ${what} is ready. On the link you can read everything, approve and sign.${v.until ? ` Valid until ${esc(v.until)}.` : ''}</p>`, button: 'VIEW MY QUOTE' },
     'quote-signed': pt
       ? { subject: `Cópia assinada — ${v.code}`, body: `<p>Obrigado! Sua aprovação de ${what} foi registrada. A cópia assinada está anexada em PDF.</p>`, button: 'ABRIR MEU DOCUMENTO' }
       : { subject: `Your signed copy — ${v.code}`, body: `<p>Thank you! Your approval of ${what} is on record. The signed copy is attached as a PDF.</p>`, button: 'OPEN MY DOCUMENT' },
