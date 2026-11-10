@@ -391,7 +391,7 @@ export default function EditInvoicePage() {
   // (no portal revision) see nothing. ?from=doc makes SAVE & EXIT return to /doc.
   const [portalLock, setPortalLock] = useState<{ seq: number; approved: boolean; open: boolean } | null>(null)
   // GO-LIVE RETIREMENT (06–08/11/2026, design v3 §16 «retire the editor's HIRING DATE conversion»): once app_settings
-  // quote_portal.enabled is ON, a quote is hired ONLY by its deposit (the portal / RECORD DEPOSIT in /doc) — HIRING DATE here no
+  // quote_portal.enabled is ON, a quote is hired ONLY by its deposit (the portal / RECORD DEPOSIT on the quote screen) — HIRING DATE here no
   // longer converts. While the switch is OFF (today) the editor behaves exactly as before. Read fails → treated as OFF (legacy).
   const [portalLive, setPortalLive] = useState(false)
   useEffect(() => {
@@ -2125,11 +2125,11 @@ export default function EditInvoicePage() {
   }
   function removePayment(index: number) {
     const payment = payments[index]
-    if (payment.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in /doc (QUOTES v2).'); return }
+    if (payment.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in the QUOTE · CLIENT LINK panel of the quote screen.'); return }
     if (payment.id) setRemovedPaymentIds(prev => [...prev, payment.id!])
     setPayments(payments.filter((_, i) => i !== index))
   }
-  function startEditPayment(index: number) { if (payments[index]?.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in /doc (QUOTES v2).'); return } setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }); setIncomeUploads([]) }
+  function startEditPayment(index: number) { if (payments[index]?.installment_id) { alert('This income is a PAYMENT PLAN row — record, settle or refund it in the QUOTE · CLIENT LINK panel of the quote screen.'); return } setEditingPaymentIndex(index); setEditingPayment({ ...payments[index] }); setIncomeUploads([]) }
   async function saveEditPayment() {
     if (!editingPayment.amount) { alert('Please enter an amount'); return }
     const payment = payments[editingPaymentIndex!]
@@ -2711,7 +2711,7 @@ export default function EditInvoicePage() {
     // Salvou: os recibos das expenses vão para a pasta da invoice com o nome de
     // agora. Roda solto — sair da tela não pode esperar por Dropbox.
     syncInvoiceReceipts(invoiceId)
-    if (exitAfterSaveRef.current) { router.push(fromDoc ? `/doc/${invoiceId}` : basePath); return }
+    if (exitAfterSaveRef.current) { router.push(fromDoc ? `${basePath}/${invoiceId}` : basePath); return }
     await loadData(true)
     setSavedFlash(true)
     setTimeout(() => setSavedFlash(false), 2500)
@@ -2736,7 +2736,7 @@ export default function EditInvoicePage() {
     // (its REQUEST DATE never converts it).
     const conversionDate = isClient ? clientHiringDate : hiringDate
     const nextIsQuote = isQuote && (portalLive || !isValidDate(conversionDate))   // portal live: only the deposit hires
-    if (isQuote && portalLive && isValidDate(conversionDate)) alert('The quote portal is live: HIRING DATE no longer converts a quote.\nRecord the deposit in /doc (RECORD DEPOSIT) — that creates the project.')
+    if (isQuote && portalLive && isValidDate(conversionDate)) alert('The quote portal is live: HIRING DATE no longer converts a quote.\nRecord the deposit on the quote screen (RECORD DEPOSIT) — that creates the project.')
     // A quote may carry CLOSED in quote-land ("quote done"); the newborn INVOICE must
     // come up ONLINE — it can never be born CLOSED (CLOSED requires zero balance).
     if (isQuote && !nextIsQuote && effectiveLive === 'CLOSED') {
@@ -3234,8 +3234,8 @@ export default function EditInvoicePage() {
       {portalLock && (
         <div className="mb-4 rounded-xl border border-red-700 bg-red-950/60 p-3 text-sm text-red-100">
           <b>SENT rev {portalLock.seq} — prices locked (C-16).</b> Add lines freely; to change a price, discount or FL tax tap NEW REVISION in{' '}
-          <a href={`${BASE_PATH}/doc/${invoiceId}`} className="underline font-semibold">/doc →</a>
-          {(portalLock.approved || portalLock.open) && <div className="mt-1">Approved online — the deposit converts this quote: leave HIRING DATE empty and use RECORD DEPOSIT in /doc.</div>}
+          <a href={`${BASE_PATH}${basePath}/${invoiceId}`} className="underline font-semibold">quote screen →</a>
+          {(portalLock.approved || portalLock.open) && <div className="mt-1">Approved online — the deposit converts this quote: leave HIRING DATE empty and use RECORD DEPOSIT on the quote screen.</div>}
         </div>
       )}
 
@@ -3747,12 +3747,12 @@ export default function EditInvoicePage() {
         </div>
 
         {isQuote && (portalLive || (portalLock && (portalLock.approved || portalLock.open)))
-          ? <div><label className="block mb-2 text-lg font-bold">HIRING DATE</label><div className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-2xl px-4 py-3">{portalLock && (portalLock.approved || portalLock.open) ? 'Approved online — ' : 'Quote portal live — '}the DEPOSIT converts this quote (RECORD DEPOSIT in /doc). Leave it empty here.</div></div>
+          ? <div><label className="block mb-2 text-lg font-bold">HIRING DATE</label><div className="text-sm text-amber-300 bg-amber-950 border border-amber-800 rounded-2xl px-4 py-3">{portalLock && (portalLock.approved || portalLock.open) ? 'Approved online — ' : 'Quote portal live — '}the DEPOSIT converts this quote (RECORD DEPOSIT on the quote screen). Leave it empty here.</div></div>
           : <DatePicker label={isClient ? 'REQUEST DATE' : 'HIRING DATE'} value={hiringDate} onChange={setHiringDate} />}
         {isClient && (
           <div>
             <DatePicker label="HIRING DATE" value={clientHiringDate} onChange={setClientHiringDate} />
-            {isQuote && <p className="text-sm text-yellow-400 mt-1">{portalLive ? 'Quote portal live: the DEPOSIT turns this quote into an invoice (RECORD DEPOSIT in /doc).' : 'Setting a HIRING DATE turns this shopping quote into an invoice on save.'}</p>}
+            {isQuote && <p className="text-sm text-yellow-400 mt-1">{portalLive ? 'Quote portal live: the DEPOSIT turns this quote into an invoice (RECORD DEPOSIT on the quote screen).' : 'Setting a HIRING DATE turns this shopping quote into an invoice on save.'}</p>}
           </div>
         )}
         {!isClient && isValidDate(hiringDate) && <DatePicker label="ENTRY DATE" value={entryDate} onChange={setEntryDate} />}
@@ -4378,7 +4378,7 @@ export default function EditInvoicePage() {
         <div>
           <label className="block mb-2 text-lg font-bold">TARGET GRAND TOTAL</label>
           <div className="relative"><span className="absolute left-5 top-1/2 -translate-y-1/2 text-gray-400">$</span>
-            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION in /doc' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
+            <input type="text" inputMode="decimal" placeholder="0.00" value={targetGrandTotal} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION on the quote screen' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setTargetGrandTotal(e.target.value) }} className={`${inputClass} pl-10`} />
           </div>
         </div>
 
@@ -4390,7 +4390,7 @@ export default function EditInvoicePage() {
           <div className="flex items-center gap-3">
             <span className="text-gray-400 font-bold whitespace-nowrap">GLOBAL DISCOUNT</span>
             <div className="relative w-28">
-              <input type="text" inputMode="decimal" value={globalDiscount} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION in /doc' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setGlobalDiscount(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
+              <input type="text" inputMode="decimal" value={globalDiscount} disabled={!!portalLock} title={portalLock ? 'locked by the sent revision — NEW REVISION on the quote screen' : undefined} onChange={(e) => { if (isNumeric(e.target.value)) setGlobalDiscount(e.target.value) }} className={`${smallInputClass} w-full pr-6`} placeholder="0.00" />
               <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400">%</span>
             </div>
             <span className="text-xl font-bold ml-auto text-red-400">- {formatUSD(globalDiscountAmount)}</span>

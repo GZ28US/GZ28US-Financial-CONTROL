@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams, usePathname, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
+import QuoteStaffPanel from '@/components/quote/QuoteStaffPanel'
 import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL } from '@/lib/flTax'
@@ -133,6 +134,8 @@ export default function ViewInvoicePage() {
   const [quoteBackup, setQuoteBackup] = useState<any | null>(null)
   const [showQuoteBackup, setShowQuoteBackup] = useState(false)
   const [showSendChooser, setShowSendChooser] = useState(false)
+  const [portalKey, setPortalKey] = useState(0)            // bumps → the embedded QuoteStaffPanel reloads (after SEND)
+  const [portalInvoice, setPortalInvoice] = useState(false) // an INVOICE born from a portal quote (has revisions) shows the panel too
   const [showDuplicate, setShowDuplicate] = useState(false)
   // Ref to the hidden .print-page container. SEND temporarily un-hides it
   // off-screen so html2canvas can capture the exact print layout to a PDF.
@@ -193,6 +196,10 @@ export default function ViewInvoicePage() {
     // de um balde. Vai direto pra fila. (next/router já inclui o basePath /ca.)
     if (inv?.origin === 'BUCKET') { router.replace('/adm/bank#a-atribuir'); return }
     if (inv) setInvoice(inv)
+    if (inv && !inv.is_quote) {
+      const { count } = await supabase.from('invoice_revisions').select('id', { count: 'exact', head: true }).eq('invoice_id', invoiceId)
+      setPortalInvoice((count || 0) > 0)
+    }
     // If this invoice was converted from a quote, surface the archived original.
     const { data: backup } = await supabase.from('quote_backups').select('*').eq('invoice_id', invoiceId).order('archived_at', { ascending: false }).limit(1).maybeSingle()
     if (backup) setQuoteBackup(backup)
@@ -330,20 +337,60 @@ export default function ViewInvoicePage() {
   //   WhatsApp -> automatic UltraMsg document send to the client's number
   //   SMS      -> open the SMS composer prefilled with a link to the PDF
   //   E-Mail   -> open the mail composer prefilled with a link to the PDF
+  // ONE SEND (10/11/2026, Márcio: «the client gets the beautiful invoice, and all the new features below it … in the existing areas»).
+  // For a QUOTE the client no longer gets a bare PDF: SEND locks the revision (quote_send) and the client gets THE LINK — the printable
+  // paper on top, approve & sign + pay below (/q/<token>). Changed since the last revision went out → confirm, then a new revision.
+  // An INVOICE with a live link (hired through the portal) sends the pay link. Anything else keeps the PDF as before.
+  // REPORTS keeps the PDF + markup (and carries the client link when there is one).
+  const SEND_CH: Record<string, string> = { WhatsApp: 'WHATSAPP', SMS: 'SMS', 'E-Mail': 'EMAIL', Instagram: 'INSTAGRAM', Facebook: 'FACEBOOK' }
+  async function portalLink(method: string): Promise<{ url: string; text: string } | null | 'STOP'> {
+    if (!invoice) return 'STOP'
+    const h = await sessionHeaders()
+    const st = await fetch(`${BASE_PATH}/api/doc/${invoiceId}/state`, { headers: h })
+    const s = await st.json().catch(() => ({}))
+    if (!st.ok) { if (invoice.is_quote) { alert('Quote link unavailable:\n' + (s.error || `HTTP ${st.status}`)); return 'STOP' } return null }
+    const getLink = async () => {
+      const r = await fetch(`${BASE_PATH}/api/doc/${invoiceId}/link`, { headers: h })
+      const j = await r.json().catch(() => ({}))
+      return r.ok && j.url ? { url: String(j.url), text: String(j.text || j.url) } : null
+    }
+    if (!invoice.is_quote) return s.liveLink ? await getLink() : null
+    if (s.live && (!s.presentedDrift || s.approvalOnLive)) return await getLink()
+    if (s.live) {
+      if (!confirm(`This quote changed after revision ${s.live.seq} was sent.\n\nOK = lock revision ${s.live.seq + 1} and send it.`)) return 'STOP'
+      const r = await fetch(`${BASE_PATH}/api/doc/${invoiceId}/revision`, { method: 'POST', headers: h, body: '{}' })
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert('New revision failed:\n' + (j.error || `HTTP ${r.status}`)); return 'STOP' }
+    }
+    const sentTo = method === 'E-Mail' ? client?.email : method === 'Facebook' ? client?.facebook : method === 'Instagram' ? client?.instagram : client?.phone
+    const r = await fetch(`${BASE_PATH}/api/doc/${invoiceId}/send`, { method: 'POST', headers: h,
+      body: JSON.stringify({ channel: SEND_CH[method] || 'COPY', sent_to: sentTo || null, valid_days: s.terms?.valid_days || 30 }) })
+    const j = await r.json().catch(() => ({}))
+    if (!r.ok) {
+      alert('Not ready to send:\n' + (j.problems ? j.problems.join('\n') : j.error || `HTTP ${r.status}`) + '\n\nFix it in «QUOTE · CLIENT LINK» (PLAN & TERMS) on this screen.')
+      setPortalKey(k => k + 1); return 'STOP'
+    }
+    setPortalKey(k => k + 1)
+    return j.url ? { url: String(j.url), text: String(j.text || j.url) } : await getLink()
+  }
+
   async function handleSend(target: 'REPORTS' | 'CLIENT' | 'BOTH' = 'CLIENT') {
     if (!invoice) return
     setShowSendChooser(false)
     const method = client?.preferred_message_method || 'WhatsApp'
     setSending(true)
     try {
-      const blob = await generatePdfBlob()
-      // Sanitized storage key (no spaces/slashes/quotes); the human name rides
-      // along as the WhatsApp document filename / email subject instead.
-      const key = `${invoiceId}-${Date.now()}.pdf`
-      const { error: upErr } = await supabase.storage.from('invoice-pdfs').upload(key, blob, { contentType: 'application/pdf', upsert: true })
-      if (upErr) { alert('Could not upload the PDF:\n' + upErr.message); setSending(false); return }
-      const { data: urlData } = supabase.storage.from('invoice-pdfs').getPublicUrl(key)
-      const pdfUrl = urlData.publicUrl
+      const link = target === 'REPORTS' ? null : await portalLink(method)
+      if (link === 'STOP') { setSending(false); return }
+      let pdfUrl = ''
+      if (target !== 'CLIENT' || !link) {
+        const blob = await generatePdfBlob()
+        // Sanitized storage key (no spaces/slashes/quotes); the human name rides
+        // along as the WhatsApp document filename / email subject instead.
+        const key = `${invoiceId}-${Date.now()}.pdf`
+        const { error: upErr } = await supabase.storage.from('invoice-pdfs').upload(key, blob, { contentType: 'application/pdf', upsert: true })
+        if (upErr) { alert('Could not upload the PDF:\n' + upErr.message); setSending(false); return }
+        pdfUrl = supabase.storage.from('invoice-pdfs').getPublicUrl(key).data.publicUrl
+      }
       const fname = deliveredFilename()
 
       const ownerLbl = isClient ? (client?.name || '') : `${projectCode}${projectName ? ` — ${projectName}` : ''}`
@@ -364,7 +411,7 @@ export default function ViewInvoicePage() {
       const openBalance = Math.max(0, grandTotal - totalPaid)
       const clientHead = invoice.is_quote ? head : head.replace(`Grand Total: *${formatUSD(grandTotal)}*`, `Open balance: *${formatUSD(openBalance)}*`)
       const clientCaption = invoice.is_quote ? `${head}\n\nAt your disposal for any questions.` : clientHead
-      const groupCaption = invoice.is_quote ? `${head}\n${markupLine}` : head
+      const groupCaption = (invoice.is_quote ? `${head}\n${markupLine}` : head) + (link ? `\n🔗 Client link: ${link.url}` : '')
 
       // GZ28US Control App REPORTS — WhatsApp document to the default reports group
       // (no `to` => the API falls back to ULTRAMSG_GROUP_ID). For BOTH, fall through
@@ -389,7 +436,7 @@ export default function ViewInvoicePage() {
       }
 
       if (method === 'SMS') {
-        const text = `${clientCaption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
+        const text = link ? link.text : `${clientCaption.replace(/\*/g, '')}\n\nView/download your invoice:\n${pdfUrl}`
         window.location.href = `sms:${client?.phone || ''}?&body=${encodeURIComponent(text)}`
         setSending(false)
         return
@@ -399,6 +446,14 @@ export default function ViewInvoicePage() {
         // Sent BY THE APP: HTML e-mail with the PDF ATTACHED + button link —
         // mailto: made plain-text emails with dead links (Johnny/NiteKing, 31/jul).
         if (!client?.email) { alert('This client has no email on file.\nAdd an email first (client EDIT).'); setSending(false); return }
+        if (link && invoice.is_quote) {
+          // the portal e-mail: button to the link + the revision PDF attached (lib/quoteMail.server, kind quote-link)
+          const r = await fetch(`${BASE_PATH}/api/mail/client`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ kind: 'quote-link', id: invoiceId }) })
+          const d = await r.json().catch(() => ({}))
+          alert(d.ok ? `Quote link emailed to ${d.to}.` : 'E-mail send failed:\n' + (d.error || `HTTP ${r.status}`))
+          setSending(false)
+          return
+        }
         const res = await fetch(`${BASE_PATH}/api/mail/client`, {
           method: 'POST', headers: await sessionHeaders(),
           body: JSON.stringify({ kind: 'invoice-pdf', id: invoiceId, pdfUrl, filename: fname }),
@@ -413,7 +468,7 @@ export default function ViewInvoicePage() {
       if (method === 'Instagram') {
         // Instagram has no document-send API or prefill link — copy the invoice
         // link to the clipboard and open the client's DM/profile to paste & send.
-        const linkText = `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
+        const linkText = link ? link.text : `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
         try { await navigator.clipboard.writeText(linkText) } catch {}
         const handle = (client?.instagram || '').replace(/^@/, '').trim()
         window.open(handle ? `https://instagram.com/${handle}` : 'https://www.instagram.com/direct/inbox/', '_blank')
@@ -425,7 +480,7 @@ export default function ViewInvoicePage() {
       if (method === 'Facebook') {
         // Facebook/Messenger has no document-send API — copy the invoice link and
         // open the client's Facebook/Messenger to paste & send.
-        const linkText = `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
+        const linkText = link ? link.text : `${clientCaption.replace(/\*/g, '')}\n\nView/download: ${pdfUrl}`
         try { await navigator.clipboard.writeText(linkText) } catch {}
         const fb = (client?.facebook || '').trim()
         let url = 'https://www.facebook.com/messages/'
@@ -450,7 +505,7 @@ export default function ViewInvoicePage() {
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, {
         method: 'POST',
         headers: await sessionHeaders(),
-        body: JSON.stringify({ to, body: clientCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
+        body: JSON.stringify(link ? { to, body: link.text + '\n\nSent by GZ28 Control App' } : { to, body: clientCaption + '\n\nSent by GZ28 Control App', documentUrl: pdfUrl, filename: fname }),
       })
       const data = await res.json()
       if (!data.ok) {
@@ -802,7 +857,6 @@ export default function ViewInvoicePage() {
       {/* SCREEN UI */}
       <main className="min-h-screen bg-black text-white p-8 pb-28 no-print">
         <Header />
-        <div className="print:hidden mb-3 text-right"><a href={`${BASE_PATH}/doc/${invoiceId}`} className="text-xs font-semibold text-sky-300 underline">OPEN IN V2 (quote portal) →</a></div>
 
         {showDuplicate && <DocPicker type="quote" duplicateFrom={invoiceId} onClose={() => setShowDuplicate(false)} />}
 
@@ -943,6 +997,10 @@ export default function ViewInvoicePage() {
             <Link href={`${basePath}/edit/${invoiceId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
           </div>
         </div>
+
+        {/* THE PORTAL LIVES HERE (10/11/2026): plan & terms, revisions, approval, deposit/payments, void, change order — for every quote,
+            and for invoices that came through the portal. SEND above sends the client link. */}
+        {(invoice.is_quote || portalInvoice) && <div className="max-w-3xl -mt-4"><QuoteStaffPanel invoiceId={invoiceId} reloadKey={portalKey} /></div>}
 
         <div className="grid grid-cols-1 gap-5 max-w-2xl">
 

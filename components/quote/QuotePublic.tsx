@@ -6,10 +6,11 @@
 // the deposit (Stripe Checkout) → the project is born when the money clears. Every state of the same URL renders here.
 // Also used by the staff preview (/doc/<id>/preview) with `previewDto` — then nothing is stamped and no button calls the server.
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { BASE_PATH } from '@/lib/utils'
 import { t, money, moneyCents, type Lang } from '@/lib/quoteStrings'
 import { fmtDay, fmtStamp } from '@/lib/orlando'
+import PaperDoc from './PaperDoc'
 
 type Dto = Record<string, any>
 const api = (path: string, body: unknown) => fetch(`${BASE_PATH}/api/q/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, credentials: 'same-origin', body: JSON.stringify(body) })
@@ -75,7 +76,6 @@ export default function QuotePublic({ token, attemptId, print, previewDto }: { t
   const doc = d.document
   if (!doc) return <Shell print={print}><Card><p className="text-gray-300">{T('superseded')}</p></Card></Shell>
 
-  const hdr = doc.header || {}
   const tot = doc.totals || {}
   const grand = Number(tot.grand || 0)
   const stage: string = d.stage
@@ -84,74 +84,55 @@ export default function QuotePublic({ token, attemptId, print, previewDto }: { t
   const approved = !!d.approval
   const isInvoice = stage === 'INVOICE'
   const nextDue = plan.find(p => !p.paid)
-  const lines: any[] = doc.lines || []
-  const items = lines.filter(l => l.kind === 'item'), services = lines.filter(l => l.kind === 'service')
-  const fmtLine = (l: any) => l.display === 'price' ? money(l.total, lang) : l.display === 'included' ? T('included') : T('courtesy')
 
+  // 10/11/2026 (Márcio: «the top of the client page = THE PRINTABLE INVOICE ITSELF … BELOW the paper come the new features»): the
+  // paper (components/quote/PaperDoc — same look as the app printable and the PDF) carries everything the old summary cards showed
+  // (number, validity, client, car, items, services, totals, plan, notes). Below it, on the same light page: approve & sign, pay,
+  // request changes, receipts, the FL estimate and the terms, the certificate, download the PDF.
+  const pdfHref = !preview && d.link_id ? `${BASE_PATH}/api/q/pdf?link_id=${d.link_id}` : null
   return (
     <Shell print={print} lang={lang}>
-      {toast && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-red-700 text-white text-sm px-4 py-3 rounded-lg shadow-lg max-w-[90vw] print:hidden" role="alert">{toast}</div>}
+      {toast && <div className="q-keep fixed bottom-4 left-1/2 -translate-x-1/2 z-50 bg-red-700 text-white text-sm px-4 py-3 rounded-lg shadow-lg max-w-[90vw] print:hidden" role="alert">{toast}</div>}
       {d.is_test && <div className="mb-3 text-center text-xs font-bold tracking-widest text-yellow-300 bg-yellow-900/40 border border-yellow-700 rounded py-1 print:hidden">TEST DOCUMENT — Stripe test mode</div>}
 
-      <Card>
-        <div className="text-lg font-semibold text-white">{hdr.car || hdr.service}</div>
-        {hdr.car && <div className="text-sm uppercase tracking-wide text-gray-300">{hdr.service}</div>}
-        <div className="text-2xl font-bold text-white mt-2">{money(grand, lang)}</div>
-        <div className="text-xs text-gray-400 mt-1">{T('quote')} {hdr.display_code || hdr.code} · {T('rev')} {doc.seq}</div>
-        {!isInvoice && doc.valid_until && <div className="text-xs text-gray-400">{T('valid_until')} {fmtDay(doc.valid_until, lang)}{doc.sent_valid_until && doc.sent_valid_until !== doc.valid_until ? ` (${T('extended_on')} ${fmtDay(doc.valid_until, lang)})` : ''}</div>}
-      </Card>
+      <PaperDoc doc={doc} plan={plan} lang={lang} isInvoice={isInvoice} />
 
-      {d.hired && <Card tone="green"><div className="font-semibold text-emerald-300">{T('hired', { code: d.hired.code, car: d.hired.car })}</div>
-        {d.hired.old_code && <div className="text-xs text-gray-400 mt-1">{T('formerly', { old_code: d.hired.old_code, date: fmtDay(addDaysIso(d.hired.at, 30), lang) })}</div>}</Card>}
-      {landing === 'pending' && <Card><p className="text-gray-300">{T('landing_pending')}</p></Card>}
-      {landing === 'timeout' && <Card><p className="text-gray-300">{T('landing_timeout')}</p></Card>}
+      <div className="q-features">
+        {d.hired && <Card tone="green"><div className="font-semibold text-emerald-300">{T('hired', { code: d.hired.code, car: d.hired.car })}</div>
+          {d.hired.old_code && <div className="text-xs text-gray-400 mt-1">{T('formerly', { old_code: d.hired.old_code, date: fmtDay(addDaysIso(d.hired.at, 30), lang) })}</div>}</Card>}
+        {landing === 'pending' && <Card><p className="text-gray-300">{T('landing_pending')}</p></Card>}
+        {landing === 'timeout' && <Card><p className="text-gray-300">{T('landing_timeout')}</p></Card>}
+        {!isInvoice && doc.sent_valid_until && doc.valid_until && doc.sent_valid_until !== doc.valid_until && <p className="text-xs text-gray-400 mt-2">{T('valid_until')} {fmtDay(doc.valid_until, lang)} ({T('extended_on')} {fmtDay(doc.valid_until, lang)})</p>}
 
-      <p className="text-gray-200 my-4">{T(hdr.parts_only ? 'hello_parts' : 'hello', { name: hdr.client_first || '' })}</p>
+        {!print && <Bar title={approved || isInvoice ? (lang === 'pt' ? 'Pagamento' : 'Payment') : (lang === 'pt' ? 'Aprovar e assinar' : 'Approve & sign')} />}
+        {!print && <Actions d={d} lang={lang} T={T} busy={busy} setBusy={setBusy} flash={flash} setD={setD} preview={preview} refresh={refresh} stage={stage} sub={sub} approved={approved} nextDue={nextDue} grand={grand} />}
 
-      <Section title={`${T('whats_included')} (${items.length} ${T('parts')} · ${services.length} ${T('services')})`} open>
-        {[...items, ...services].map(l => (
-          <div key={l.id} className="flex justify-between gap-3 py-1.5 border-b border-gray-800 text-sm">
-            <span className={l.display === 'price' ? 'text-white' : 'text-gray-300'}>{l.display === 'price' && hdr.has_package ? '📦 ' : ''}{l.description}{l.quantity > 1 ? ` × ${l.quantity}` : ''}</span>
-            <span className="shrink-0 text-gray-300">{fmtLine(l)}</span>
-          </div>))}
-      </Section>
+        {!print && <Card>
+          <p className="text-sm text-gray-300">{railsSentence(d, lang)}</p>
+          {!preview && (d.attempts || []).filter((a: any) => a.status === 'SUCCEEDED').map((a: any) => (
+            <a key={a.id} href={`${BASE_PATH}/api/q/receipt?link_id=${d.link_id}&attempt=${a.id}`} target="_blank" rel="noreferrer" className="block text-sm text-sky-300 underline mt-1 print:hidden">⬇ {lang === 'pt' ? 'Recibo' : 'Receipt'} — {moneyCents(a.amount_cents, lang)}</a>))}
+        </Card>}
 
-      {doc.notes?.length > 0 && <Section title={`${T('notes')} (${doc.notes.length})`}>{doc.notes.map((n: any) => <p key={n.id} className="text-sm text-gray-300 py-1">{n.text}</p>)}</Section>}
+        {approved && <Certificate d={d} lang={lang} T={T} />}
 
-      <Card>
-        {Number(tot.discount) > 0 && <Row k={T('subtotal')} v={money(tot.subtotal, lang)} />}
-        {Number(tot.discount) > 0 && <Row k={`${T('discount')} (${tot.discount_pct}%)`} v={`− ${money(tot.discount, lang)}`} />}
-        <Row k={T('fl_tax')} v={tot.taxable ? money(tot.fl_tax, lang) : `${T('fl_exempt')} — ${String(tot.fl_label || '').replace(/^Exempt — /, '')}`} />
-        <Row k={T('grand_total')} v={money(grand, lang)} strong />
-      </Card>
+        <Section title={T('fl_estimate_title')} open={print}><p className="text-sm text-gray-300 whitespace-pre-line">{d.fl_estimate_text}</p></Section>
+        <Section title={T('terms_title')} open={print}><p className="text-sm text-gray-300 whitespace-pre-line">{d.terms_text}</p></Section>
 
-      <Card>
-        <div className="text-xs font-bold tracking-widest text-gray-400 mb-2">{T('payment_plan')}</div>
-        {plan.map(p => (
-          <div key={p.seq} className="flex justify-between gap-3 py-1.5 text-sm">
-            <span className="text-gray-200">{p.seq}&nbsp;&nbsp;{p.label}</span>
-            <span className={p.paid ? 'text-emerald-400 font-semibold' : 'text-white'}>{moneyCents(p.amount_cents, lang)}{p.paid ? ` ✓ ${T('paid')}` : ''}</span>
-          </div>))}
-        <p className="text-xs text-gray-400 mt-2">{railsSentence(d, lang)}</p>
-        {!preview && (d.attempts || []).filter((a: any) => a.status === 'SUCCEEDED').map((a: any) => (
-          <a key={a.id} href={`${BASE_PATH}/api/q/receipt?link_id=${d.link_id}&attempt=${a.id}`} target="_blank" rel="noreferrer" className="block text-xs text-sky-300 underline mt-1 print:hidden">⬇ {lang === 'pt' ? 'Recibo' : 'Receipt'} — {moneyCents(a.amount_cents, lang)}</a>))}
-      </Card>
+        {!print && <div className="flex flex-wrap gap-3 justify-center my-6 print:hidden">
+          {pdfHref && <a href={pdfHref} target="_blank" rel="noreferrer" className="px-5 py-3 rounded-lg bg-white text-black font-semibold text-sm">⬇ {lang === 'pt' ? 'Baixar PDF' : 'Download PDF'}</a>}
+          <a className="px-5 py-3 rounded-lg border border-gray-600 text-gray-300 text-sm" href={token ? `${BASE_PATH}/q/${token}/print` : '#'} onClick={e => { e.preventDefault(); if (token) window.open(`${BASE_PATH}/q/${token}/print`, '_blank') }}>{T('print')}</a>
+        </div>}
+        {print && <AutoPrint />}
 
-      <Section title={T('fl_estimate_title')}><p className="text-sm text-gray-300 whitespace-pre-line">{d.fl_estimate_text}</p></Section>
-      <Section title={T('terms_title')} open={print}><p className="text-sm text-gray-300 whitespace-pre-line">{d.terms_text}</p></Section>
-
-      {!print && <Actions d={d} lang={lang} T={T} busy={busy} setBusy={setBusy} flash={flash} setD={setD} preview={preview} refresh={refresh} stage={stage} sub={sub} approved={approved} nextDue={nextDue} grand={grand} />}
-
-      {approved && <Certificate d={d} lang={lang} T={T} />}
-
-      {!print && <div className="flex flex-wrap gap-4 justify-center text-sm my-6 print:hidden">
-        <a className="text-gray-400 underline" href={token ? `${BASE_PATH}/q/${token}/print` : '#'} onClick={e => { if (!token) e.preventDefault(); else { e.preventDefault(); window.open(`${BASE_PATH}/q/${token}/print`, '_blank') } }}>{T('print')}</a>
-      </div>}
-      {print && <AutoPrint />}
-
-      <footer className="text-center text-xs text-gray-500 mt-8 pb-10">{doc.company?.name} · {doc.company?.address} · {doc.company?.phone}</footer>
+        <footer className="text-center text-xs text-gray-500 mt-8 pb-10">{doc.company?.name} · {doc.company?.address} · {doc.company?.phone}</footer>
+      </div>
     </Shell>
   )
+}
+
+// the paper's black section bar, used to head the features below the paper
+function Bar({ title }: { title: string }) {
+  return <div className="q-keep mt-5 text-xs font-bold uppercase px-3 py-2 rounded-t" style={{ background: '#111', color: '#fff', letterSpacing: '0.12em' }}>{title}</div>
 }
 
 function addDaysIso(iso: string, n: number) { const x = new Date(iso); x.setUTCDate(x.getUTCDate() + n); return x.toISOString().slice(0, 10) }
@@ -423,30 +404,42 @@ function Certificate({ d, lang, T }: { d: Dto; lang: Lang; T: any }) {
 
 function AutoPrint() { useEffect(() => { const tm = setTimeout(() => window.print(), 900); return () => clearTimeout(tm) }, []); return null }
 
+// THE PAGE (10/11/2026): light, like the paper — grey desk, the white paper on it, the features below on white cards with the
+// paper's black bars. The feature components keep their classes; the `.q-light` map below turns the old dark palette into the
+// paper's (dark text on white, black buttons, green/amber/red that read on white). `.q-keep` opts an element out.
+const LIGHT_CSS = `
+.q-light { background:#e9e9e9; color:#111 }
+.q-light .bg-gray-950 { background:#fff }
+.q-light .bg-black:not(.q-keep) { background:#fff }
+.q-light .text-white:not(.q-keep) { color:#111 }
+.q-light .text-gray-200, .q-light .text-gray-300 { color:#333 }
+.q-light .text-gray-400, .q-light .text-gray-500 { color:#666 }
+.q-light .border-gray-600, .q-light .border-gray-700, .q-light .border-gray-800, .q-light .border-gray-900 { border-color:#ccc }
+.q-light .bg-white:not(.q-keep) { background:#111; color:#fff }
+.q-light .bg-white.text-black, .q-light .bg-white .text-black { color:#fff }
+.q-light .text-emerald-300, .q-light .text-emerald-400 { color:#15803d }
+.q-light .border-emerald-700 { border-color:#16a34a }
+.q-light .text-sky-300 { color:#0369a1 }
+.q-light .text-amber-200, .q-light .text-amber-300 { color:#b45309 }
+.q-light .text-red-300 { color:#b91c1c }
+.q-light .text-yellow-300 { color:#854d0e }
+.q-light input, .q-light textarea, .q-light select { color:#111; background:#fff }
+@media print { .print\\:hidden { display:none !important } body, .q-light { background:#fff } .q-paper-box > div { box-shadow:none !important } }
+`
 function Shell({ children, print, lang }: { children: React.ReactNode; print?: boolean; lang?: Lang }) {
-  const cls = useMemo(() => print ? 'bg-white text-black min-h-screen q-print' : 'bg-black min-h-screen', [print])
-  return <div className={cls} lang={lang}>
-    <style>{`@media print { .print\\:hidden { display:none !important } body { background:#fff } } .q-print * { color:#111 !important; border-color:#ccc !important; background:transparent !important }`}</style>
-    <header className="sticky top-0 z-40 bg-black/95 border-b border-gray-900 print:static">
-      <div className="max-w-[480px] mx-auto px-4 py-3 flex items-center gap-3">
-        <img src={`${BASE_PATH}/logo_gz28.jpg`} alt="" className="h-7 w-auto rounded" />
-        <span className="text-white font-semibold tracking-wide">GZ28 V8 SpeedShop</span>
-      </div>
-    </header>
-    <main className="max-w-[480px] mx-auto px-4 py-4">{children}</main>
+  return <div className={`q-light min-h-screen${print ? ' q-print' : ''}`} lang={lang}>
+    <style>{LIGHT_CSS}</style>
+    <main className="mx-auto px-2 sm:px-4 py-3 sm:py-6" style={{ maxWidth: 1134 }}>{children}</main>
   </div>
 }
 
 function Card({ children, tone }: { children: React.ReactNode; tone?: 'green' | 'blue' | 'amber' }) {
   const b = tone === 'green' ? 'border-emerald-700' : tone === 'blue' ? 'border-sky-800' : tone === 'amber' ? 'border-amber-700' : 'border-gray-800'
-  return <div className={`bg-gray-950 border ${b} rounded-2xl p-4 my-3`}>{children}</div>
+  return <div className={`bg-gray-950 border ${b} rounded p-4 my-3 shadow-sm`}>{children}</div>
 }
 function Section({ title, children, open }: { title: string; children: React.ReactNode; open?: boolean }) {
-  return <details className="bg-gray-950 border border-gray-800 rounded-2xl my-3" open={open}>
-    <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold tracking-widest text-gray-300 min-h-[44px] flex items-center">▸ {title}</summary>
+  return <details className="bg-gray-950 border border-gray-800 rounded my-3 shadow-sm" open={open}>
+    <summary className="cursor-pointer list-none px-4 py-3 text-xs font-bold tracking-widest text-gray-300 min-h-[44px] flex items-center uppercase">▸ {title}</summary>
     <div className="px-4 pb-4">{children}</div>
   </details>
-}
-function Row({ k, v, strong }: { k: string; v: string; strong?: boolean }) {
-  return <div className={`flex justify-between gap-3 py-1 text-sm ${strong ? 'text-white font-bold text-base border-t border-gray-800 mt-1 pt-2' : 'text-gray-300'}`}><span>{k}</span><span className="text-right">{v}</span></div>
 }

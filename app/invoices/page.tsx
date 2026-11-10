@@ -53,8 +53,6 @@ export default function InvoicesPage() {
   // QUOTE PORTAL M3 (06/11/2026; D-11 DEFAULT A): a real invoice left INCOMPLETE never enters the reports. The list says so on the card and
   // offers ONE tap — SET ONLINE (REALTIME) — never an automatic change. Every flip leaves a data_fixes trail.
   const [onlineId, setOnlineId] = useState<string | null>(null)
-  const [v2, setV2] = useState(false)
-  useEffect(() => { supabase.from('app_settings').select('value').eq('key', 'qi_v2.enabled').maybeSingle().then(({ data }) => setV2(data?.value === true), () => undefined) }, [])
   // SHOP area shows origin=SHOP invoices; the default (PROJECTS) shows origin=PROJECT.
   const [mode] = useState<'project' | 'shop'>(() => {
     if (typeof window === 'undefined') return 'project'
@@ -281,7 +279,6 @@ export default function InvoicesPage() {
                 </div>
                 <div className="flex gap-3 flex-wrap shrink-0">
                   {(inv.live_status || 'INCOMPLETE') === 'INCOMPLETE' && <button onClick={() => setOnlineId(inv.id)} className="bg-blue-800 hover:bg-blue-700 px-5 py-3 rounded-2xl font-bold">SET ONLINE</button>}
-                  {v2 && <Link href={`/doc/${inv.id}`} className="bg-sky-800 hover:bg-sky-700 px-5 py-3 rounded-2xl font-bold">V2</Link>}
                   <Link href={`/rides/${inv.ride_id}/invoices/${inv.id}`} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold">VIEW</Link>
                   <Link href={`/rides/${inv.ride_id}/invoices/edit/${inv.id}`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">EDIT</Link>
                   <button onClick={() => setConfirmId(inv.id)} className="bg-red-700 hover:bg-red-600 px-5 py-3 rounded-2xl font-bold">REMOVE</button>

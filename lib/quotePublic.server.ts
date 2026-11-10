@@ -191,7 +191,9 @@ export function publicDto(s: DocState, link: { id: string; gate: string; gate_ti
     stage: s.stage.stage, sub: s.stage.sub,
     document: doc ? {
       revision_id: live!.id, seq: live!.seq, sha256: live!.sha256, terms_sha256: live!.terms_sha256,
-      header: doc.header, lines: doc.lines, notes: doc.notes, totals: doc.totals, company: doc.company, valid_until: s.terms?.valid_until || doc.terms?.valid_until,
+      header: doc.header, lines: doc.lines, notes: doc.notes, totals: doc.totals, company: doc.company,
+      client: doc.client || null, vehicle: doc.vehicle || null,      // the printable's CLIENT / VEHICLE boxes (09/11/2026)
+      valid_until: s.terms?.valid_until || doc.terms?.valid_until,
       sent_valid_until: doc.terms?.valid_until || null,
     } : null,
     terms_text: TERMS_TEXT[lang], terms_sha256_now: termsSha256(lang), fl_estimate_text: FL_ESTIMATE_TEXT[lang],

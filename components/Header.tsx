@@ -114,10 +114,8 @@ const MENU: MenuItem[] = [
 
 export default function Header() {
   const [openMenu, setOpenMenu] = useState<string | null>(null)
-  // QUOTE PORTAL M3 (06/11/2026): the v2 document pages enter the menu only when qi_v2.enabled is ON (app_settings; OFF tonight).
-  const [v2, setV2] = useState(false)
-  useEffect(() => { supabase.from('app_settings').select('value').eq('key', 'qi_v2.enabled').maybeSingle().then(({ data }) => setV2(data?.value === true), () => undefined) }, [])
-  const menu: MenuItem[] = v2 ? MENU.map(m => m.type === 'dropdown' && m.label === 'QUOTES' ? { ...m, items: [...m.items, ['/doc', 'QUOTES v2'] as [string, string], ['/doc/new', '+ NEW QUOTE v2'] as [string, string]] } : m) : MENU
+  // 10/11/2026 (Márcio: no separate area): the quote portal lives inside the quote screen — no «QUOTES v2» menu entries.
+  const menu: MenuItem[] = MENU
   const navRef = useRef<HTMLDivElement>(null)
   const linkClass = 'bg-gray-900 hover:bg-gray-700 border border-gray-700 px-4 py-3 rounded-2xl text-base font-bold'
 
