@@ -33,7 +33,14 @@ create table if not exists public.app_viewer_invites (
   created_at  timestamptz not null default now()
 );
 alter table public.app_viewer_invites enable row level security;
--- no permissive policy on either table: only the service role (server) reads/writes them.
+-- no permissive policy and no grant to anon/authenticated: only the service role (server) reads/writes them.
+-- grants as the runner requires (30/10 rule); RLS with NO permissive policy keeps anon/authenticated at zero rows anyway
+grant select on public.app_viewers to anon;
+grant select, insert, update, delete on public.app_viewers to authenticated;
+grant select on public.app_viewer_invites to anon;
+grant select, insert, update, delete on public.app_viewer_invites to authenticated;
+grant select, insert, update, delete on public.app_viewers to service_role;
+grant select, insert, update, delete on public.app_viewer_invites to service_role;
 
 create or replace function public.is_app_viewer() returns boolean
 language sql stable security definer set search_path = public as $$
