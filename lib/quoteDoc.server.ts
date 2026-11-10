@@ -21,6 +21,7 @@ import { quoteStage, type StageOut } from './quoteStage'
 import { orlandoToday } from './orlando'
 import { realEdition } from './utils'
 import { isPackageInvoice } from './packageRule'
+import { buyLink } from './buyLink'
 
 export const COMPANY = {
   name: 'GZ28 V8 SpeedShop USA LLC',
@@ -115,7 +116,7 @@ export function buildRevision(b: InvoiceMoneyBundle, terms: Terms, plan: PlanRow
     const total = r2(unit * qty)
     return {
       id: String(row.id), kind, description: String(row.description || ''), unit_price: r2(unit), quantity: qty, total,
-      kit_group: row.kit_group || null, kit_name: row.kit_name || null,
+      kit_group: row.kit_group || null, kit_name: row.kit_name || null, buy_url: kind === 'item' ? buyLink(row.source_item)?.url || null : null,
       display: total !== 0 ? 'price' : (hasPackage || row.kit_group ? 'included' : 'courtesy'),
     }
   }

@@ -16,6 +16,7 @@ import { t, money, moneyCents, TERMS_TEXT, FL_ESTIMATE_TEXT, type Lang } from '.
 import { fmtDay, fmtStamp } from './orlando'
 import { formatPhone } from './utils'
 import { LOGO_GZ28_JPEG } from './pdfLogo'
+import { buyLink } from './buyLink'
 
 // Helvetica (WinAnsi) has no glyph for some marks — map them, never print a broken glyph.
 const pdfText = (s: unknown) => String(s ?? '')
@@ -206,14 +207,26 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
         const kt = sumOf(items.filter((x: any) => x.kit_group === l.kit_group))
         body.push([cell(l.kit_name || 'Kit', { fillColor: C.kit, fontStyle: 'bold' }, 3), cell(kt ? money(kt, lang) : t(lang, d.header?.has_package ? 'included' : 'courtesy').toUpperCase(),{ ...R, fillColor: C.kit, fontStyle: 'bold' })])
       }
-      body.push([cell(l.description, l.kit_group ? { cellPadding: { top: px(4), bottom: px(4), left: px(16), right: px(6) } } : {}), cell(unitShown(l), R), cell(String(l.quantity || 1), R), cell(shown(l), R)])
+      const bl = buyLink(l.buy_url)
+      // the buy link sits on its own line under the description: the cell keeps a blank line for it, didDrawCell writes it blue + clickable
+      const dc: any = cell(bl ? l.description + '\n ' : l.description, l.kit_group ? { cellPadding: { top: px(4), bottom: px(4), left: px(16), right: px(6) } } : {})
+      if (bl) dc.buy = { url: bl.url, label: `${t(lang, 'buy')} > ${bl.host}` }
+      body.push([dc, cell(unitShown(l), R), cell(String(l.quantity || 1), R), cell(shown(l), R)])
     }
     const itemsTotal = Number(tot.parts ?? sumOf(items))
     body.push([cell(T.subtotal, { ...R, ...SUB }, 3), cell(zeroTotal(items, itemsTotal), { ...R, ...SUB })])
     body.push([cell(T.itemsTotal, { ...R, ...BLACKROW }, 3), cell(zeroTotal(items, itemsTotal), { ...R, ...BLACKROW })])
     autoTable(pdf, { ...tableBase(), startY: y,
       head: [[T.desc, cell(T.unit, R), cell(T.qt, R), cell(T.total, R)].map(c => typeof c === 'string' ? pdfText(c.toUpperCase()) : { ...c, content: c.content.toUpperCase() })],
-      body, columnStyles: { 0: { cellWidth: k.CW * 0.56 }, 1: { cellWidth: k.CW * 0.16 }, 2: { cellWidth: k.CW * 0.08 }, 3: { cellWidth: k.CW * 0.20 } } })
+      body, columnStyles: { 0: { cellWidth: k.CW * 0.56 }, 1: { cellWidth: k.CW * 0.16 }, 2: { cellWidth: k.CW * 0.08 }, 3: { cellWidth: k.CW * 0.20 } },
+      didDrawCell: (c: any) => {
+        const bu = c.section === 'body' && c.column.index === 0 ? c.cell.raw?.buy : null
+        if (!bu) return
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(px(7)); pdf.setTextColor(29, 78, 216)
+        const x = c.cell.x + c.cell.padding('left'), yb = c.cell.y + c.cell.height - c.cell.padding('bottom') - px(1.5)
+        pdf.textWithLink(bu.label, x, yb, { url: bu.url })
+        pdf.setTextColor(C.ink[0], C.ink[1], C.ink[2])
+      } })
     y = (pdf as any).lastAutoTable.finalY + px(7)
   }
   if (services.length) {

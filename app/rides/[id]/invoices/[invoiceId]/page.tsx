@@ -15,6 +15,7 @@ import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, CancelChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 import { foraDoDinheiro, cancelOf } from '@/lib/estorno'
+import { buyLink } from '@/lib/buyLink'
 
 type Invoice = {
   id: string
@@ -767,7 +768,7 @@ export default function ViewInvoicePage() {
                       const strike = est ? { textDecoration: 'line-through', color: '#999' } : undefined
                       rows.push(
                         <tr key={p.id}>
-                          <td style={{ ...(p.kit_group ? { paddingLeft: '16px' } : {}), ...(est ? { color: '#999' } : {}) }}>{p.description}{est && <span style={{ fontWeight: 700, color: '#cc0000' }}> ({T[est]})</span>}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
+                          <td style={{ ...(p.kit_group ? { paddingLeft: '16px' } : {}), ...(est ? { color: '#999' } : {}) }}>{p.description}{est && <span style={{ fontWeight: 700, color: '#cc0000' }}> ({T[est]})</span>}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}{(() => { const bl = buyLink(p.source_item); return bl && <a href={bl.url} target="_blank" rel="noopener noreferrer" style={{ display: 'block', fontSize: '0.78em', color: '#1d4ed8', textDecoration: 'underline' }}>Buy ↗ {bl.host}</a> })()}</td>
                           <td className="r" style={strike}>{p.unit_price === 0 ? ZERO : formatUSD(p.unit_price)}</td>
                           <td className="r" style={strike}>{p.quantity}</td>
                           <td className="r" style={est ? { fontWeight: 700, color: '#cc0000' } : undefined}>{est ? T[est] : p.unit_price === 0 ? ZERO : formatUSD(p.unit_price * p.quantity)}</td>
