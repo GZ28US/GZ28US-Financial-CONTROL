@@ -445,3 +445,10 @@ export function seasonHourlyRate(s: SeasonPay | null | undefined): number | null
 }
 export const formatBRL = (n: number) => 'R$ ' + n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 export const formatMoney = (n: number, currency?: string | null) => (currency === 'BRL' ? formatBRL(n) : formatUSD(n))
+
+// SPECIAL EDITION that is really one (09/11/2026): 'None' / 'null' / 'n/a' / '-' / blank never print (US.QT.028.1 printed
+// «Trackhawk 6.2 SC None»). Use it wherever ride.special_edition is SHOWN.
+export function realEdition(v: unknown): string {
+  const s = String(v ?? '').trim()
+  return s && !/^(none|null|undefined|n\/?a|-+)$/i.test(s) ? s : ''
+}

@@ -6,7 +6,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { docMoneyFor, primeApproved } from '@/lib/money'
-import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, isClientTitledCar, clientSpeaksPortuguese } from '@/lib/utils'
+import { BASE_PATH, formatPhone, toWaNumber, carDestiny, insuresCar, isOurCar, isClientTitledCar, clientSpeaksPortuguese, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { plateStatus, fmtPlateExpiry, PLATE_RENEWAL_URL } from '@/lib/plateExpiry'
 import { OrderChip, DeliverChip, DeliverFields, hasDeliverChip, normCancelStatus, DELIVER_COLUMNS, type DeliverChipRow, type CancelStatus } from '@/components/DeliverChip'
@@ -491,7 +491,7 @@ export default function ViewRidePage() {
                 </span>
               </div>
             ) })()}
-            {ride.special_edition && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{ride.special_edition}</span></div>}
+            {realEdition(ride?.special_edition) && <div className={rowClass}><span className={labelClass}>PACK</span><span className="font-bold">{realEdition(ride?.special_edition)}</span></div>}
           </div>
         </div>
 

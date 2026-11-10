@@ -6,7 +6,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { docMoneyFor, primeApproved } from '@/lib/money'
 import { soOQueConta, valorDespesa, valorItem } from '@/lib/estorno'
-import { isOurCar } from '@/lib/utils'
+import { isOurCar, realEdition } from '@/lib/utils'
 import { maisRecente, msAtividade, atividadeDasInvoices, rotuloAtividade } from '@/lib/ultimaAtividade'
 
 type Ride = {
@@ -390,7 +390,7 @@ export default function RidesPage() {
                     {mode !== 'quote' && feedBadge && <span className={`px-3 py-1 rounded-full text-sm font-bold ${feedBadge.cls}`}>{feedBadge.label}</span>}
                   </div>
                   <p className="text-lg text-gray-400">{ride.year} {ride.version}</p>
-                  {ride.special_edition && <p className="text-lg text-gray-400">{ride.special_edition}</p>}
+                  {realEdition(ride?.special_edition) && <p className="text-lg text-gray-400">{realEdition(ride?.special_edition)}</p>}
                   <p className="text-lg text-gray-400">{ride.color}</p>
                   {rotuloAtividade(ride._latestActivity) && <p className="text-sm text-gray-500">{rotuloAtividade(ride._latestActivity)}</p>}
                   <div className="flex gap-3 mt-3 flex-wrap">

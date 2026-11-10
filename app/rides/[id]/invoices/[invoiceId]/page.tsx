@@ -8,7 +8,7 @@ import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL } from '@/lib/flTax'
 import { docMoneyFor, primeApproved } from '@/lib/money'
-import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese } from '@/lib/utils'
+import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, CancelChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
@@ -543,7 +543,7 @@ export default function ViewInvoicePage() {
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Imposto sobre vendas da Flórida', flExempt: 'Isento de imposto sobre vendas da Flórida', itemsTotal: 'Total dos Itens',
     services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
-    notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA',
+    notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA', included: 'INCLUÍDO',
     REFUNDED: 'ESTORNADO', CANCELLED: 'CANCELADO',
   } : {
     quoteNo: 'Quote #', invoiceNo: 'Invoice #', hiring: 'Hiring', entry: 'Entry', deliveryHdr: 'Delivery',
@@ -552,7 +552,7 @@ export default function ViewInvoicePage() {
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Sales Tax', flExempt: 'Florida sales tax exempt', itemsTotal: 'Items Total',
     services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
-    notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY',
+    notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY', included: 'INCLUDED',
     REFUNDED: 'REFUNDED', CANCELLED: 'CANCELLED',
   }
 
@@ -662,7 +662,7 @@ export default function ViewInvoicePage() {
                     saindo na linha "Pack / Service", ao lado do nosso serviço, o que
                     dava a entender que era pacote nosso. Lugar certo é aqui, colada
                     na versão, que é como o carro se chama de verdade. */}
-                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{ride.special_edition ? ` ${ride.special_edition}` : ''}</span></div>}
+                {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{realEdition(ride?.special_edition) ? ` ${realEdition(ride?.special_edition)}` : ''}</span></div>}
                 {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">{T.yearvin}:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
                 {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">{T.colorplate}:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
                 {invoice.service && <div className="pi-info-row"><span className="pi-info-label">{T.pack}:</span><span className="pi-info-value">{invoice.service}</span></div>}
@@ -714,7 +714,7 @@ export default function ViewInvoicePage() {
                     return rows
                   })()}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">{T.subtotal}</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
-                  <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{formatUSD(partsTotal)}</td></tr>
+                  <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{Math.abs(partsTotal) < 0.005 && servicesTotal > 0 ? T.included : formatUSD(partsTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -733,7 +733,7 @@ export default function ViewInvoicePage() {
                       <td className="r">{sv.price === 0 ? T.courtesy : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
-                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{formatUSD(servicesTotal)}</td></tr>
+                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{/* pacote fechado: o preço está no item, todo serviço INCLUÍDO → nunca «$0.00» (09/11/2026) */}{Math.abs(servicesTotal) < 0.005 ? (partsTotal > 0 ? T.included : T.courtesy) : formatUSD(servicesTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -950,7 +950,7 @@ export default function ViewInvoicePage() {
               <label className="block mb-3 text-lg font-bold">VEHICLE</label>
               <div className={sectionClass}>
                 {(ride.manufacturer || ride.brand) && <div className={rowClass}><span className={labelClass}>MAKE / BRAND</span><span className="font-bold">{[ride.manufacturer, ride.brand].filter(Boolean).join(' / ')}</span></div>}
-                {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{ride.special_edition ? ` ${ride.special_edition}` : ''}</span></div>}
+                {ride.model && <div className={rowClass}><span className={labelClass}>MODEL</span><span className="font-bold">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{realEdition(ride?.special_edition) ? ` ${realEdition(ride?.special_edition)}` : ''}</span></div>}
                 {ride.year && <div className={rowClass}><span className={labelClass}>YEAR</span><span className="font-bold">{ride.year}</span></div>}
                 {ride.color && <div className={rowClass}><span className={labelClass}>COLOR</span><span className="font-bold">{ride.color}</span></div>}
                 {ride.vin && <div className={rowClass}><span className={labelClass}>VIN</span><span className="font-bold">{ride.vin}</span></div>}

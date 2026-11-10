@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel, buildFolderName } from '@/lib/utils'
+import { BASE_PATH, toWaNumber, packTargetBhp, isBaselineName, isPredictedBaseline, BASELINE_PREDICTION, buildDisplayLabel, buildFolderName, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { fileForScan } from '@/lib/scanFile'
 import TrackSection from '@/components/TrackSection'
@@ -269,7 +269,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     (async () => {
       const { data: rideRow } = await supabase.from('rides').select('client_id, manufacturer, brand, model, version, special_edition, year').eq('id', rideId).single()
       if (rideRow) {
-        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, special_edition: (rideRow as any).special_edition ?? null, year: rideRow.year })
+        setCar({ manufacturer: rideRow.manufacturer, brand: rideRow.brand, model: rideRow.model, version: rideRow.version, special_edition: realEdition((rideRow as any).special_edition) || null, year: rideRow.year })
         if (rideRow.client_id) {
           const { data: c } = await supabase.from('clients').select('name, email, phone, country, preferred_message_method, instagram, facebook').eq('id', rideRow.client_id).single()
           if (c) setClient(c as typeof client)
@@ -2100,7 +2100,7 @@ export default function RidePerformancePage() {
   // SuperStock) dyno at ~17% crank→wheel loss — pre-filled, still editable.
   const defaultLoss = (() => {
     if (!ride) return ''
-    const txt = [ride.brand, ride.model, ride.version, ride.special_edition].filter(Boolean).join(' ').toLowerCase()
+    const txt = [ride.brand, ride.model, ride.version, realEdition(ride?.special_edition)].filter(Boolean).join(' ').toLowerCase()
     const isCC = /(challenger|charger)/.test(txt)
     const isHellcatOrRedeye = /(hellcat|red\s*eye)/.test(txt)
     const isWidebody = /(wide\s*body)/.test(txt)

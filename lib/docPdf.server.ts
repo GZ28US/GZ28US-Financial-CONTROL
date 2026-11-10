@@ -193,6 +193,10 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
   const unitShown = (l: any) => l.display === 'price' ? money(l.unit_price, lang) : shown(l)
   const items = (d.lines || []).filter((l: any) => l.kind !== 'service'), services = (d.lines || []).filter((l: any) => l.kind === 'service')
   const sumOf = (ls: any[]) => ls.reduce((s, l) => s + (Number(l.total) || 0), 0)
+  // A section that adds up to ZERO says what its lines say, never «US$ 0.00» (09/11/2026, Márcio via Parts Chasing: the closed
+  // package carries its price on the item, every service is INCLUDED → «Services Total INCLUDED»). Any line included → INCLUDED.
+  const zeroTotal = (ls: any[], total: number) => Math.abs(total) > 0.005 ? money(total, lang)
+    : (ls.some((l: any) => l.display === 'included') ? t(lang, 'included') : t(lang, 'courtesy')).toUpperCase()
   if (items.length) {
     y = secTitle(pdf, k, y, T.items)
     const body: any[] = [], seen = new Set<string>()
@@ -205,8 +209,8 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
       body.push([cell(l.description, l.kit_group ? { cellPadding: { top: px(4), bottom: px(4), left: px(16), right: px(6) } } : {}), cell(unitShown(l), R), cell(String(l.quantity || 1), R), cell(shown(l), R)])
     }
     const itemsTotal = Number(tot.parts ?? sumOf(items))
-    body.push([cell(T.subtotal, { ...R, ...SUB }, 3), cell(money(itemsTotal, lang), { ...R, ...SUB })])
-    body.push([cell(T.itemsTotal, { ...R, ...BLACKROW }, 3), cell(money(itemsTotal, lang), { ...R, ...BLACKROW })])
+    body.push([cell(T.subtotal, { ...R, ...SUB }, 3), cell(zeroTotal(items, itemsTotal), { ...R, ...SUB })])
+    body.push([cell(T.itemsTotal, { ...R, ...BLACKROW }, 3), cell(zeroTotal(items, itemsTotal), { ...R, ...BLACKROW })])
     autoTable(pdf, { ...tableBase(), startY: y,
       head: [[T.desc, cell(T.unit, R), cell(T.qt, R), cell(T.total, R)].map(c => typeof c === 'string' ? pdfText(c.toUpperCase()) : { ...c, content: c.content.toUpperCase() })],
       body, columnStyles: { 0: { cellWidth: k.CW * 0.56 }, 1: { cellWidth: k.CW * 0.16 }, 2: { cellWidth: k.CW * 0.08 }, 3: { cellWidth: k.CW * 0.20 } } })
@@ -215,7 +219,7 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
   if (services.length) {
     y = secTitle(pdf, k, y, T.services)
     const body: any[] = services.map((l: any) => [cell(l.description), cell(shown(l), R)])
-    body.push([cell(T.servicesTotal, { ...R, ...BLACKROW }), cell(money(Number(tot.services ?? sumOf(services)), lang), { ...R, ...BLACKROW })])
+    body.push([cell(T.servicesTotal, { ...R, ...BLACKROW }), cell(zeroTotal(services, Number(tot.services ?? sumOf(services))), { ...R, ...BLACKROW })])
     autoTable(pdf, { ...tableBase(), startY: y,
       head: [[pdfText(T.desc.toUpperCase()), cell(T.total.toUpperCase(), R)]],
       body, columnStyles: { 0: { cellWidth: k.CW * 0.80 }, 1: { cellWidth: k.CW * 0.20 } } })

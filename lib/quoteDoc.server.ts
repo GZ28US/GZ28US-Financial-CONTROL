@@ -19,6 +19,7 @@ import { FL_TAX_STATUS_LABEL, type FlTaxStatus } from './flTax'
 import { TERMS_TEXT, t, type Lang } from './quoteStrings'
 import { quoteStage, type StageOut } from './quoteStage'
 import { orlandoToday } from './orlando'
+import { realEdition } from './utils'
 
 export const COMPANY = {
   name: 'GZ28 V8 SpeedShop USA LLC',
@@ -162,7 +163,7 @@ export function buildRevision(b: InvoiceMoneyBundle, terms: Terms, plan: PlanRow
     } : null,
     vehicle: ride ? {
       make: [ride.manufacturer, ride.brand].filter(Boolean).join(' / ') || null,
-      model: ride.model ? `${ride.model}${ride.version ? ` — ${ride.version}` : ''}${ride.special_edition ? ` ${ride.special_edition}` : ''}` : null,
+      model: ride.model ? `${ride.model}${ride.version ? ` — ${ride.version}` : ''}${realEdition(ride.special_edition) ? ` ${realEdition(ride.special_edition)}` : ''}` : null,
       year: ride.year ? String(ride.year) : null, vin: ride.vin || null, color: ride.color || null, plate: ride.plate || null,
       mileage: inv.mileage ? Number(inv.mileage) : null,
     } : null,
