@@ -8,6 +8,7 @@ import DocPicker from '@/components/DocPicker'
 import { supabase } from '@/lib/supabase'
 import { FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL } from '@/lib/flTax'
 import { docMoneyFor, primeApproved } from '@/lib/money'
+import { isPackageInvoice } from '@/lib/packageRule'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
@@ -555,6 +556,10 @@ export default function ViewInvoicePage() {
     notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY', included: 'INCLUDED',
     REFUNDED: 'REFUNDED', CANCELLED: 'CANCELLED',
   }
+  // PACOTE (09/11/2026, Márcio «wrong!!!!»): componente de pacote não é cortesia — é INCLUÍDO no preço do pacote. Toda linha
+  // US$ 0 e todo total de grupo zerado dizem INCLUDED quando a invoice é pacote; COURTESY só fora de pacote. Mesma regra do PDF
+  // do portal (lib/packageRule).
+  const ZERO = isPackageInvoice(invoice, partsVivos, services) ? T.included : T.courtesy
 
   return (
     <>
@@ -650,7 +655,9 @@ export default function ViewInvoicePage() {
                   {client.email && <div className="pi-info-row"><span className="pi-info-label">{T.email}:</span><span className="pi-info-value">{client.email}</span></div>}
                 </> : <div className="pi-info-value" style={{color:'#999',fontStyle:'italic'}}>{T.noClient}</div>}
               </div>
-              {!isClient && <div className="pi-info-block">
+              {/* VEÍCULO SEMPRE no papel (09/11/2026, Márcio «where's the car info???»): também aberto pelo cliente (/clients/…);
+                  sem carro na invoice, a caixa fica com «—». */}
+              <div className="pi-info-block">
                 {/* Numa QUOTE o carro ainda não é um projeto da casa: o apelido
                     (project_name) é interno e não diz nada pro cliente. Só o título
                     (Márcio, 26/ago/2026). Na invoice o nome fica, que aí é o carro
@@ -665,8 +672,9 @@ export default function ViewInvoicePage() {
                 {ride?.model && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">{ride.model}{ride.version ? ` — ${ride.version}` : ''}{realEdition(ride?.special_edition) ? ` ${realEdition(ride?.special_edition)}` : ''}</span></div>}
                 {(ride?.year || ride?.vin) && <div className="pi-info-row"><span className="pi-info-label">{T.yearvin}:</span><span className="pi-info-value">{[ride?.year, ride?.vin].filter(Boolean).join(' — ')}</span></div>}
                 {(ride?.color || ride?.plate || invoice.mileage) && <div className="pi-info-row"><span className="pi-info-label">{T.colorplate}:</span><span className="pi-info-value">{[ride?.color, ride?.plate, invoice.mileage ? Number(invoice.mileage).toLocaleString('en-US') : null].filter(Boolean).join(' — ')}</span></div>}
+                {!ride && <div className="pi-info-row"><span className="pi-info-label">{T.model}:</span><span className="pi-info-value">—</span></div>}
                 {invoice.service && <div className="pi-info-row"><span className="pi-info-label">{T.pack}:</span><span className="pi-info-value">{invoice.service}</span></div>}
-              </div>}
+              </div>
             </div>
 
             {parts.length > 0 && <div className="pi-sec">
@@ -694,7 +702,7 @@ export default function ViewInvoicePage() {
                         rows.push(
                           <tr key={`k-${p.kit_group}`} style={{ background: '#eef2f2' }}>
                             <td colSpan={3} style={{ fontWeight: 700 }}>📦 {p.kit_name || 'Kit'}</td>
-                            <td className="r" style={{ fontWeight: 700 }}>{kitEst ? T[kitEst] : kitTotal === 0 ? T.courtesy : formatUSD(kitTotal)}</td>
+                            <td className="r" style={{ fontWeight: 700 }}>{kitEst ? T[kitEst] : kitTotal === 0 ? ZERO : formatUSD(kitTotal)}</td>
                           </tr>
                         )
                       }
@@ -705,16 +713,16 @@ export default function ViewInvoicePage() {
                       rows.push(
                         <tr key={p.id}>
                           <td style={{ ...(p.kit_group ? { paddingLeft: '16px' } : {}), ...(est ? { color: '#999' } : {}) }}>{p.description}{est && <span style={{ fontWeight: 700, color: '#cc0000' }}> ({T[est]})</span>}{showPartNumbers && pnFor(p) && <span style={{ display: 'block', fontSize: '0.78em', color: '#666' }}>PN: {pnFor(p)}</span>}</td>
-                          <td className="r" style={strike}>{p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price)}</td>
+                          <td className="r" style={strike}>{p.unit_price === 0 ? ZERO : formatUSD(p.unit_price)}</td>
                           <td className="r" style={strike}>{p.quantity}</td>
-                          <td className="r" style={est ? { fontWeight: 700, color: '#cc0000' } : undefined}>{est ? T[est] : p.unit_price === 0 ? T.courtesy : formatUSD(p.unit_price * p.quantity)}</td>
+                          <td className="r" style={est ? { fontWeight: 700, color: '#cc0000' } : undefined}>{est ? T[est] : p.unit_price === 0 ? ZERO : formatUSD(p.unit_price * p.quantity)}</td>
                         </tr>
                       )
                     })
                     return rows
                   })()}
                   <tr className="pi-subtotal"><td colSpan={3} className="r">{T.subtotal}</td><td className="r">{formatUSD(partsSubTotal)}</td></tr>
-                  <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{Math.abs(partsTotal) < 0.005 && servicesTotal > 0 ? T.included : formatUSD(partsTotal)}</td></tr>
+                  <tr className="pi-ptotal"><td colSpan={3} className="r">{T.itemsTotal}</td><td className="r">{Math.abs(partsTotal) < 0.005 && parts.length > 0 ? ZERO : formatUSD(partsTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -730,10 +738,10 @@ export default function ViewInvoicePage() {
                   {services.map(sv => (
                     <tr key={sv.id}>
                       <td>{sv.description}</td>
-                      <td className="r">{sv.price === 0 ? T.courtesy : formatUSD(sv.price)}</td>
+                      <td className="r">{sv.price === 0 ? ZERO : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
-                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{/* pacote fechado: o preço está no item, todo serviço INCLUÍDO → nunca «$0.00» (09/11/2026) */}{Math.abs(servicesTotal) < 0.005 ? (partsTotal > 0 ? T.included : T.courtesy) : formatUSD(servicesTotal)}</td></tr>
+                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{/* pacote fechado: o preço está no item, todo serviço INCLUÍDO → nunca «$0.00» (09/11/2026) */}{Math.abs(servicesTotal) < 0.005 ? ZERO : formatUSD(servicesTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}

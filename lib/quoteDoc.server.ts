@@ -20,6 +20,7 @@ import { TERMS_TEXT, t, type Lang } from './quoteStrings'
 import { quoteStage, type StageOut } from './quoteStage'
 import { orlandoToday } from './orlando'
 import { realEdition } from './utils'
+import { isPackageInvoice } from './packageRule'
 
 export const COMPANY = {
   name: 'GZ28 V8 SpeedShop USA LLC',
@@ -107,8 +108,7 @@ export function buildRevision(b: InvoiceMoneyBundle, terms: Terms, plan: PlanRow
   const problems: string[] = []
   const inv = b.invoice, ride = b.ride, client = b.client
   const liveItems = b.items.filter(i => i.counts)
-  const hasPackage = !!inv.pack_id || liveItems.some(i => i.kit_group) ||
-    (liveItems.filter(i => num(i.unit_price) > 0).length === 1 && liveItems.length + b.services.length > 1 && /package|pack|pacote/i.test(String(inv.service || '') + ' ' + String(liveItems.find(i => num(i.unit_price) > 0)?.description || '')))
+  const hasPackage = isPackageInvoice(inv, liveItems, b.services)   // lib/packageRule — same rule as the app printable
   const lineOf = (kind: 'item' | 'service', row: Record<string, any>) => {
     const unit = kind === 'item' ? num(row.unit_price) : num(row.price)
     const qty = kind === 'item' ? num(row.quantity) || 1 : 1
