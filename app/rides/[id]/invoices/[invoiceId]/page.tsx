@@ -279,23 +279,37 @@ export default function ViewInvoicePage() {
         useCORS: true,
         windowWidth: 816,
       })
-      const imgData = canvas.toDataURL('image/jpeg', 0.92)
       const pdf = new JsPDF({ unit: 'pt', format: 'letter' })
       const pageW = pdf.internal.pageSize.getWidth()
       const pageH = pdf.internal.pageSize.getHeight()
       const margin = 18  // ~0.25in, matching the print @page margin
       const usableW = pageW - margin * 2
-      const imgH = (canvas.height / canvas.width) * usableW
       const pageContentH = pageH - margin * 2
-      let heightLeft = imgH
-      let position = 0
-      pdf.addImage(imgData, 'JPEG', margin, margin + position, usableW, imgH)
-      heightLeft -= pageContentH
-      while (heightLeft > 0) {
-        position -= pageContentH
-        pdf.addPage()
-        pdf.addImage(imgData, 'JPEG', margin, margin + position, usableW, imgH)
-        heightLeft -= pageContentH
+      // PAGE BREAKS (09/11/2026, Márcio: «fix the cut lines»): the picture used to be sliced every page-height, straight
+      // through a table row / a line of text. Now each page ends at the last row/block edge that fits — never mid-line.
+      const pxPerPt = canvas.width / usableW
+      const pagePx = Math.floor(pageContentH * pxPerPt)
+      const scale = canvas.width / target.getBoundingClientRect().width
+      const top0 = target.getBoundingClientRect().top
+      const edges = Array.from(target.querySelectorAll('tr, .pi-header, .pi-two-col, .pi-info-block, .pi-sec, .pi-sec-title, .pi-totals-wrap, .pi-notes, .pi-notes-title, .pi-notes p, .pi-sig'))
+        .flatMap(el => { const r = el.getBoundingClientRect(); return [Math.round((r.top - top0) * scale), Math.round((r.bottom - top0) * scale)] })
+        .filter(v => v > 0 && v < canvas.height).sort((a, b) => a - b)
+      let start = 0, first = true
+      while (start < canvas.height - 2) {
+        let end = Math.min(canvas.height, start + pagePx)
+        if (end < canvas.height) {
+          const fit = edges.filter(v => v > start + pagePx * 0.4 && v <= end)
+          if (fit.length) end = fit[fit.length - 1]
+        }
+        const slice = document.createElement('canvas')
+        slice.width = canvas.width; slice.height = end - start
+        const ctx = slice.getContext('2d')!
+        ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, slice.width, slice.height)
+        ctx.drawImage(canvas, 0, start, canvas.width, end - start, 0, 0, canvas.width, end - start)
+        if (!first) pdf.addPage()
+        pdf.addImage(slice.toDataURL('image/jpeg', 0.92), 'JPEG', margin, margin, usableW, (end - start) / pxPerPt)
+        first = false
+        start = end
       }
       return pdf.output('blob')
     } finally {

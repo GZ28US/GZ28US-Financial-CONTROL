@@ -153,6 +153,19 @@ export function buildRevision(b: InvoiceMoneyBundle, terms: Terms, plan: PlanRow
       car: carLabel(ride), client_name: String(client?.name || ''), client_first: firstName(client?.name), ride_code: ride?.project_code || null,
       parts_only: !ride, has_package: hasPackage,
     },
+    // 09/11/2026 (Márcio: «do it with the current printable invoice look»): the CLIENT and VEHICLE boxes of the printable
+    // invoice, frozen with the revision so the PDF still comes ONLY from the snapshot. Older revisions don't have them —
+    // the PDF then prints the name / car label it always had. Quote = no project nickname (printable rule, 26/08).
+    client: client ? {
+      name: String(client.name || ''), address: client.address || null, city: client.city || null, state: client.state || null,
+      zip: client.zip || null, country: client.country || null, phone: client.phone || null, email: client.email || null,
+    } : null,
+    vehicle: ride ? {
+      make: [ride.manufacturer, ride.brand].filter(Boolean).join(' / ') || null,
+      model: ride.model ? `${ride.model}${ride.version ? ` — ${ride.version}` : ''}${ride.special_edition ? ` ${ride.special_edition}` : ''}` : null,
+      year: ride.year ? String(ride.year) : null, vin: ride.vin || null, color: ride.color || null, plate: ride.plate || null,
+      mileage: inv.mileage ? Number(inv.mileage) : null,
+    } : null,
     lines, notes, totals, installments,
     terms: { rails: terms.rails, fee_policy: terms.fee_policy, language: lang, consent_version: terms.consent_version, valid_days: terms.valid_days,
       valid_until: opts.validUntil ?? null, terms_sha256 },
