@@ -652,14 +652,17 @@ export async function POST(req: NextRequest) {
     }
 
     // rename / renumber
-    const oldCode = sanitize(String(body.oldCode || ''))
+    // MESMO CÓDIGO, NOME NOVO (10/11/2026, AutoBook: {action:'rename', code:'US.005', name:'Swinger 1'} sem oldCode criava uma
+    // «US.005 - Swinger 1» VAZIA ao lado da «US.005 - Swinger» cheia, nas duas zonas — pasta duplicada, contra a regra do Márcio).
+    // Sem oldCode o código velho É o código: só o nome muda.
+    const oldCode = sanitize(String(body.oldCode || '')) || code
     const oldName = sanitize(String(body.oldName || ''))
     // Com o nome velho em mãos a pasta se identifica sozinha. Sem ele, procura a
     // pasta que já está com o nome novo (renomear seria à toa) e só então cede ao
     // número. Assim o rename de um carro nunca renomeia a pasta de outro.
     const from = oldCode
       ? (await findFolderByCode(token, root, oldCode, oldName || undefined))
-        || (oldName ? null : await findFolderByCode(token, root, oldCode))
+        || (oldName ? null : (oldCode === code ? await findFolderByCode(token, root, code, name) : null) || await findFolderByCode(token, root, oldCode))
       : null
     if (!from) {
       // Self-heal: no folder for the old code — adopt a legacy folder for the NEW code
