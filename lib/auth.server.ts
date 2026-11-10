@@ -4,6 +4,7 @@
 // inteiro e disparava sync cobrado no Plaid (achado da revisão de 21/ago).
 import { createClient } from '@supabase/supabase-js'
 import type { NextRequest } from 'next/server'
+import { viewerGate } from './viewer.server'
 
 export async function requireUser(req: NextRequest): Promise<boolean> {
   const auth = req.headers.get('authorization') || ''
@@ -12,7 +13,9 @@ export async function requireUser(req: NextRequest): Promise<boolean> {
   try {
     const anon = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { auth: { persistSession: false } })
     const { data, error } = await anon.auth.getUser(token)
-    return !error && !!data.user
+    if (error || !data.user) return false
+    // VIEWER (10/11/2026): read-only account — no non-GET, no paid/outside-service GET, nothing when blocked
+    return await viewerGate(String(data.user.email || ''), req.method, req.nextUrl?.pathname || '')
   } catch { return false }
 }
 
@@ -34,6 +37,7 @@ export async function requireStaff(req: NextRequest): Promise<{ email: string } 
     const email = String(data?.user?.email || '').toLowerCase()
     if (error || !email) return null
     if (machineAccounts().includes(email)) return null
+    if (!(await viewerGate(email, req.method, req.nextUrl?.pathname || ''))) return null
     return { email }
   } catch { return null }
 }

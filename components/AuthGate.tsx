@@ -3,12 +3,13 @@
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import { setViewOnly, onViewOnlyBlock } from '@/lib/viewOnly'
 
 // Routes that are PUBLIC by design — no login. The client self-service form
 // (/clients/self/[id]) is sent to clients so they fill in their own info;
 // /rides/self/[id] lets a client upload their car photo. They are not app users,
 // so these must render outside the auth gate.
-const PUBLIC_PREFIXES = ['/q/', '/clients/self/', '/rides/self/', '/costs/fixed/self/', '/duties/self/', '/staff/self/']
+const PUBLIC_PREFIXES = ['/q/', '/join/', '/clients/self/', '/rides/self/', '/costs/fixed/self/', '/duties/self/', '/staff/self/']
 
 // Wraps the whole app. When signed out it shows a login screen; when signed in
 // it renders the app. No public sign-up — accounts are created in the Supabase
@@ -20,6 +21,11 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  // VIEW-ONLY ACCOUNT (10/11/2026, Drummond): a row in app_viewers. The database and the API refuse its writes; here the
+  // screen says so (bar + a toast when a save is stopped) and a BLOCKED account is signed out.
+  const [viewer, setViewer] = useState(false)
+  const [blockMsg, setBlockMsg] = useState('')
+  useEffect(() => onViewOnlyBlock(m => { setBlockMsg(m); setTimeout(() => setBlockMsg(''), 3500) }), [])
 
   useEffect(() => {
     let mounted = true
@@ -28,8 +34,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     // respondia 503 e os espelhos US→BR morriam calados. Decisão do dono: escrita
     // entre projetos é do SERVIDOR (/api/br-mirror/*, chave de serviço do BR), e
     // nenhuma sessão do BR chega à tela. O portão só cuida da sessão do US.
-    const onSession = (session: unknown) => {
-      if (mounted) setStatus(session ? 'in' : 'out')
+    const onSession = async (session: unknown) => {
+      if (!session) { setViewOnly(false); if (mounted) { setViewer(false); setStatus('out') }; return }
+      // the role BEFORE the app opens, so a viewer never sees an editable screen. Function missing (migration not run) = staff.
+      let role: string | null = null
+      try { const { data, error } = await supabase.rpc('my_app_role'); if (!error) role = (data as string | null) || null } catch { /* network: staff path; the DB still refuses a viewer */ }
+      if (role === 'blocked') { await supabase.auth.signOut(); if (mounted) setStatus('out'); return }
+      setViewOnly(role === 'viewer')
+      if (mounted) { setViewer(role === 'viewer'); setStatus('in') }
     }
     // SESSÃO QUE PARECE VIVA E NÃO ESTÁ (08/set/2026). `getSession()` devolve o
     // que está guardado no navegador; quando o refresh token também morre, ela
@@ -135,6 +147,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
       </main>
     )
   }
+
+  if (viewer) return <>
+    <div className="sticky top-0 z-[60] bg-amber-500 text-black text-center text-xs font-bold tracking-widest py-1 print:hidden">VIEW ONLY — every screen is visible, nothing can be changed</div>
+    {children}
+    {blockMsg && <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-amber-500 text-black text-sm font-bold px-4 py-3 rounded-lg shadow-lg print:hidden" role="alert">{blockMsg}</div>}
+  </>
 
   return <>{children}</>
 }
