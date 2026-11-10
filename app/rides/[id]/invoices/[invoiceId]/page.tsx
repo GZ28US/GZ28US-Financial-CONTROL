@@ -906,7 +906,7 @@ export default function ViewInvoicePage() {
                     {bParts.map((p: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
                         <span className="min-w-0 truncate" title={p.description}>{p.description}</span>
-                        <span className="text-gray-400 shrink-0">{Number(p.unit_price) === 0 ? 'COURTESY' : `${formatUSD(Number(p.unit_price) || 0)} × ${Number(p.quantity) || 0} = ${formatUSD((Number(p.unit_price) || 0) * (Number(p.quantity) || 0))}`}</span>
+                        <span className="text-gray-400 shrink-0">{Number(p.unit_price) === 0 ? ZERO : `${formatUSD(Number(p.unit_price) || 0)} × ${Number(p.quantity) || 0} = ${formatUSD((Number(p.unit_price) || 0) * (Number(p.quantity) || 0))}`}</span>
                       </div>
                     ))}
                     <div className="flex justify-between text-sm font-bold pt-1"><span>ITEMS TOTAL{(Number(bInv.florida_taxes) || 0) > 0 ? ` (incl. ${bInv.florida_taxes}% FL tax)` : ''}</span><span>{formatUSD(partsTot)}</span></div>
@@ -919,7 +919,7 @@ export default function ViewInvoicePage() {
                     {bServices.map((sv: any, i: number) => (
                       <div key={i} className="flex justify-between gap-4 text-sm border-b border-gray-800 py-1">
                         <span className="min-w-0 truncate" title={sv.description}>{sv.description}</span>
-                        <span className="text-gray-400 shrink-0">{Number(sv.price) === 0 ? 'COURTESY' : formatUSD(Number(sv.price) || 0)}</span>
+                        <span className="text-gray-400 shrink-0">{Number(sv.price) === 0 ? ZERO : formatUSD(Number(sv.price) || 0)}</span>
                       </div>
                     ))}
                     <div className="flex justify-between text-sm font-bold pt-1"><span>SERVICES TOTAL</span><span>{formatUSD(svcTot)}</span></div>
@@ -1064,7 +1064,7 @@ export default function ViewInvoicePage() {
                                 <div className="flex-1 min-w-0">
                                   <p className={`text-base truncate ${mOut ? 'text-gray-500' : (invoice.is_quote || mPaid) ? '' : 'text-yellow-400'}`} title={m.description}>{m.description}{mOut || invoice.is_quote || mPaid ? '' : ' — PENDING'}</p>
                                   {showPartNumbers && pnFor(m) && <p className="text-xs text-gray-500">PN: {pnFor(m)}</p>}
-                                  <p className={`text-sm text-gray-400 ${mOut ? 'line-through' : ''}`}>{m.unit_price === 0 ? 'COURTESY' : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
+                                  <p className={`text-sm text-gray-400 ${mOut ? 'line-through' : ''}`}>{m.unit_price === 0 ? ZERO : `${formatUSD(m.unit_price)} × ${m.quantity} = ${formatUSD(m.unit_price * m.quantity)}`}</p>
                                   {(mOut || !!m.cancel_status) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={m.cancel_status} />{mOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}</div>}
                                   {!invoice.is_quote && !mOut && <p className="text-sm text-gray-500">{mPaid ? `Paid: ${formatDate(m.payment_date)}` : 'Not paid yet'}</p>}
                                 </div>
@@ -1083,7 +1083,7 @@ export default function ViewInvoicePage() {
                       <p className={`text-base font-bold truncate ${partOut ? 'text-gray-500' : (invoice.is_quote || partPaid) ? '' : 'text-yellow-400'}`} title={part.description}>{part.description}{partOut || invoice.is_quote || partPaid ? '' : ' — PENDING'}</p>
                       {showPartNumbers && pnFor(part) && <p className="text-xs text-gray-500">PN: {pnFor(part)}</p>}
                       <p className={`text-sm text-gray-400 ${partOut ? 'line-through' : ''}`}>
-                        {part.unit_price === 0 ? 'COURTESY' : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
+                        {part.unit_price === 0 ? ZERO : `${formatUSD(part.unit_price)} × ${part.quantity} = ${formatUSD(part.unit_price * part.quantity)}`}
                       </p>
                       {(partOut || !!part.cancel_status) && <div className="flex items-center gap-2 mt-1 flex-wrap"><CancelChip status={part.cancel_status} />{partOut && <span className="text-xs text-gray-500 font-bold">OUT OF TOTALS</span>}</div>}
                     </div>
@@ -1103,7 +1103,7 @@ export default function ViewInvoicePage() {
                 {services.map((svc, index) => (
                   <div key={svc.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <p className="text-base font-bold flex-1 truncate" title={svc.description}>{svc.description}</p>
-                    <p className="text-gray-400 font-bold">{svc.price === 0 ? 'COURTESY' : formatUSD(svc.price)}</p>
+                    <p className="text-gray-400 font-bold">{svc.price === 0 ? ZERO : formatUSD(svc.price)}</p>
                   </div>
                 ))}
                 <div className="border-t border-gray-700 px-4 py-3 flex justify-between"><span className="font-bold text-lg">SERVICES TOTAL</span><span className="text-xl font-bold">{formatUSD(servicesTotal)}</span></div>

@@ -1114,7 +1114,7 @@ export default function EditPackPage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className="text-base font-bold truncate" title={svc.description}>{svc.description}</p>
-                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'INCLUDED' : formatUSD(parseFloat(svc.price))}</p>
                           <div className="mt-1">{locked ? <ScopeBadge scope={svc.scope} showBoth /> : <ScopeSelect scope={svc.scope} onChange={(sc) => setServiceScope(index, sc)} />}</div>
                         </div>
                         {!locked && (

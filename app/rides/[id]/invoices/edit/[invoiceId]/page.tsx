@@ -26,6 +26,7 @@ import { matchSupplier, supplierDirectoryFrom } from '@/lib/supplierMatch'
 import { reservarReport } from '@/lib/reportMark'
 import { urlsDoRecibo, tiposDoRecibo, gravarRecibo, nomeDoArquivo, RECEIPT_KINDS, type ReceiptKind } from '@/lib/receiptKinds'
 import { US_CLIENT_GZ28BR } from '@/lib/crossingBalance'
+import { isPackageInvoice } from '@/lib/packageRule'
 
 // mirror_src (14/set/2026): o item é espelho da travessia US ⇄ BR — o US$ dele é o gravado na origem,
 // e a margem viva do editor NUNCA o reprecifica (lib/crossing.server.ts).
@@ -3228,6 +3229,8 @@ export default function EditInvoicePage() {
     <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   )
 
+  // $0 line: INCLUDED in a package, COURTESY only outside one (lib/packageRule, same rule as the paper — Márcio 10/11)
+  const ZERO = isPackageInvoice({ service }, parts, services) ? 'INCLUDED' : 'COURTESY'
   return (
     <main className="min-h-screen bg-black text-white p-8 pb-32">
       <Header />
@@ -4354,7 +4357,7 @@ export default function EditInvoicePage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${(isQuote || isValidDate(svc.payment_date || '')) ? '' : 'text-yellow-400'}`} title={serviceDisplayName(svc.description)}>{serviceDisplayName(svc.description)}{(isQuote || isValidDate(svc.payment_date || '')) ? '' : ' — PENDING'}</p>
-                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? 'COURTESY' : formatUSD(parseFloat(svc.price))}</p>
+                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? ZERO : formatUSD(parseFloat(svc.price))}</p>
                           {!isQuote && <p className="text-sm text-gray-500">{isValidDate(svc.payment_date || '') ? `Paid: ${formatDate(svc.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0">
