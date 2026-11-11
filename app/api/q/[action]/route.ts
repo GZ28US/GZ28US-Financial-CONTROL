@@ -212,9 +212,11 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       if (!s.live || (!s.approvalOnLive && s.bundle.invoice.is_quote)) return err('not_approved', 409)
       if (s.live.kind === 'CHANGE_ORDER' && !s.approvalOnLive) return err('co_pending', 409)   // M4: payments resume after the change order is approved
       const seq = Number(body.seq || 1)
-      const rail = String(body.rail || 'card') as 'card' | 'us_bank_account'
+      // ONE online button (10/11/2026): Checkout offers every method of the Stripe account, so the rail is only the label the attempt
+      // opens with — the first Stripe rail the terms carry and the settings allow. None of them = no online payment on this document.
       const enabled = await railsEnabled()
-      if (!['card', 'us_bank_account'].includes(rail) || !s.terms?.rails.includes(rail) || !enabled.includes(rail)) return err('err_pay_unavailable', 409, { rail_unavailable: true })
+      const rail = (['card', 'us_bank_account'] as const).find(r => s.terms?.rails.includes(r) && enabled.includes(r))
+      if (!rail) return err('err_pay_unavailable', 409, { rail_unavailable: true })
       const pay = await payModeOk(!!link.is_test)
       if (!pay.ok) {
         await ev(db, link.invoice_id, s.live.id, 'RAIL_UNAVAILABLE', { rail, reason: pay.reason })

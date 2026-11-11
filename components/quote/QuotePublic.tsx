@@ -201,8 +201,8 @@ function Actions(p: { d: Dto; lang: Lang; T: (k: string, v?: Record<string, stri
     {failed && <p className="text-sm text-red-300 mb-2">{T('failed', { reason: T('fail_reason.' + ((d.attempts || []).slice(-1)[0]?.failure_code === 'verification_timeout' ? 'verification_timeout' : 'generic')) })}</p>}
     <div className="font-bold text-white">{T(nextDue.seq === 1 ? 'deposit_due' : 'installment_due', { amount: amt })}</div>
     {d.in_app && <p className="text-xs text-amber-300 mt-2">{T('open_in_browser')}</p>}
-    {d.pay_ok && rails.includes('us_bank_account') && <button disabled={busy} onClick={() => pay('us_bank_account')} className="mt-3 w-full min-h-[56px] rounded-xl bg-white text-black font-bold">{T('pay_ach', { amount: amt })}</button>}
-    {d.pay_ok && rails.includes('card') && <button disabled={busy} onClick={() => pay('card')} className="mt-3 w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold">{failed ? T('pay_again') : T('pay_card', { amount: amt })}</button>}
+    {d.pay_ok && rails.length > 0 && <button disabled={busy} onClick={() => pay(rails[0])} className="mt-3 w-full min-h-[56px] rounded-xl bg-emerald-500 text-black font-bold">{failed ? T('pay_again') : T('pay_online', { amount: amt })}</button>}
+    {d.pay_ok && rails.length > 0 && <p className="text-xs text-gray-400 mt-2">{T('pay_online_hint')}</p>}
     {!d.pay_ok && <p className="text-xs text-gray-400 mt-2">{T('err_pay_unavailable')}</p>}
     <ZelleSheet d={d} T={T} call={call} seq={nextDue.seq} flash={flash} />
     <p className="text-[11px] text-gray-500 mt-3">{T('stripe_foot')}</p>

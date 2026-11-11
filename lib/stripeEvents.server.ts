@@ -74,10 +74,14 @@ export async function openDepositCheckout(db: SupabaseClient, o: {
   const t = landingToken(attempt.id)
   const s = await stripe.checkout.sessions.create({
     mode: 'payment', locale: o.lang === 'pt' ? 'pt-BR' : 'en', ...(customer ? { customer } : {}),
-    payment_method_types: RAIL_TO_STRIPE[o.rail],
-    payment_method_options: o.rail === 'us_bank_account'
-      ? { us_bank_account: { verification_method: achVerify as 'automatic' | 'instant', financial_connections: { permissions: ['payment_method'] } } }
-      : { card: { request_three_d_secure: 'automatic' } },
+    // ALL METHODS (Márcio 10/11/2026: «the quote's link should offer all options too!» · «offer all, we pay the taxes»): no
+    // payment_method_types — Checkout shows every method switched on in the Stripe Dashboard (card, Link, US bank account, Affirm /
+    // Klarna / Afterpay, wallets), like the shop. GZ28 absorbs the fee of whichever one the client picks; the method really used is
+    // booked from the charge (method_type, fee, net). o.rail is only the label the attempt was opened with.
+    payment_method_options: {
+      us_bank_account: { verification_method: achVerify as 'automatic' | 'instant', financial_connections: { permissions: ['payment_method'] } },
+      card: { request_three_d_secure: 'automatic' },
+    },
     line_items: [{ quantity: 1, price_data: { currency: 'usd', unit_amount: Number(inst.amount_cents),
       product_data: { name: cap(`GZ28 — ${inst.label_text || word} · ${o.service || 'Project'}`, 120),
         description: cap(`${carLabel(o.ride) || 'Parts'} · doc ${shortId} · rev ${o.revision.seq}`, 300) } } }],
@@ -87,7 +91,7 @@ export async function openDepositCheckout(db: SupabaseClient, o: {
     payment_intent_data: {
       metadata: { app: 'control-app', invoice_id: o.invoiceId, attempt_id: attempt.id, installment_id: String(inst.id) },
       description: cap(`${o.service || 'Project'} — installment ${o.seq}/${n}`, 300),
-      ...(o.rail === 'card' ? { statement_descriptor_suffix: word.slice(0, 10) } : {}),
+      statement_descriptor_suffix: word.slice(0, 10),
     },
     success_url: `${PUBLIC_BASE}/q/return?t=${encodeURIComponent(t)}`,
     cancel_url: `${PUBLIC_BASE}/q/return?t=${encodeURIComponent(t)}&c=1`,
