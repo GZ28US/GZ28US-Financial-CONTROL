@@ -10,7 +10,6 @@ import { useEffect, useRef, useState } from 'react'
 import { BASE_PATH, formatPhone } from '@/lib/utils'
 import { t, money, moneyCents, type Lang } from '@/lib/quoteStrings'
 import { fmtDay } from '@/lib/orlando'
-import { buyLink } from '@/lib/buyLink'
 
 const W = { en: { quoteNo: 'Quote #', invoiceNo: 'Invoice #', clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
@@ -104,9 +103,7 @@ export default function PaperDoc({ doc, plan, lang, isInvoice }: { doc: any; pla
       const members = items.filter(x => x.kit_group === l.kit_group)
       itemRows.push(<tr key={'k' + l.kit_group} style={{ background: '#eef2f2' }}><td colSpan={3} style={{ fontWeight: 700 }}>{l.kit_name || 'Kit'}</td><td className="r" style={{ fontWeight: 700 }}>{groupTotal(members, sum(members))}</td></tr>)
     }
-    const bl = buyLink(l.buy_url)
-    itemRows.push(<tr key={l.id}><td style={l.kit_group ? { paddingLeft: 16 } : undefined}>{l.description}
-      {bl && <div style={{ fontSize: '0.85em', marginTop: 2 }}><a href={bl.url} target="_blank" rel="noopener noreferrer" style={{ color: '#1d4ed8', textDecoration: 'underline' }}>{t(lang, 'buy')} ↗ {bl.host}</a></div>}</td>
+    itemRows.push(<tr key={l.id}><td style={l.kit_group ? { paddingLeft: 16 } : undefined}>{l.description}</td>
       <td className="r">{l.display === 'price' ? money(l.unit_price, lang) : zero(l)}</td><td className="r">{l.quantity || 1}</td><td className="r">{shown(l)}</td></tr>)
   }
   const itemsTotal = Number(tot.parts ?? sum(items)), servicesTotal = Number(tot.services ?? sum(services))
