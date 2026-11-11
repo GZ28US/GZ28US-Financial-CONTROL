@@ -31,6 +31,17 @@ export const expLine = (e: { price?: unknown; quantity?: unknown; tax?: unknown;
 export const qtyLine = (r: { unit_price?: unknown; quantity?: unknown }) =>
   num(r.unit_price) * (num(r.quantity) || 1)
 
+// ESTOQUE É O QUE ESTÁ NA PRATELEIRA (10/11/2026, achado da AutoBook GZ28US; Márcio: «check if it's not already fixed, if not, fix it»).
+// O inventory BAIXA a quantidade quando a peça vai para um carro, e a linha da invoice (fornecedor STOCK, ou o próprio fornecedor
+// da compra) passa a carregar o custo como JOB_COST. Com qtyLine (quantity 0 → 1) a peça baixada continuava valendo unit_price no
+// STOCK e contava DUAS VEZES no DRE/DFC/Balanço (ex. correia Gates Titan #23173: inventory e93a7713 qty 0 + linha da US.022.2).
+// Aqui quantity 0 = 0; vazio/nulo continua 1 (linha antiga sem quantidade). Só os RELATÓRIOS: as auditorias contra o banco
+// (auditPayer/auditWires/auditBucketOrders) seguem com o valor da compra.
+export const stockLine = (r: { unit_price?: unknown; quantity?: unknown }) => {
+  const q = r.quantity == null || r.quantity === '' ? 1 : num(r.quantity)
+  return num(r.unit_price) * q
+}
+
 // COMPRAS A ATRIBUIR (AUTO-BOOK fase B, 4/set/2026): conta de suspensão. O banco
 // pagou, o dono ainda não foi dito. Mora numa pseudo-invoice origin BUCKET; aqui
 // ela sai de `invoices` e as linhas dela vão pra `bucket`: fora de TODA margem por
@@ -158,7 +169,7 @@ export async function loadFinancials(): Promise<FinData> {
   const goods = tira('assets', goodsAll, qtyLine)
   const goodExpenses = tira('assets_expenses', goodExpensesAll, (r: any) => num(r.amount))
   const inputs = tira('inputs', inputsAll, qtyLine)
-  const inventory = tira('inventory', inventoryAll, qtyLine)
+  const inventory = tira('inventory', inventoryAll, stockLine)
 
   // A pseudo-invoice A ATRIBUIR (origin BUCKET) sai do dataset: as linhas dela
   // viram `bucket` e nunca entram em invExpenses (realIds não a contém).
@@ -225,7 +236,7 @@ export function brAccount(d: FinData) {
     }
   }
   scan(d.invExpenses, expLine); scan(d.goods, qtyLine); scan(d.goodExpenses, r => num(r.amount))
-  scan(d.inputs, qtyLine); scan(d.inventory, qtyLine)
+  scan(d.inputs, qtyLine); scan(d.inventory, stockLine)
   scan(d.fixedExpenses, r => num(r.amount)); scan(d.expenses, r => num(r.amount))
   return { gotIncome, usPaidBr, got, paid, net: got - paid, blind, blindN }
 }
@@ -453,8 +464,8 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   }
   for (const s of d.inventory)
     if (s.source_type === 'PURCHASED') {
-      push(s.payment_date, 'INVEST', 'STOCK', -qtyLine(s), 'STOCK', s.description || '', '/inventory')
-      fund(s, s.payment_date, qtyLine(s), s.description || '')
+      push(s.payment_date, 'INVEST', 'STOCK', -stockLine(s), 'STOCK', s.description || '', '/inventory')
+      fund(s, s.payment_date, stockLine(s), s.description || '')
     }
 
   // Fase 2 — livros: aporte/retirada de sócio e eventos de empréstimo.
@@ -531,6 +542,6 @@ export function unpaidTotals(d: FinData) {
   const purchases = d.goods.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + qtyLine(g), 0)
     + d.goodExpenses.filter(g => !okDate(g.payment_date)).reduce((s, g) => s + num(g.amount), 0)
     + d.inputs.filter(x => !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
-    + d.inventory.filter(x => x.source_type === 'PURCHASED' && !okDate(x.payment_date)).reduce((s, x) => s + qtyLine(x), 0)
+    + d.inventory.filter(x => x.source_type === 'PURCHASED' && !okDate(x.payment_date)).reduce((s, x) => s + stockLine(x), 0)
   return { inv, fixed, staff, purchases, scheduled, total: inv + fixed + staff + purchases }
 }

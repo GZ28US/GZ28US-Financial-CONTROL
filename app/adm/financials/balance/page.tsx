@@ -13,7 +13,7 @@ import { useEffect, useMemo, useState } from 'react'
 import Header from '@/components/Header'
 import FinBadge from '@/components/FinBadge'
 import { BASE_PATH } from '@/lib/utils'
-import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
+import { loadFinancials, invoiceTotals, rideScope, ledgerTotals, qtyLine, stockLine, expLine, unpaidTotals, isCarLine, fleetDepreciation, CAP_FLOOR, FinData } from '@/lib/financials'
 import { countsOnUsSide, type CrossingBalance } from '@/lib/crossingBalance'
 import { sessionHeaders } from '@/lib/sessionHeaders'
 import { downloadStatementPdf } from '@/lib/statementPdf'
@@ -118,8 +118,8 @@ export default function BalancePage() {
     // de verdade continua em «Empréstimos e financiamentos», pelo LEDGERS — é lá que moram os do Heraldo.
     const brNet: number | null = cx.state === 'ok' ? cx.data.brOwesUs : null
 
-    const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + qtyLine(r), 0)
-    const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + qtyLine(r), 0)
+    const stockPurch = d.inventory.filter(s => s.source_type === 'PURCHASED').reduce((s, r) => s + stockLine(r), 0)
+    const stockDon = d.inventory.filter(s => s.source_type === 'DONATED').reduce((s, r) => s + stockLine(r), 0)
     const equip = d.goods.filter(g => qtyLine(g) >= CAP_FLOOR).reduce((s, g) => s + qtyLine(g), 0)
       + d.goodExpenses.filter(g => (parseFloat(g.amount) || 0) >= CAP_FLOOR).reduce((s, g) => s + (parseFloat(g.amount) || 0), 0)
     const unpaid = unpaidTotals(d)
