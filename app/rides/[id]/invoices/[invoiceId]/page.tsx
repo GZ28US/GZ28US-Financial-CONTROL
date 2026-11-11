@@ -689,7 +689,7 @@ export default function ViewInvoicePage() {
                 <div className="pi-company-name">GZ28 V8 SpeedShop USA LLC</div>
                 <div className="pi-company-sub">11320 Space Blvd, 32837, Orlando / FL</div>
                 <div className="pi-company-sub">PHONE: (321) 315.0973 · EMAIL: gz28us@hotmail.com</div>
-                <div className="pi-company-sub">IG: @gz28us / @gz28br · FB: Dema De Maria</div>
+                <div className="pi-company-sub">IG: @gz28us · FB: Dema De Maria</div>
               </div>
               <div className="pi-inv-box">
                 <div className="pi-inv-label">{invoice.is_quote ? T.quoteNo : T.invoiceNo}</div>

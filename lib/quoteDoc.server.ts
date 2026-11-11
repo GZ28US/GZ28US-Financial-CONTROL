@@ -28,7 +28,7 @@ export const COMPANY = {
   address: '11320 Space Blvd, 32837, Orlando / FL',                 // D-03: exactly what the printed invoice shows today
   phone: '(321) 315.0973',
   email: 'gz28us@hotmail.com',
-  social: 'IG: @gz28us / @gz28br · FB: Dema De Maria',
+  social: 'IG: @gz28us · FB: Dema De Maria',
   zelle: 'gz28us@hotmail.com',
 }
 

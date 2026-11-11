@@ -85,7 +85,7 @@ function kit(pdf: jsPDF) {
 function header(pdf: jsPDF, k: ReturnType<typeof kit>, o: { company: any; label: string; number: string; lines: string[]; us: boolean }): number {
   const y0 = M, logoW = px(156), logoH = logoW * LOGO_GZ28_JPEG.h / LOGO_GZ28_JPEG.w
   const subs = [o.company?.address || '', `PHONE: ${o.company?.phone || ''} · EMAIL: ${o.company?.email || ''}`]
-  if (o.us) subs.push('IG: @gz28us / @gz28br · FB: Dema De Maria')
+  if (o.us) subs.push('IG: @gz28us · FB: Dema De Maria')
   const nameH = px(13) * 1.25, subH = px(8) * 1.5
   const midH = nameH + px(2) + subs.length * subH
   let numSize = px(20); while (k.width(o.number, numSize, true) > px(156) + px(40) && numSize > px(12)) numSize -= 0.5
@@ -257,7 +257,7 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
   const inst = d.installments || []
   if (inst.length) {
     y = secTitle(pdf, k, y, T.plan)
-    const dueOf = (i: any) => i.due_date ? fmtDay(i.due_date, lang) : i.due_rule === 'NET_DAYS' && i.net_days != null ? T.net(Number(i.net_days)) : '-'
+    const dueOf = (i: any) => i.due_date ? fmtDay(i.due_date, lang) : i.due_rule === 'NET_DAYS' && i.net_days != null ? T.net(Number(i.net_days)) : ['ON_APPROVAL', 'ON_ARRIVAL', 'ON_CONCLUSION'].includes(i.due_rule) ? t(lang, 'due.' + i.due_rule) : '-'
     const body: any[] = inst.map((i: any) => [cell(String(i.seq)), cell(i.label_text || i.label_key), cell(dueOf(i)),
       cell(moneyCents(i.amount_cents, lang) + (o.incomesPaid?.[i.seq] ? ` · ${t(lang, 'paid')}` : ''), R)])
     const sum = inst.reduce((s: number, i: any) => s + (Number(i.amount_cents) || 0), 0)

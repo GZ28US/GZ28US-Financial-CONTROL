@@ -110,7 +110,7 @@ export default function PaperDoc({ doc, plan, lang, isInvoice }: { doc: any; pla
       <td className="r">{l.display === 'price' ? money(l.unit_price, lang) : zero(l)}</td><td className="r">{l.quantity || 1}</td><td className="r">{shown(l)}</td></tr>)
   }
   const itemsTotal = Number(tot.parts ?? sum(items)), servicesTotal = Number(tot.services ?? sum(services))
-  const dueOf = (p: any) => p.due_date ? fmtDay(p.due_date, lang) : p.due_rule === 'NET_DAYS' && p.net_days != null ? T.net(Number(p.net_days)) : '—'
+  const dueOf = (p: any) => p.due_date ? fmtDay(p.due_date, lang) : p.due_rule === 'NET_DAYS' && p.net_days != null ? T.net(Number(p.net_days)) : ['ON_APPROVAL', 'ON_ARRIVAL', 'ON_CONCLUSION'].includes(p.due_rule) ? t(lang, 'due.' + p.due_rule) : '—'
 
   return (
     <Scaled>
@@ -124,7 +124,7 @@ export default function PaperDoc({ doc, plan, lang, isInvoice }: { doc: any; pla
               <div className="pi-company-name">{doc.company?.name || 'GZ28 V8 SpeedShop USA LLC'}</div>
               <div className="pi-company-sub">{doc.company?.address}</div>
               <div className="pi-company-sub">PHONE: {doc.company?.phone} · EMAIL: {doc.company?.email}</div>
-              {us && <div className="pi-company-sub">IG: @gz28us / @gz28br · FB: Dema De Maria</div>}
+              {us && <div className="pi-company-sub">IG: @gz28us · FB: Dema De Maria</div>}
             </div>
             <div className="pi-inv-box">
               <div className="pi-inv-label">{isInvoice ? T.invoiceNo : T.quoteNo}</div>
