@@ -38,7 +38,7 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
   // M4 switchboard: the deposit's messages decide by their keys (all OFF → NOTIFY_SKIPPED events, nothing sent)
   // 11/11/2026: a hire born at the SIGNATURE has no money yet — the deposit's messages wait for the payment (afterPayment below).
   if (!hire.signed) try { const { notifyAll } = await import('./notify.server'); await notifyAll(db, ['notify.client.deposit_received', 'notify.reports.deposit_received'], { invoiceId, attemptId: hire.attempt_id || null }) } catch (e) { console.error('[hire notify]', (e as Error).message) }
-  if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '3b-br-mirror', '4-seed-pack', '5-dropbox-docs']) if (want(s)) await skip(s); return }
+  if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '2s-shopping-folder', '3b-br-mirror', '4-seed-pack', '5-dropbox-docs']) if (want(s)) await skip(s); return }
   if (ride && newCode && want('1-ride-folder')) {
     // create also syncs the car's e-mail folders (ride-folder → syncMailFolder → ensureRideMailFolders) = step 3
     await step(db, invoiceId, '1-ride-folder', () => post('/api/ride-folder', { action: 'create', zone: 'US', code: newCode, name: ride.project_name || '' }))
@@ -72,6 +72,27 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
         await br.from('invoices').update({ invoice_code: newCode + String(b.invoice_code).slice(hire.old_code.length) }).eq('id', b.id)
       }
       return `BR ride ${hire.old_code} → ${newCode} (Dropbox BR folder: rename by the renumber route if it exists)`
+    })
+  }
+  // 2s (11/11/2026): a SHOPPING invoice (no car) lives in «GZ28US Shopping/<client>/<code>» — folder, signed copy, deposit receipt.
+  if (!ride && (want('2s-shopping-folder') || want('5-dropbox-docs'))) {
+    await step(db, invoiceId, '2s-shopping-folder', async () => {
+      const { loadDocState } = await import('./quoteDoc.server')
+      const { clientRevisionPdf, attemptReceiptPdf } = await import('./docFiles.server')
+      const s = await loadDocState(db, invoiceId)
+      if (!s) throw new Error('document not found')
+      const clientName = String(s.bundle.client?.name || '').trim()
+      if (!clientName) throw new Error('client has no name')
+      const code = String(s.bundle.invoice.invoice_code || '')
+      const base = { action: 'shopping-folder', zone: 'US', code, clientName, oldInvoiceCode: hire.invoice_code_before || undefined }
+      const out = [await post('/api/ride-folder', base)]
+      const files: { filename: string; buf: Buffer }[] = []
+      const signed = await clientRevisionPdf(db, s)
+      if (signed) files.push({ filename: `${code} ${clientName} - Quote rev ${s.live?.seq ?? ''} signed.pdf`.replace(/\s+/g, ' '), buf: signed.buf })
+      const paidAttempt = s.attempts.find(a => a.status === 'SUCCEEDED' && a.id === hire.attempt_id) || s.attempts.find(a => a.status === 'SUCCEEDED')
+      if (paidAttempt) { const rc = await attemptReceiptPdf(db, s, paidAttempt.id); if (rc) files.push({ filename: `${code} ${clientName} - Deposit receipt.pdf`.replace(/\s+/g, ' '), buf: rc.buf }) }
+      for (const f of files) await post('/api/ride-folder', { ...base, oldInvoiceCode: undefined, filename: f.filename, contentBase64: f.buf.toString('base64') })
+      return out[0] + (files.length ? ' · ' + files.map(f => f.filename).join(' · ') : '')
     })
   }
   if (want('4-seed-pack')) await step(db, invoiceId, '4-seed-pack', () => post('/api/performance/seed-pack', { invoiceId }))

@@ -164,12 +164,45 @@ export async function POST(req: NextRequest) {
     const action = body.action
     const code = sanitize(String(body.code || body.newCode || ''))
     const name = sanitize(String(body.name || ''))
-    if ((!code && action !== 'invoice-receipts') || !['create', 'rename', 'rename-file', 'retag', 'retag-os', 'upload', 'find', 'mirror', 'invoice-folder', 'invoice-receipts'].includes(action) || (!zone && action !== 'mirror')) {
+    if ((!code && action !== 'invoice-receipts') || !['create', 'rename', 'rename-file', 'retag', 'retag-os', 'upload', 'find', 'mirror', 'invoice-folder', 'invoice-receipts', 'shopping-folder'].includes(action) || (!zone && action !== 'mirror')) {
       return NextResponse.json({ error: 'Bad request: need action create|rename|rename-file|retag|retag-os|upload|find|mirror, zone US|BR (mirror: fromZone/toZone), code/newCode.' }, { status: 400 })
     }
     const root = zone ? ROOTS[zone] : ''
     const target = `${code}${name ? ' - ' + name : ''}`
     const token = await dbxAccessToken()
+
+    // shopping-folder (11/11/2026 — AutoBook's finding: hiring a ride-less quote created no folder). A SHOPPING INVOICE lives in
+    // «GZ28US Shopping/<client>/<invoice code>» (memory shopping-invoices-folder). `code` = the invoice code; an old-code folder
+    // of the same client (the quote's) is renamed instead of duplicated; an optional file goes inside.
+    if (action === 'shopping-folder') {
+      if (zone !== 'US') return NextResponse.json({ error: 'shopping-folder is US only' }, { status: 400 })
+      const client = sanitize(String(body.clientName || ''))
+      if (!client) return NextResponse.json({ error: 'Bad request: shopping-folder needs clientName.' }, { status: 400 })
+      const base = `/001 - GZ28US/GZ28US Shopping/${client}`
+      await dbx(token, 'files/create_folder_v2', { path: base, autorename: false })   // conflict = already there
+      const old = sanitize(String(body.oldInvoiceCode || ''))
+      let result = 'created'
+      if (old && old !== code) {
+        const lista = await dbx(token, 'files/list_folder', { path: base, recursive: false, limit: 2000 })
+        const names = ((lista.data?.entries || []) as any[]).filter(e => e['.tag'] === 'folder').map(e => String(e.name))
+        if (names.includes(old) && !names.includes(code)) {
+          const mv = await dbx(token, 'files/move_v2', { from_path: `${base}/${old}`, to_path: `${base}/${code}`, autorename: false })
+          if (mv.ok) result = 'renamed'
+        }
+      }
+      if (result !== 'renamed') {
+        const c = await dbx(token, 'files/create_folder_v2', { path: `${base}/${code}`, autorename: false })
+        if (!c.ok && !c.text.includes('conflict')) return NextResponse.json({ error: 'shopping folder create failed: ' + c.text.slice(0, 200) }, { status: 502 })
+        if (!c.ok) result = 'already-exists'
+      }
+      const filename = sanitize(String(body.filename || '')), b64 = String(body.contentBase64 || '')
+      if (filename && b64) {
+        const up = await dbxUpload(token, `${base}/${code}/${filename}`, Buffer.from(b64, 'base64'))
+        if (!up.ok) return NextResponse.json({ error: 'upload failed: ' + up.text.slice(0, 200) }, { status: 502 })
+        return NextResponse.json({ ok: true, result, uploaded: filename, folder: `${client}/${code}` })
+      }
+      return NextResponse.json({ ok: true, result, folder: `${client}/${code}` })
+    }
 
     // mirror: server-side copy of every file in one zone's ride subfolder into the
     // other zone's same-code ride folder (created if missing). Used when a GZ28US
