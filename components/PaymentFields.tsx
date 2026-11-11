@@ -36,7 +36,9 @@ export const methodsFor = (paidTo: string | null | undefined): readonly string[]
 // ficar em outra área do app"*. Nenhuma linha do banco usava nenhum dos quatro.
 // Valor legado fora desta lista continua aparecendo no seletor como opção-fantasma
 // (logo abaixo, no <select>) — a tela nunca esconde o que está gravado.
-export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR'] as const
+// + BETO (Márcio, 10/11/2026: «sempre que tiver PAID BY BETO é aporte dele»): a «outra área» chegou — é o fluxo dos SÓCIOS.
+// PAID BY BETO = aporte de capital do sócio, derivado da linha (lib/financials partnerContributions); nunca conta corrente BR×US.
+export const PAID_FROM_OPTIONS = ['GZ28US', 'GZ28BR', 'BETO'] as const
 export const PAID_TO_OPTIONS = ['GZ28US', 'GZ28BR'] as const
 
 // ── QUEM PAGA E QUEM RECEBE, TABELA POR TABELA (Márcio, 11/set/2026) ─────────

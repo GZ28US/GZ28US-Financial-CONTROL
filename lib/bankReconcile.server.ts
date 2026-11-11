@@ -314,7 +314,8 @@ export async function candidatePool(db: any): Promise<Pool> {
   // Quem pagou por fora da Regions nunca casa com o extrato — e desde 11/set só existe
 // um pagador de fora: a GZ28BR. Sócio (BETO/HERALDO/RAFA) e CLIENT saíram do
 // vocabulário do app US sem deixar linha, então saíram deste corte junto.
-const brPaid = (r: any) => String(r.paid_from || '') === 'GZ28BR' || r.paid_to === 'GZ28BR'
+// + BETO (10/11/2026): PAID BY BETO é aporte do sócio, pago do bolso dele — também nunca casa com o extrato.
+const brPaid = (r: any) => ['GZ28BR', 'BETO'].includes(String(r.paid_from || '')) || r.paid_to === 'GZ28BR'
   const future = (d: string | null) => !!d && d.slice(0, 10) > today
   // Valor negativo no app = estorno/crédito: vai pro pool OPOSTO com o valor absoluto.
   const push = (arr: Cand[], c: Cand) => {
@@ -1295,7 +1296,7 @@ export async function brPaidAmong(db: any, records: Member[]): Promise<string> {
   for (const [t, ids] of byTable) {
     const { data, error } = await db.from(t).select(PAYER_TO_TABLES.has(t) ? 'id, paid_to' : 'id, paid_from, paid_to').in('id', ids)
     if (error) throw new Error(t + ': ' + error.message)
-    const hit = (data || []).find((r: any) => String(r.paid_to || '') === 'GZ28BR' || (!PAYER_TO_TABLES.has(t) && String(r.paid_from || '') === 'GZ28BR'))
+    const hit = (data || []).find((r: any) => String(r.paid_to || '') === 'GZ28BR' || (!PAYER_TO_TABLES.has(t) && ['GZ28BR', 'BETO'].includes(String(r.paid_from || ''))))
     if (hit) return t + ':' + hit.id
   }
   return ''
@@ -1501,7 +1502,7 @@ export async function assessmentParentFor(db: any, l: any): Promise<AssessmentHo
   const p = parents[0]
   const t = tabelaAtual(String(p.matched_table || ''))
   if (p.match_status !== 'MATCHED' || !p.matched_id || !['invoice_expenses', 'staff_expenses', 'fixed_cost_expenses'].includes(t)) return null
-  const brPaidRow = (r: any) => String(r.paid_from || '') === 'GZ28BR' || String(r.paid_to || '') === 'GZ28BR'
+  const brPaidRow = (r: any) => ['GZ28BR', 'BETO'].includes(String(r.paid_from || '')) || String(r.paid_to || '') === 'GZ28BR'
   if (t === 'invoice_expenses') {
     const { data: row } = await db.from('invoice_expenses').select('id, invoice_id, item, supplier, paid_from, paid_to').eq('id', p.matched_id).maybeSingle()
     if (!row || brPaidRow(row)) return null

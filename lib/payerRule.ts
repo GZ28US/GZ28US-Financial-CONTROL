@@ -50,7 +50,7 @@ export const fixedCostPayerTable = (costType: string | null | undefined): PayerT
 
 const blank = (v: unknown) => !String(v ?? '').trim()
 // O whoPaid (auditPayer/closeScore) só lê do SOURCE os valores GZ28US/GZ28BR/REGIONS; texto de cartão («Visa ••••7666») não é pagador.
-const isOtherPayerSource = (v: unknown) => String(v ?? '').trim().toUpperCase() === 'GZ28BR'
+const isOtherPayerSource = (v: unknown) => ['GZ28BR', 'BETO'].includes(String(v ?? '').trim().toUpperCase())   // + BETO: aporte do sócio (10/11/2026)
 
 // ESCONDIDO GRAVA — na linha nova, e na hora em que o pagamento nasce; nunca por cima.
 // `before` = a linha como estava ANTES deste salvamento (null = linha nova).

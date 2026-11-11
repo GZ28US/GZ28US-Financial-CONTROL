@@ -341,7 +341,7 @@ export async function huntReceipts(db: any, opts: { deadlineMs: number; maxScans
         // Linha no balde: a linha do balde vira a do carro (mesma linha, invoice nova); supplies/ativo = linha nova e o balde sai.
         if (!bucketId || line.matched_table !== 'invoice_expenses') throw new Error('balde indisponível')
         const { data: brow } = await db.from('invoice_expenses').select('*').eq('id', line.matched_id).maybeSingle()
-        if (!brow || brow.invoice_id !== bucketId || !String(brow.item || '').includes(MARKER_BUCKET) || String(brow.paid_from || '') === 'GZ28BR') throw new Error('linha do balde mudou')
+        if (!brow || brow.invoice_id !== bucketId || !String(brow.item || '').includes(MARKER_BUCKET) || ['GZ28BR', 'BETO'].includes(String(brow.paid_from || ''))) throw new Error('linha do balde mudou')
         const newTable: string = dest.table
         let newId = String(brow.id)
         if (dest.table === 'invoice_expenses') {

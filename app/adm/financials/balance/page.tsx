@@ -317,7 +317,7 @@ export default function BalancePage() {
           <div className="border border-gray-800 rounded-2xl overflow-hidden">
             <div className="px-4 py-3 bg-gray-900 font-bold text-lg">PATRIMÔNIO LÍQUIDO</div>
             {m.lt
-              ? <Row label="Capital integralizado" value={m.lt.contributions} chip={<Chip kind="ok" label="LEDGERS" />} note="aportes lançados no livro de capital" />
+              ? <Row label="Capital integralizado" value={m.lt.contributions} chip={<Chip kind="ok" label="LEDGERS" />} note={m.lt.partnerInKind ? `aportes do livro de capital + ${usd(m.lt.partnerInKind)} em espécie (PAID BY BETO)` : 'aportes lançados no livro de capital'} />
               : <Row label="Capital integralizado" value={null} chip={<Chip kind="gap" label="G2" />} note="rode a migration e lance os aportes em LEDGERS" />}
             <Row label="Retiradas dos sócios" value={-(m.draws + (m.lt ? m.lt.capDraws : 0))} chip={<Chip kind="ok" label="AO VIVO" />} note="retiradas formais do livro LEDGERS — o dia a dia pessoal dos sócios é custo de equipe (decisão Marcio+Beto, 26/ago)" />
             <Row label="Resultado acumulado + não lançado" value={m.residual} chip={<Chip kind="dec" label="RESIDUAL" />} note="ativo − passivo − capital líquido; converge pro resultado real conforme os livros enchem" />

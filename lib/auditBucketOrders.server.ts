@@ -71,7 +71,7 @@ export const WINDOW_DAYS = 10            // data da linha humana × data postada
 export const AUTH_LAG_MAX_DAYS = 10      // autorização só vale se vier 0 a 10 dias antes da postada
 export const REFUND_WINDOW_DAYS = 30     // cobrança → entrada igual do mesmo comerciante (mesmo dia ou depois)
 const SUBSET_MIN = 2, SUBSET_MAX = 6, SUBSET_GROUP_MAX = 8, PART_MAX = 6
-const BR_PAID = new Set(['GZ28BR'])   // a régua do candidatePool (brPaid, :176); sócio e cliente saíram do vocabulário em 11/set
+const BR_PAID = new Set(['GZ28BR', 'BETO'])   // a régua do candidatePool (brPaid, :176); sócio e cliente saíram do vocabulário em 11/set
 
 type Via = 'PEDIDO' | 'PEDIDO_PARTE' | 'DIA' | 'DIA_PARTE'
 const VIA_RANK: Record<Via, number> = { PEDIDO: 0, PEDIDO_PARTE: 1, DIA: 2, DIA_PARTE: 3 }

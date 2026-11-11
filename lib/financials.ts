@@ -207,7 +207,13 @@ export async function loadFinancials(): Promise<FinData> {
 // RAFA/BETO/HERALDO — sócio que banca conta da LLC vai morar em outra área do app, quando existir; hoje não
 // existe. Nenhuma linha se perdeu: ZERO em paid_from, paid_to e source de TODAS as tabelas de dinheiro, e
 // ZERO com source GZ28BR/RAFA e paid_from vazio (medido pela REST em 11/set) — o apelido RAFA nunca foi usado.
-export const PAYERS = ['GZ28US', 'GZ28BR'] as const
+// SÓCIO VOLTOU, COM SENTIDO NOVO (Márcio, 10/11/2026: «sempre que tiver PAID BY BETO é aporte dele» · «nada a ver com o flow US vs BR,
+// este é outro flow, dos sócios»). PAID BY BETO = o sócio pagou a conta do bolso: a despesa é nossa (DRE igual), o dinheiro nunca passou
+// na Regions, e o valor é APORTE DE CAPITAL dele — derivado DA PRÓPRIA LINHA (partnerContributions), sem par em capital_events, para
+// não existir jeito de contar duas vezes nem de esquecer o par. Fora da conta corrente GZ28BR.
+export const PARTNER_PAYER = 'BETO'
+export const PARTNER_MEMBER = 'Humberto Gonçalves'
+export const PAYERS = ['GZ28US', 'GZ28BR', 'BETO'] as const
 export function whoPaid(r: { paid_from?: string | null; source?: string | null }): string | null {
   const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; return (PAYERS as readonly string[]).includes(s) ? s : null }
   return norm(r.paid_from) || norm(r.source)
@@ -230,6 +236,7 @@ export function brAccount(d: FinData) {
     for (const r of rows) {
       if (!r.payment_date) continue
       const by = whoPaid(r) || '', bill = String(r.paid_to || ''); const a = amt(r)
+      if (by === PARTNER_PAYER) continue   // aporte do sócio: outro fluxo, nunca conta corrente BR×US (e não é cego: tem pagador)
       if (bill === GZ && by !== GZ) { got += a; usPaidBr += a }
       else if (by === GZ && bill !== GZ) paid += a
       if (!by) { blind += a; blindN++ }
@@ -367,6 +374,7 @@ export function buildCashEvents(d: FinData): CashEvent[] {
   // RAFA saíram em 11/set com o resto do vocabulário — zero eventos nos dois, sempre.
   const FUNDERS: Record<string, { line: string; who: string }> = {
     GZ28BR: { line: 'FUND_BR', who: 'GZ28BR (conta corrente)' },
+    BETO: { line: 'CAPITAL', who: 'APORTE DO SÓCIO · PAID BY BETO' },   // 10/11/2026: saída operacional + aporte espelhado = zero no caixa
   }
   const fund = (row: { paid_from?: string | null; source?: string | null }, date: string | null | undefined, amount: number, label: string) => {
     const f = FUNDERS[String(whoPaid(row) || '').trim().toUpperCase()]   // FIN 0.15.0: a mesma régua do Balanço e do GZ-FLOW (SOURCE legado conta)
@@ -490,9 +498,25 @@ export function buildCashEvents(d: FinData): CashEvent[] {
 // Totais dos livros da Fase 2 (null enquanto a migration não rodou):
 // capital, retiradas formais, saldo devedor de empréstimos, juros pagos e o
 // último saldo de caixa POR CONTA (o Balanço soma; a conciliação compara).
+// APORTE EM ESPÉCIE DO SÓCIO = toda linha PAGA com PAID BY BETO, nas sete tabelas de gasto (a mesma varredura do brAccount).
+export function partnerContributions(d: FinData) {
+  const rows: { table: string; id: string; date: string; amount: number; label: string }[] = []
+  const scan = (table: string, list: any[], amt: (r: any) => number, lab: (r: any) => string) => {
+    for (const r of list) if (r.payment_date && whoPaid(r) === PARTNER_PAYER) rows.push({ table, id: r.id, date: String(r.payment_date).slice(0, 10), amount: amt(r), label: lab(r) })
+  }
+  const desc = (r: any) => String(r.description || r.type || '')
+  scan('invoice_expenses', d.invExpenses, expLine, r => [invoiceMeta(d, r.invoice_id).code, r.item].filter(Boolean).join(' · '))
+  scan('assets', d.goods, qtyLine, desc); scan('assets_expenses', d.goodExpenses, r => num(r.amount), desc)
+  scan('inputs', d.inputs, qtyLine, desc); scan('inventory', d.inventory.filter(s => s.source_type === 'PURCHASED'), stockLine, desc)
+  scan('fixed_cost_expenses', d.fixedExpenses, r => num(r.amount), desc); scan('staff_expenses', d.expenses, r => num(r.amount), desc)
+  rows.sort((a, b) => b.date.localeCompare(a.date))
+  return { rows, total: rows.reduce((s, r) => s + r.amount, 0) }
+}
+
 export function ledgerTotals(d: FinData) {
   if (!d.ledgersReady) return null
-  const contributions = d.capitalEvents!.filter((c: any) => c.kind === 'CONTRIBUTION').reduce((s: number, c: any) => s + num(c.amount), 0)
+  const partnerInKind = partnerContributions(d).total
+  const contributions = d.capitalEvents!.filter((c: any) => c.kind === 'CONTRIBUTION').reduce((s: number, c: any) => s + num(c.amount), 0) + partnerInKind
   const capDraws = d.capitalEvents!.filter((c: any) => c.kind === 'DRAW').reduce((s: number, c: any) => s + num(c.amount), 0)
   let loanBalance = 0, interestPaid = 0
   for (const e of d.financingEvents!) {
@@ -508,7 +532,7 @@ export function ledgerTotals(d: FinData) {
   const cashAccounts = [...latest.entries()].map(([account, v]) => ({ account, date: v.date, balance: v.balance }))
     .sort((a, b) => b.balance - a.balance)
   const cashTotal = cashAccounts.reduce((s, a) => s + a.balance, 0)
-  return { contributions, capDraws, loanBalance, interestPaid, cashAccounts, cashTotal }
+  return { contributions, partnerInKind, capDraws, loanBalance, interestPaid, cashAccounts, cashTotal }
 }
 
 // Data de reconhecimento de um invoice FECHADO (insight do Márcio, 20/ago):

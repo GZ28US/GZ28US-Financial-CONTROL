@@ -1064,7 +1064,7 @@ export async function POST(req: NextRequest) {
         const { data: row } = await db.from('invoice_expenses').select('*').eq('id', line.matched_id).maybeSingle()
         if (!row || row.invoice_id !== bucketId || String(row.purchase_group) !== String(line.id) || !String(row.item || '').includes(MARKER_BUCKET)) throw new Error('linha não está no balde — recarregue')
         // LEI DO PLAID (BL 1.7.0): a linha do balde nasce GZ28US; se alguém a marcou GZ28BR no editor, ela não sai do balde casada com a Regions.
-        if (String(row.paid_from || '') === 'GZ28BR' || String(row.paid_to || '') === 'GZ28BR') throw new Error('recusado: a linha do balde diz que quem pagou foi a GZ28BR — o que a GZ28BR paga nunca passa na Regions; corrija o pagador ou DESFAZER')
+        if (['GZ28BR', 'BETO'].includes(String(row.paid_from || '')) || String(row.paid_to || '') === 'GZ28BR') throw new Error('recusado: a linha do balde diz que quem pagou foi ' + (String(row.paid_from || '') === 'BETO' ? 'o BETO (aporte do sócio)' : 'a GZ28BR') + ' — isso nunca passa na Regions; corrija o pagador ou DESFAZER')
         const amt = Math.abs(num(line.amount))
         if (Math.abs(expLine(row) - amt) >= 0.011) throw new Error('valor da linha mudou (Plaid) — DESFAZER e deixe o motor recriar')
         const clean = String(row.item || '').replace(MARKER_BUCKET, '').trim()
@@ -1150,7 +1150,7 @@ export async function POST(req: NextRequest) {
           // ADOTA a agendada do mês (±20 d, ±50% ou ≤ $100) ou cria SINGLE paga.
           const { data: open } = await db.from('fixed_cost_expenses').select('id, expense_date, amount, description, paid_from, paid_to').eq('supplier_id', supplierId).is('payment_date', null).is('bank_transaction_id', null)
           // Agendada paga pela GZ28BR nunca é adotada pela Regions (BL 1.7.0 — a régua do sched/brPaid do pool): sobrescrever o pagador era casar registro da BR.
-          const near = (open || []).filter((a: any) => String(a.paid_from || '') !== 'GZ28BR' && String(a.paid_to || '') !== 'GZ28BR' && a.expense_date && Math.abs(signedDays(String(a.expense_date), String(line.date))) <= ADOPT_WINDOW_DAYS && Math.abs(num(a.amount) - amt) <= Math.max(100, 0.5 * num(a.amount)))
+          const near = (open || []).filter((a: any) => !['GZ28BR', 'BETO'].includes(String(a.paid_from || '')) && String(a.paid_to || '') !== 'GZ28BR' && a.expense_date && Math.abs(signedDays(String(a.expense_date), String(line.date))) <= ADOPT_WINDOW_DAYS && Math.abs(num(a.amount) - amt) <= Math.max(100, 0.5 * num(a.amount)))
             .sort((a: any, x: any) => Math.abs(signedDays(String(a.expense_date), String(line.date))) - Math.abs(signedDays(String(x.expense_date), String(line.date))))
           let backfill: any[] | null = null
           if (near.length) {

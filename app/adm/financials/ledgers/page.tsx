@@ -15,6 +15,7 @@ import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatShortDate } from '@/lib/utils'
 import DatePicker from '@/components/DatePicker'
 import { PAYMENT_METHODS } from '@/components/PaymentFields'
+import { PARTNER_PAYER, PARTNER_MEMBER, expLine, qtyLine, stockLine } from '@/lib/financials'
 
 // Os 3 sócios da GZ28US (João, 26/ago): vocabulário fechado > texto livre.
 const PARTNERS = ['Dema', 'Beto', 'Heraldo'] as const
@@ -54,6 +55,9 @@ export default function LedgersPage() {
   const [financing, setFinancing] = useState<any[]>([])
   const [finEvents, setFinEvents] = useState<any[]>([])
   const [balances, setBalances] = useState<any[]>([])
+  // APORTE EM ESPÉCIE (Márcio, 10/11/2026: «sempre que tiver PAID BY BETO é aporte dele»): linhas PAGAS com PAID BY BETO nas sete
+  // tabelas de gasto. Só leitura — nasce e morre na própria despesa; não tem par em capital_events.
+  const [inKind, setInKind] = useState<{ key: string; date: string; amount: number; label: string }[]>([])
   const [saving, setSaving] = useState(false)
 
   // formulários
@@ -73,6 +77,14 @@ export default function LedgersPage() {
     ])
     if (c.error || f.error || e.error || b.error) { setReady(false); return }
     setCapital(c.data || []); setFinancing(f.data || []); setFinEvents(e.data || []); setBalances(b.data || [])
+    const num = (r: any) => parseFloat(r.amount) || 0
+    const T: [string, (r: any) => number, (r: any) => string][] = [
+      ['invoice_expenses', expLine, r => [r.item, r.supplier].filter(Boolean).join(' · ')], ['assets', qtyLine, r => r.description || ''], ['assets_expenses', num, r => r.description || ''],
+      ['inputs', qtyLine, r => r.description || ''], ['inventory', stockLine, r => r.description || ''], ['fixed_cost_expenses', num, r => r.description || ''], ['staff_expenses', num, r => r.description || r.type || ''],
+    ]
+    const got = await Promise.all(T.map(([t]) => supabase.from(t).select('*').eq('paid_from', PARTNER_PAYER).not('payment_date', 'is', null)))
+    const rows = got.flatMap((g, i) => (g.data || []).filter((r: any) => T[i][0] !== 'inventory' || r.source_type === 'PURCHASED').map((r: any) => ({ key: T[i][0] + ':' + r.id, date: String(r.payment_date).slice(0, 10), amount: T[i][1](r), label: T[i][2](r) })))
+    setInKind(rows.sort((a, b) => b.date.localeCompare(a.date)))
     setReady(true)
   }
 
@@ -162,6 +174,20 @@ export default function LedgersPage() {
                   <span className="flex-1 truncate">{c.member}{c.description ? ` — ${c.description}` : ''}{c.method ? ` · ${c.method}` : ''}</span>
                   <span className="text-xl font-bold tabular-nums whitespace-nowrap">{usd(n(c.amount))}</span>
                   <button onClick={() => del('capital_events', c.id)} className="text-gray-600 hover:text-red-400 font-bold text-lg px-1">✕</button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {inKind.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-hidden mb-2 mt-4">
+              <div className="px-5 py-3 text-sm text-gray-400">APORTE EM ESPÉCIE · PAID BY {PARTNER_PAYER} ({PARTNER_MEMBER}) — conta nossa que o sócio pagou do bolso. Vem da própria despesa; para mudar, mude o PAID BY da linha. Total {usd(inKind.reduce((s, r) => s + r.amount, 0))}</div>
+              {inKind.map(r => (
+                <div key={r.key} className="px-5 py-3 flex items-center gap-4 border-t border-gray-800">
+                  <span className="text-gray-400 text-sm w-24 shrink-0">{formatShortDate(r.date)}</span>
+                  <span className="px-3 py-1 rounded-full text-sm font-bold shrink-0 bg-emerald-950 text-emerald-400">APORTE</span>
+                  <span className="flex-1 truncate">{PARTNER_MEMBER} — {r.label}</span>
+                  <span className="text-xl font-bold tabular-nums whitespace-nowrap">{usd(r.amount)}</span>
                 </div>
               ))}
             </div>

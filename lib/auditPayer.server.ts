@@ -63,7 +63,7 @@ const RATIOS: { k: number; text: string }[] = [
 // e importa o cliente do browser; numa rota do App Router (camada RSC) o import vira referência de cliente e a chamada
 // explode («Attempted to call whoPaid() from the server»). O teste compara as duas, linha a linha, nas 7 tabelas.
 // São dois pagadores desde 11/set (CLIENT, RAFA, BETO e HERALDO saíram do app US; nenhuma linha os usava).
-const PAYERS = ['GZ28US', 'GZ28BR']
+const PAYERS = ['GZ28US', 'GZ28BR', 'BETO']   // BETO = aporte do sócio (10/11/2026); OTHER_PAYERS segue só a BR
 export function whoPaidOf(r: { paid_from?: string | null; source?: string | null }): string | null {
   const norm = (v: unknown) => { const s = String(v || '').trim().toUpperCase(); if (!s) return null; if (s === 'REGIONS') return 'GZ28US'; return PAYERS.includes(s) ? s : null }
   return norm(r.paid_from) || norm(r.source)

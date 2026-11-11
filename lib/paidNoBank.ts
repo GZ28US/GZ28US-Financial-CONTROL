@@ -74,7 +74,7 @@ export const orlandoDay = (ts: unknown): string => {
 // Quem pagou é a GZ28US? (renda: quem recebeu.) A régua de lib/payerRule decide onde o vazio é GZ28US escondido.
 export function payerIsHouse(table: PnbTable, r: any): boolean {
   if (table === 'invoice_incomes') return up(r.paid_to) === HOUSE_PAYER
-  if (up(r.paid_from) === 'GZ28BR' || up(r.paid_to) === 'GZ28BR') return false
+  if (up(r.paid_from) === 'GZ28BR' || up(r.paid_from) === 'BETO' || up(r.paid_to) === 'GZ28BR') return false   // BETO = aporte do sócio (10/11/2026)
   if (up(r.paid_from) === HOUSE_PAYER) return true
   const mode = (PAYER_RULE[table] as { paidFrom: string }).paidFrom
   return !up(r.paid_from) && (mode === 'house' || mode === 'house_choice')
