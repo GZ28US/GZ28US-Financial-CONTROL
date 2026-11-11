@@ -36,7 +36,8 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
     p_payload: { step: s, status: 'skipped', reason: 'test' } })
   const newCode = hire.new_code as string | null
   // M4 switchboard: the deposit's messages decide by their keys (all OFF → NOTIFY_SKIPPED events, nothing sent)
-  try { const { notifyAll } = await import('./notify.server'); await notifyAll(db, ['notify.client.deposit_received', 'notify.reports.deposit_received'], { invoiceId, attemptId: hire.attempt_id || null }) } catch (e) { console.error('[hire notify]', (e as Error).message) }
+  // 11/11/2026: a hire born at the SIGNATURE has no money yet — the deposit's messages wait for the payment (afterPayment below).
+  if (!hire.signed) try { const { notifyAll } = await import('./notify.server'); await notifyAll(db, ['notify.client.deposit_received', 'notify.reports.deposit_received'], { invoiceId, attemptId: hire.attempt_id || null }) } catch (e) { console.error('[hire notify]', (e as Error).message) }
   if (isTest) { for (const s of ['1-ride-folder', '2-invoice-folders', '3b-br-mirror', '4-seed-pack', '5-dropbox-docs']) if (want(s)) await skip(s); return }
   if (ride && newCode && want('1-ride-folder')) {
     // create also syncs the car's e-mail folders (ride-folder → syncMailFolder → ensureRideMailFolders) = step 3
@@ -94,3 +95,60 @@ export async function afterHire(invoiceId: string, hire: Record<string, any>, on
     })
   }
 }
+
+// ── THE APPROVAL HIRES (Márcio, 11/11/2026: «whenever a client signs/agree to a quote, the app should send me an email with this
+// report... the official report that the quote has been approved and hired. At this point, it must become a real invoice, with the
+// hiring date»). quote_approve() already hired inside its transaction (quote_hire_signed → event HIRED {by:'SIGNATURE'}); this runs
+// AFTER the response: the same consequences ladder (folders, BR mirror, pack, signed PDF in the car's folder) and the report e-mail.
+export const HIRE_REPORT_TO = 'gz28us@gmail.com'
+const escH = (s: unknown) => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!))
+
+export async function afterSign(invoiceId: string) {
+  const db = serviceDb()
+  const { data: ev } = await db.from('invoice_events').select('payload, at').eq('invoice_id', invoiceId).eq('kind', 'HIRED').order('at', { ascending: false }).limit(1)
+  const p = (ev?.[0]?.payload || null) as Record<string, any> | null
+  if (!p || p.by !== 'SIGNATURE') return                      // a change order, or a document that was already an invoice
+  await afterHire(invoiceId, { ...p, hired: true, signed: true }).catch(e => console.error('[sign ladder]', invoiceId, (e as Error)?.message || e))
+  await step(db, invoiceId, 'hired-report-mail', () => hiredReportMail(db, invoiceId, p, String(ev![0].at)))
+}
+
+// A payment on a document that is ALREADY an invoice (the deposit after a signature hire): the deposit's messages by their keys and
+// the receipt into the car's folder. The first installment only — what the hire ladder used to do when the money hired.
+export async function afterPayment(invoiceId: string, attemptId: string | null) {
+  const db = serviceDb()
+  try { const { notifyAll } = await import('./notify.server'); await notifyAll(db, ['notify.client.deposit_received', 'notify.reports.deposit_received'], { invoiceId, attemptId }) } catch (e) { console.error('[payment notify]', (e as Error).message) }
+  await afterHire(invoiceId, { signed: true, attempt_id: attemptId }, ['5-dropbox-docs'])
+}
+
+async function hiredReportMail(db: SupabaseClient, invoiceId: string, p: Record<string, any>, at: string): Promise<string> {
+  const { loadDocState } = await import('./quoteDoc.server')
+  const { clientRevisionPdf } = await import('./docFiles.server')
+  const { transport } = await import('./notifyTransport.server')
+  const s = await loadDocState(db, invoiceId)
+  if (!s) throw new Error('document not found')
+  const isTest = !!s.liveLink?.is_test || s.isTest
+  const rev = s.live, h = rev?.document?.header || {}, c = s.bundle.client || {}
+  const ap: Record<string, any> = s.approvalOnLive || s.approvals[s.approvals.length - 1] || {}
+  const usd = (n: number) => 'US$ ' + n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+  const when = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false }).format(new Date(ap.created_at || ap.signed_at || at)) + ' Orlando'
+  const code = String(s.bundle.invoice.invoice_code || p.invoice_code || '')
+  const before = String(p.invoice_code_before || p.old_code || '')
+  const plan = ((rev?.document?.installments || []) as any[]).map(i => `<tr><td style="padding:2px 14px 2px 0">${escH(i.seq)}. ${escH(i.label_text || i.label || '')}</td><td style="padding:2px 14px 2px 0;text-align:right"><b>${usd(Number(i.amount_cents) / 100)}</b></td><td style="padding:2px 0;color:#555">${escH(i.due_rule === 'DATE' ? i.due_date : String(i.due_rule || '').replace('ON_', 'on ').replace('_', ' ').toLowerCase())}</td></tr>`).join('')
+  const method = ap.method === 'CLIENT_ESIGN' ? 'e-signature on the link' : `recorded by ${ap.recorded_by || 'staff'} (${ap.method || '?'})${ap.note ? ' — ' + ap.note : ''}`
+  const row = (k: string, v: string) => `<tr><td style="padding:3px 14px 3px 0;color:#555">${k}</td><td style="padding:3px 0"><b>${v}</b></td></tr>`
+  const html = `<div style="font-family:Arial,Helvetica,sans-serif;color:#111;max-width:620px;line-height:1.5">` +
+    `<h2 style="margin:0 0 4px">${isTest ? '🧪 TEST · ' : ''}✅ QUOTE APPROVED &amp; HIRED</h2><p style="margin:0 0 16px;color:#555">Official report — the quote is now a real invoice.</p><table style="border-collapse:collapse">` +
+    row('Invoice', escH(code) + (before && before !== code ? ` <span style="color:#555;font-weight:normal">(was quote ${escH(before)})</span>` : '')) +
+    row('Client', escH(c.name || '') + (p.client_number ? ` <span style="color:#555;font-weight:normal">· client #${escH(p.client_number)}</span>` : '')) +
+    (h.car ? row('Car', escH(h.car)) : '') + (s.bundle.invoice.service ? row('Job', escH(s.bundle.invoice.service)) : '') +
+    row('Total', usd(Number(rev?.grand_total || 0))) + row('Approved by', escH(ap.signer_name || '')) + row('How', escH(method)) + row('Approved at', escH(when)) +
+    row('Hiring date', escH(p.hiring_date || s.bundle.invoice.hiring_date || '')) + row('Version', 'rev ' + escH(rev?.seq ?? '')) + '</table>' +
+    (plan ? `<h3 style="margin:20px 0 6px">Payment plan</h3><table style="border-collapse:collapse">${plan}</table>` : '') +
+    `<p style="margin:22px 0"><a href="${PUBLIC_DOC}/${invoiceId}">Open the document in the app</a></p><p style="font-size:12px;color:#666">The signed copy is attached as a PDF. No payment has been recorded by this report.</p></div>`
+  const pdf = await clientRevisionPdf(db, s).catch(() => null)
+  const err = await transport().email({ to: HIRE_REPORT_TO, subject: `${isTest ? 'TEST · ' : ''}✅ APPROVED & HIRED — ${code}${c.name ? ' · ' + c.name : ''}${h.car ? ' · ' + h.car : ''} · ${usd(Number(rev?.grand_total || 0))}`, html,
+    attachments: pdf ? [{ name: pdf.name, base64: pdf.buf.toString('base64') }] : [] })
+  if (err) throw new Error(err)
+  return 'sent to ' + HIRE_REPORT_TO + (pdf ? ' with ' + pdf.name : ' (no PDF)')
+}
+const PUBLIC_DOC = 'https://www.gz28us.com/ca/doc'

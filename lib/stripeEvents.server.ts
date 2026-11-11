@@ -156,6 +156,10 @@ export async function fulfillCheckout(db: SupabaseClient, sessionId: string, act
     if (r?.repeat) return { state: 'repeat', detail: r }
     if (r?.unbooked || (r?.anomaly && !r?.income_id)) return { state: 'anomaly', detail: r }
     if (r?.hired) { after(r, att.invoice_id) }
+    else if (Number(att.seq) === 1 && r?.income_id && !r?.repeat) {   // 11/11/2026: the document was hired at the signature — the deposit's messages and receipt run here
+      const run = () => import('./hire.server').then(m => m.afterPayment(att.invoice_id, att.id)).catch(e => console.error('[payment ladder]', att.invoice_id, e?.message || e))
+      try { nextAfter(run) } catch { void run() }
+    }
     return { state: 'booked', detail: r }
   }
   if (s.payment_status === 'unpaid' && att.status === 'OPEN' && (piStatus === 'processing' || piStatus === 'requires_action')) {

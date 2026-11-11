@@ -202,6 +202,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ action: st
       if (error) return /stale|not live|changed|already/i.test(error.message) ? err('err_stale', 409) : (console.error('[q sign]', error.message), err('err_generic', 500))
       if (otp?.ok) await otpConsume(supabaseOtpStore(db), link.id).catch(e => console.error('[q sign] otp consume', (e as Error).message))
       if (isCo) { const ap = await db.rpc('change_order_apply', { p_revision: s.live.id, p_actor: 'client' }); if (ap.error) console.error('[q sign] change_order_apply', ap.error.message) }
+      if (!isCo) { const inv1 = link.invoice_id; nextAfter(() => import('@/lib/hire.server').then(m => m.afterSign(inv1)).catch(e => console.error('[q sign hire]', e?.message || e))) }   // 11/11/2026: the approval hires — ladder + the report e-mail to the owner
       { const inv0 = link.invoice_id, rev0 = s.live.id; nextAfter(() => import('@/lib/notify.server').then(m => m.notifyAll(serviceDb(), ['notify.client.signed_copy', 'notify.reports.quote_signed'], { invoiceId: inv0, revisionId: rev0 })).catch(e => console.error('[q sign notify]', e?.message || e))) }   // M4 switchboard (keys OFF → NOTIFY_SKIPPED)
       const s2 = await loadDocState(db, link.invoice_id)
       const pay = await payModeOk(!!link.is_test)

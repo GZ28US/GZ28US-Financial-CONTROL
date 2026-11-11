@@ -212,6 +212,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
           p_signer_name: String(aa.signer_name).trim().slice(0, 80), p_signer_contact: body.sent_to || null, p_consents: { recorded: true }, p_attribution: {},
           p_method: aa.method, p_recorded_by: actor, p_ip: null, p_user_agent: null, p_note: String(aa.note).slice(0, 500), p_evidence_url: aa.evidence_url || null, p_signature_path: null })
         if (e2) return rpcErr('sent, but recording the approval failed: ' + e2.message)
+        await signLadder(id)
       }
       s = (await loadDocState(db, id))!
       const tok = await linkToken(db, id)
@@ -277,6 +278,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
         if (ap.error) return rpcErr(ap.error.message)
         return NextResponse.json({ ok: true, approval_id: data, applied: ap.data })
       }
+      await signLadder(id)
       return NextResponse.json({ ok: true, approval_id: data })
     }
     case 'deposit-manual': {
@@ -304,6 +306,7 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
             p_signer_name: String(ap.signer_name || s.bundle.client?.name || 'client').slice(0, 80), p_signer_contact: null, p_consents: { recorded: true }, p_attribution: {},
             p_method: ap.method, p_recorded_by: actor, p_ip: null, p_user_agent: null, p_note: String(ap.note).slice(0, 500), p_evidence_url: null, p_signature_path: null })
           if (error) return rpcErr(error.message)
+          await signLadder(id)
           s = (await loadDocState(db, id))!
         }
         seq = seq || 1
@@ -324,6 +327,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
         const { afterHire } = await import('@/lib/hire.server')
         const { after } = await import('next/server')
         after(() => afterHire(id, data as Record<string, any>).catch(e => console.error('[hire ladder]', id, e?.message || e)))
+      } else if (seq === 1 && (data as any)?.income_id && !(data as any)?.repeat) {
+        const attId = String((att as any).id)
+        const { afterPayment } = await import('@/lib/hire.server')
+        const { after } = await import('next/server')
+        after(() => afterPayment(id, attId).catch(e => console.error('[payment ladder]', id, e?.message || e)))
       }
       return NextResponse.json({ ok: true, result: data })
     }
@@ -350,3 +358,11 @@ async function handle(req: NextRequest, ctx: { params: Promise<{ id: string; act
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string; action: string }> }) { return handle(req, ctx, 'GET') }
 export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string; action: string }> }) { return handle(req, ctx, 'POST') }
+
+// 11/11/2026 — the approval hires (quote_approve → quote_hire_signed, same transaction): run the consequences ladder and the report
+// e-mail to the owner after the response. A change order / an already-hired document is a no-op inside afterSign.
+async function signLadder(invoiceId: string) {
+  const { afterSign } = await import('@/lib/hire.server')
+  const { after } = await import('next/server')
+  after(() => afterSign(invoiceId).catch(e => console.error('[sign ladder]', invoiceId, e?.message || e)))
+}
