@@ -58,7 +58,8 @@ export async function pollMeta(db: SupabaseClient): Promise<{ accounts: number; 
 
     // conversas: Messenger pasta a pasta + Instagram
     const conversas = async (conta: SocialRow, plataforma: 'FACEBOOK' | 'INSTAGRAM', pasta: string, minhaId: string) => {
-      const q: Record<string, string> = { platform: plataforma === 'FACEBOOK' ? 'messenger' : 'instagram', fields: MSG, limit: '25' }
+      // Instagram de conta grande recusa o pedido cheio («Please reduce the amount of data») — 13/11/2026, conta de 78,7k: pede menos por vez
+      const q: Record<string, string> = plataforma === 'FACEBOOK' ? { platform: 'messenger', fields: MSG, limit: '25' } : { platform: 'instagram', fields: MSG.replace('messages.limit(15)', 'messages.limit(5)'), limit: '8' }
       if (plataforma === 'FACEBOOK') q.folder = pasta
       const r = await graph(`${page.external_id}/conversations`, token, q)
       if (!r.ok) { out.errors.push(`${nome} · ${plataforma === 'FACEBOOK' ? 'messenger ' + pasta : 'instagram DMs'}: ${r.error}`); return }

@@ -112,7 +112,7 @@ async function call(what: string, row: SocialRow, rows: SocialRow[], token: stri
       ig_media: () => [`${row.external_id}/media`, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count', limit: '25' }],
       ig_comments: () => [`${p.id}/comments`, { fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp}', limit: '50' }],
       ig_insights: () => [`${row.external_id}/insights`, { metric: p.metric || 'reach,follower_count', period: p.period || 'day', ...(p.metric && /total_value|views|accounts_engaged|total_interactions|profile_views/.test(p.metric) ? { metric_type: 'total_value' } : {}) }],
-      ig_conversations: () => [`${pageOfIg}/conversations`, { platform: 'instagram', fields: MSG_FIELDS, limit: '25' }],
+      ig_conversations: () => [`${pageOfIg}/conversations`, { platform: 'instagram', fields: MSG_FIELDS.replace('messages.limit(10)', 'messages.limit(5)'), limit: '8' }],
       meta_businesses: () => ['me/businesses', { fields: 'id,name,verification_status' }],
       meta_ad_accounts: () => ['me/adaccounts', { fields: 'id,name,account_status,currency,amount_spent,business' }],
       meta_ads_insights: () => [`${p.id}/insights`, { level: 'campaign', fields: 'campaign_id,campaign_name,spend,impressions,reach,clicks,cpc,ctr,actions', ...(p.since || p.until ? {} : { date_preset: 'last_30d' }), time_increment: p.period === 'day' ? '1' : 'all_days', limit: '100' }],
