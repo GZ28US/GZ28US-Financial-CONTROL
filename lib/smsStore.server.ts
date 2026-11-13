@@ -25,19 +25,22 @@ export const smsChatId = (sender: string | null) => `${PREFIX}${sender || ''}`
 /** Remetente de uma conversa `sms:<remetente>`; null = SMS gravado sem remetente. */
 export const smsSenderOf = (chatId: string) => chatId.slice(PREFIX.length) || null
 
-export const SMS_NOTE = 'SMS/iMessage recebidos no iPhone US (atalho do iOS). Só o que CHEGA é capturado: o que o Márcio responde pelo iPhone não entra, então não há «última palavra dele» nem marca de processado para SMS.'
+export const SMS_NOTE = 'SMS/iMessage do iPhone US. Histórico dos dois sentidos importado do backup do iPhone até 11/11/2026; depois disso o atalho do iOS grava só o que CHEGA, então a «última palavra dele» pode estar faltando nas mensagens novas. Sem marca de processado para SMS.'
 
-export type SmsRow = { id: string; sender: string | null; body: string | null; received_at: string }
+// 12/11/2026: o histórico do backup do iPhone trouxe o que o Márcio MANDOU (from_me) — `sender` é a CONVERSA (o outro lado),
+// `author` é quem escreveu a mensagem recebida. O atalho do iOS segue gravando só o que chega.
+export type SmsRow = { id: string; sender: string | null; body: string | null; received_at: string; from_me?: boolean | null; author?: string | null }
 
 export type SmsThread = {
   chatId: string
   sender: string | null
   lastAt: string
   lastBody: string
+  lastFromMe: boolean
   count: number
 }
 
-const COLS = 'id, sender, body, received_at'
+const COLS = 'id, sender, body, received_at, from_me, author'
 
 // O SMS no formato de linha do espelho do WhatsApp.
 export function smsAsMessage(r: SmsRow) {
@@ -45,9 +48,9 @@ export function smsAsMessage(r: SmsRow) {
     id: r.id,
     app: SMS_APP,
     chat_id: smsChatId(r.sender),
-    from_me: false,
-    author: r.sender,
-    pushname: r.sender,
+    from_me: !!r.from_me,
+    author: r.from_me ? null : (r.author || r.sender),
+    pushname: r.from_me ? null : (r.author || r.sender),
     type: 'sms',
     body: r.body || '',
     media_url: null as string | null,
@@ -107,7 +110,7 @@ export async function smsThreads(db: SupabaseClient, opts: { since?: string | nu
       const chatId = smsChatId(r.sender)
       const t = threads.get(chatId)
       if (t) t.count++
-      else threads.set(chatId, { chatId, sender: r.sender, lastAt: r.received_at, lastBody: r.body || '', count: 1 })
+      else threads.set(chatId, { chatId, sender: r.sender, lastAt: r.received_at, lastBody: r.body || '', lastFromMe: !!r.from_me, count: 1 })
     }
     if (rows.length < size) break
   }

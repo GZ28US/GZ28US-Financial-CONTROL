@@ -65,7 +65,7 @@ const localTime = (iso, app) => iso
 const esc = (s) => String(s).replace(/[%_*,()]/g, ' ').trim()
 
 // ── SMS ──────────────────────────────────────────────────────────────────────
-const SMS_NOTE = 'SMS/iMessage received on the US iPhone (iOS Shortcut). Only INCOMING texts are captured — what Márcio sends by SMS is not, so there is no reply/processed data for SMS.'
+const SMS_NOTE = 'SMS/iMessage of the US iPhone. Both directions were imported from the iPhone backup up to 11/11/2026; after that the iOS Shortcut captures INCOMING texts only, so his newer replies may be missing. No processed mark for SMS.'
 const isSms = (chatId) => String(chatId || '').startsWith('sms:')
 const smsChatId = (sender) => `sms:${sender || ''}`
 // Filtro PostgREST de uma conversa `sms:<remetente>` (vazio = gravado sem remetente).
@@ -213,14 +213,14 @@ async function callTool(name, a = {}) {
     if (isSms(a.chatId) || a.app === 'SMS') {
       const chatId = isSms(a.chatId) ? a.chatId : smsChatId(a.chatId)
       const parts = [
-        smsSenderFilter(chatId), 'select=id,sender,body,received_at',
+        smsSenderFilter(chatId), 'select=id,sender,body,received_at,from_me,author',
         'order=received_at.desc', `limit=${Math.min(a.limit || 50, 300)}`,
       ]
       if (a.since) parts.push(`received_at=gt.${encodeURIComponent(a.since)}`)
       const rows = await smsRead(`sms_messages?${parts.join('&')}`)
       return rows.reverse().map(r => ({
-        time: localTime(r.received_at, 'SMS'), fromMe: false,
-        who: r.sender, type: 'sms', body: r.body, media: null,
+        time: localTime(r.received_at, 'SMS'), fromMe: !!r.from_me,
+        who: r.from_me ? 'me' : (r.author || r.sender), type: 'sms', body: r.body, media: null,
       }))
     }
     if (a.app !== 'US' && a.app !== 'BR') throw new Error('app (US|BR) is required for WhatsApp chats (sms:<sender> chats need no app)')
@@ -261,14 +261,14 @@ async function callTool(name, a = {}) {
     if (want.sms) {
       const parts = [
         `body=ilike.*${encodeURIComponent(esc(a.q))}*`,
-        'select=id,sender,body,received_at',
+        'select=id,sender,body,received_at,from_me,author',
         'order=received_at.desc', `limit=${limit}`,
       ]
       if (a.chatId) parts.push(smsSenderFilter(a.chatId))
       for (const r of await smsRead(`sms_messages?${parts.join('&')}`)) {
         rows.push({ iso: r.received_at, out: {
           app: 'SMS', source: 'SMS', chatId: smsChatId(r.sender), time: localTime(r.received_at, 'SMS'),
-          fromMe: false, who: r.sender, body: (r.body || '').slice(0, 300), media: null,
+          fromMe: !!r.from_me, who: r.from_me ? 'me' : (r.author || r.sender), body: (r.body || '').slice(0, 300), media: null,
         } })
       }
     }
