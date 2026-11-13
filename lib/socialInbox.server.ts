@@ -58,10 +58,17 @@ export async function pollMeta(db: SupabaseClient): Promise<{ accounts: number; 
 
     // conversas: Messenger pasta a pasta + Instagram
     const conversas = async (conta: SocialRow, plataforma: 'FACEBOOK' | 'INSTAGRAM', pasta: string, minhaId: string) => {
-      // Instagram de conta grande recusa o pedido cheio («Please reduce the amount of data») — 13/11/2026, conta de 78,7k: pede menos por vez
-      const q: Record<string, string> = plataforma === 'FACEBOOK' ? { platform: 'messenger', fields: MSG, limit: '25' } : { platform: 'instagram', fields: MSG.replace('messages.limit(15)', 'messages.limit(5)'), limit: '8' }
-      if (plataforma === 'FACEBOOK') q.folder = pasta
+      // INSTAGRAM em dois passos (13/11/2026): conta grande (78,7k) recusa a lista com as mensagens dentro («Please reduce the amount
+      // of data»). Primeiro só a lista de conversas, enxuta; depois as mensagens das mais recentes, uma conversa por vez.
+      const q: Record<string, string> = plataforma === 'FACEBOOK' ? { platform: 'messenger', fields: MSG, limit: '25', folder: pasta } : { platform: 'instagram', fields: 'id,updated_time', limit: '10' }
       const r = await graph(`${page.external_id}/conversations`, token, q)
+      if (r.ok && plataforma === 'INSTAGRAM') {
+        for (const c of r.data?.data || []) {
+          const m = await graph(`${c.id}`, token, { fields: 'participants,messages.limit(8){id,message,from,created_time}' })
+          if (!m.ok) { out.errors.push(`${nome} · instagram DM ${c.id}: ${m.error}`); continue }
+          c.participants = m.data?.participants; c.messages = m.data?.messages
+        }
+      }
       if (!r.ok) { out.errors.push(`${nome} · ${plataforma === 'FACEBOOK' ? 'messenger ' + pasta : 'instagram DMs'}: ${r.error}`); return }
       for (const c of r.data?.data || []) {
         const outro = (c.participants?.data || []).find((p: any) => String(p.id) !== String(page.external_id) && String(p.id) !== minhaId)
