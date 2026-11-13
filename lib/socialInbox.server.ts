@@ -162,7 +162,8 @@ export async function saveItems(db: SupabaseClient, items: Item[], source: 'POLL
   const velhos = all.filter(i => tem.has(`${i.platform}|${i.kind}|${i.external_id}`))
   for (let i = 0; i < novos.length; i += 200) {
     // o que NÓS escrevemos não é novidade: nasce já visto
-    const lote = novos.slice(i, i + 200).map(x => ({ ...x, source, seen_at: x.from_me ? new Date().toISOString() : null, seen_by: x.from_me ? 'own' : null }))
+    // linha COMPLETA: num insert em lote, coluna ausente em uma linha vira NULL em todas (e hidden/from_me/attachments são NOT NULL)
+    const lote = novos.slice(i, i + 200).map(x => ({ thread_id: null, thread_title: null, parent_id: null, folder: null, from_id: null, from_name: null, body: null, permalink: null, raw: null, ...x, from_me: !!x.from_me, hidden: !!x.hidden, attachments: x.attachments || 0, source, seen_at: x.from_me ? new Date().toISOString() : null, seen_by: x.from_me ? 'own' : null }))
     const { error } = await db.from('social_items').upsert(lote, { onConflict: 'platform,kind,external_id', ignoreDuplicates: true })
     if (error) return { fresh: 0, byKind, error: error.message }
   }
