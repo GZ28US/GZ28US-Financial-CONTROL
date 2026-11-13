@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { startGate } from '@/lib/socialStart.server'
-import { socialDb, mintState, callbackUrl, META_SCOPES, GRAPH_VERSION } from '@/lib/social.server'
+import { socialDb, mintState, callbackUrl, META_SCOPES, META_LEAD_SCOPES, GRAPH_VERSION } from '@/lib/social.server'
+import { settingOn } from '@/lib/appSettings.server'
 
 // SOCIAL LINK · META step 1 (09/11/2026). One consent covers Facebook Page(s), the Instagram Business account(s) linked to them,
 // Messenger + IG DMs and the Business Suite assets. Returns the consent URL; /ca/social/connect sends the browser there.
@@ -17,6 +18,8 @@ export async function POST(req: NextRequest) {
   u.searchParams.set('state', state)
   u.searchParams.set('response_type', 'code')
   if (process.env.META_CONFIG_ID) u.searchParams.set('config_id', process.env.META_CONFIG_ID)
-  else u.searchParams.set('scope', META_SCOPES.join(','))
+  // LEAD ADS (13/11/2026): os dois escopos só são pedidos com social.meta.leads.enabled ligado — pedir escopo que o app da Meta
+  // ainda não tem em Use cases → Customize devolve «Invalid Scopes» e quebra a reconexão inteira.
+  else u.searchParams.set('scope', [...META_SCOPES, ...((await settingOn('social.meta.leads.enabled')) ? META_LEAD_SCOPES : [])].join(','))
   return NextResponse.json({ url: u.toString() })
 }

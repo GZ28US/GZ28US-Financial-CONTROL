@@ -11,7 +11,7 @@ import { sealingReady } from '@/lib/socialCrypto.server'
 export const dynamic = 'force-dynamic'
 export const maxDuration = 60
 
-const KEYS = [...Object.values(SWITCH), PUBLISH_SWITCH, 'paypal.read.enabled', 'carriers.track.enabled']
+const KEYS = [...Object.values(SWITCH), PUBLISH_SWITCH, 'social.inbox.enabled', 'social.meta.leads.enabled', 'paypal.read.enabled', 'carriers.track.enabled']
 const ENVS: Record<Platform | 'APP_CREDS', string[]> = {
   META: ['META_APP_ID', 'META_APP_SECRET'],
   YOUTUBE: ['GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET'],

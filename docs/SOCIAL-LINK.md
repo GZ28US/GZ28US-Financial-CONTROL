@@ -146,3 +146,26 @@ so the value never appears on screen. Then redeploy.
 | UPS / FedEx / USPS tracking | live, OFF | Márcio: 3 developer apps + 6 env vars (UPS needs the account number) |
 | Amazon | not built | no buyer API (only Amazon Business) |
 | Labels | not built | each label costs money: separate step, his OK each time |
+
+## Step 3: SOCIAL INBOX + OUTBOX (13/11/2026): Facebook and Instagram in depth
+
+Ordered by Márcio on 11/11/2026 through FaceBook ROUND («i want the app fully connected to facebook, do it, as deep as possible») and on 13/11 («faça a conexão do Facebook»).
+
+| Piece | Where |
+|---|---|
+| Everything that arrives or leaves, one row each | table `social_items` (MESSAGE, COMMENT, MENTION, LEAD) |
+| Every write, born as a DRAFT | table `social_outbox` |
+| Raw webhook events | table `social_webhook_events` |
+| Reading every 15 min (switch `social.inbox.enabled`, born OFF) | `/ca/api/cron/social-inbox` |
+| The screen | `/ca/social/inbox` (menu ADM) |
+| Insights dashboard, read live | `/ca/social/insights` |
+| Inbox API (screen or `x-read-key`) | `GET /ca/api/social/inbox?platform=&kind=&folder=&new=1&thread=&q=` |
+| Outbox API | `GET/POST /ca/api/social/outbox` |
+| Meta webhook | `/ca/api/social/meta/webhook` |
+| Migration | `MIGRATION_social_inbox.sql` |
+
+- **What is read:** Messenger in ALL folders (inbox, other, spam, page_done), Instagram DMs, comments on page posts and on IG media (with replies), posts that tag the page, IG media that tag the account. Lead Ads forms and leads once the page has `leads_retrieval`.
+- **Writes:** reply to a message, reply to a comment, hide/unhide a comment, delete a comment, publish a text/link post on a page. Each one is a DRAFT. A session can create a draft with `x-read-key` (`POST {action:'draft', kind, item_id, body}`); **only a logged-in person can APPROVE & SEND** (robots and the read key are refused), and only with `social.publish.enabled` ON. The recipient always comes from the inbox item, never from the caller.
+- **Lead Ads:** needs two more permissions. In the Meta app: Use cases → Customize → add `leads_retrieval` and `pages_manage_ads`. Then turn `social.meta.leads.enabled` ON at /ca/social/connect and CONNECT again. Until then the consent does not ask for them (asking for a scope the app does not have breaks the whole consent with «Invalid Scopes»).
+- **Webhook:** closed until `META_WEBHOOK_VERIFY_TOKEN` exists in Vercel (he chooses any long random text). In the Meta app: Webhooks → Page and Instagram → callback URL `https://www.gz28us.com/ca/api/social/meta/webhook`, same verify token, subscribe `messages`, `feed`, `mention`, `comments`, `mentions`. In Development mode Meta delivers only events caused by people with a role on the app; real-time events from the public need the app Live (App Review for `pages_messaging` and `instagram_manage_messages`). Until then the 15-minute reading feeds the inbox.
+- **Limits:** Meta lets a page answer a message only within 24 hours of the person's last message. Photo/video posts and Instagram publishing are not built. Personal profile and Marketplace have no API.

@@ -42,6 +42,8 @@ export const META_SCOPES = [
   'instagram_basic', 'instagram_manage_comments', 'instagram_manage_insights', 'instagram_manage_messages', 'instagram_content_publish',
   'ads_read',                                                   // Meta Ads spend per campaign (step 2, read only)
 ]
+// Lead Ads — pedidos só com social.meta.leads.enabled ligado (ver app/api/social/meta/auth).
+export const META_LEAD_SCOPES = ['leads_retrieval', 'pages_manage_ads']
 export const YOUTUBE_SCOPES = [
   'https://www.googleapis.com/auth/youtube.readonly',
   'https://www.googleapis.com/auth/youtube.force-ssl',          // read + reply/moderate comments

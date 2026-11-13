@@ -19,6 +19,9 @@ const WHAT: Record<string, Spec> = {
   fb_comments: { platform: 'META', kind: 'FB_PAGE', needsId: true },
   fb_insights: { platform: 'META', kind: 'FB_PAGE' },
   fb_conversations: { platform: 'META', kind: 'FB_PAGE' },
+  fb_leadgen_forms: { platform: 'META', kind: 'FB_PAGE' },                            // needs leads_retrieval + pages_manage_ads
+  fb_leads: { platform: 'META', kind: 'FB_PAGE', needsId: true },                    // id = form id
+  fb_conversations_folder: { platform: 'META', kind: 'FB_PAGE', needsId: true },     // id = inbox | other | spam | page_done
   ig_profile: { platform: 'META', kind: 'IG_ACCOUNT' },
   ig_media: { platform: 'META', kind: 'IG_ACCOUNT' },
   ig_comments: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },
@@ -101,6 +104,9 @@ async function call(what: string, row: SocialRow, rows: SocialRow[], token: stri
       fb_comments: () => [`${p.id}/comments`, { fields: 'id,message,from,created_time,like_count,comment_count', limit: '50', order: 'reverse_chronological' }],
       fb_insights: () => [`${row.external_id}/insights`, { metric: p.metric || 'page_media_view,page_total_media_view_unique,page_post_engagements,page_follows,page_daily_follows_unique,page_views_total', period: p.period || 'day' }],
       fb_conversations: () => [`${row.external_id}/conversations`, { platform: 'messenger', fields: MSG_FIELDS, limit: '25' }],
+      fb_leadgen_forms: () => [`${row.external_id}/leadgen_forms`, { fields: 'id,name,status,leads_count,created_time', limit: '50' }],
+      fb_leads: () => [`${p.id}/leads`, { fields: 'id,created_time,field_data,ad_id,ad_name,campaign_name,form_id,platform', limit: '100' }],
+      fb_conversations_folder: () => [`${row.external_id}/conversations`, { platform: 'messenger', folder: /^(inbox|other|spam|page_done)$/.test(p.id || '') ? p.id! : 'inbox', fields: MSG_FIELDS, limit: '25' }],
       ig_profile: () => [row.external_id, { fields: 'id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url' }],
       ig_media: () => [`${row.external_id}/media`, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count', limit: '25' }],
       ig_comments: () => [`${p.id}/comments`, { fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp}', limit: '50' }],

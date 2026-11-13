@@ -8,7 +8,8 @@
 //   • the connected accounts and their token health;
 //   • CONNECT: POST with the logged-in session → the route returns the platform's consent URL → the browser goes there → the
 //     callback stores the sealed token and shows a result page.
-// Writes (post / reply / DM) have their own switch, social.publish.enabled, and are not built yet — this screen only links.
+// Writes (post / reply / DM / hide / delete) have their own switch, social.publish.enabled, and live in /social/inbox: every write is a
+// DRAFT that a logged-in person approves there (13/11/2026). This screen only links and flips switches.
 // Behind the AuthGate (app/layout.tsx), like the whole app.
 
 import { useCallback, useEffect, useState } from 'react'
@@ -152,6 +153,17 @@ export default function SocialConnectPage() {
               className={`px-4 py-2 rounded-xl font-bold text-sm ${st.switches['social.publish.enabled'] ? 'bg-red-700' : 'bg-gray-700'}`}>
               social.publish.enabled: {st.switches['social.publish.enabled'] ? 'ON' : 'OFF'}
             </button>
+            <button onClick={() => flip('social.inbox.enabled', !st.switches['social.inbox.enabled'])} disabled={!!busy}
+              className={`px-4 py-2 rounded-xl font-bold text-sm ${st.switches['social.inbox.enabled'] ? 'bg-green-700' : 'bg-gray-700'}`}
+              title="The app reads Facebook and Instagram every 15 minutes (messages in every folder, comments, mentions, leads) into the SOCIAL INBOX. Read only.">
+              social.inbox.enabled: {st.switches['social.inbox.enabled'] ? 'ON' : 'OFF'}
+            </button>
+            <button onClick={() => flip('social.meta.leads.enabled', !st.switches['social.meta.leads.enabled'])} disabled={!!busy}
+              className={`px-4 py-2 rounded-xl font-bold text-sm ${st.switches['social.meta.leads.enabled'] ? 'bg-green-700' : 'bg-gray-700'}`}
+              title="Lead Ads: when ON, the next Meta CONNECT also asks for leads_retrieval and pages_manage_ads. Add those two permissions to the Meta app first (Use cases → Customize), or the consent screen says Invalid Scopes.">
+              social.meta.leads.enabled: {st.switches['social.meta.leads.enabled'] ? 'ON' : 'OFF'}
+            </button>
+            <a href={`${BASE_PATH}/social/inbox`} className="bg-blue-700 hover:bg-blue-600 px-5 py-3 rounded-2xl font-bold">OPEN SOCIAL INBOX</a>
           </div>
         </div>
       )}

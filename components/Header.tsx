@@ -98,6 +98,8 @@ const MENU: MenuItem[] = [
       ['/adm/financials', 'FINANCIAL HUB'],
       ['/adm/tax', 'TAX SHIELD'],
       ['/whatsapp', 'INTERCOM'],
+      ['/social/inbox', 'SOCIAL INBOX'],
+      ['/social/insights', 'SOCIAL INSIGHTS'],
       ['/adm/reports', 'REPORTS'],
       ['/adm/notifications', 'NOTIFICATIONS'],
       ['/adm/payments', 'PAYMENTS'],

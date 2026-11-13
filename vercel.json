@@ -75,6 +75,10 @@
     {
       "path": "/ca/api/cron/social-health",
       "schedule": "13 11 * * *"
+    },
+    {
+      "path": "/ca/api/cron/social-inbox",
+      "schedule": "7,22,37,52 * * * *"
     }
   ]
 }
