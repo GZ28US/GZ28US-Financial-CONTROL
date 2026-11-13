@@ -60,6 +60,11 @@ export async function GET(req: NextRequest) {
         })
         lines.push(`instagram @${ig.username}`)
       }
+      {
+        let q = db.from('social_auth').update({ status: 'REVOKED', last_error: 'no longer linked to this page (reconnect)', updated_at: new Date().toISOString() }).eq('platform', 'META').eq('kind', 'IG_ACCOUNT').eq('parent_id', pageId).eq('status', 'CONNECTED')
+        if (ig?.id) q = q.neq('external_id', ig.id)
+        await q
+      }
     }
     next = pg?.paging?.next || null
   }

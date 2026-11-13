@@ -55,8 +55,9 @@ const DAY = /^\d{4}-\d{2}-\d{2}$/
 const PERIODS = new Set(['day', 'week', 'days_28', 'month', 'lifetime', 'total_over_range'])
 
 function pickRow(rows: SocialRow[], kind: Kind, account: string | null): SocialRow | undefined {
+  // conta desligada (REVOKED/EXPIRED) só entra se for pedida pelo nome; sem nome, a primeira CONECTADA
   const of = rows.filter(r => r.kind === kind)
-  if (!account) return of[0]
+  if (!account) return of.find(r => r.status === 'CONNECTED') || of[0]
   const a = account.toLowerCase()
   return of.find(r => String(r.id) === account || r.external_id === account || String(r.account || '').toLowerCase() === a || String(r.account || '').toLowerCase() === `@${a}`)
 }
