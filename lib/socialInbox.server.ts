@@ -60,7 +60,7 @@ export async function pollMeta(db: SupabaseClient): Promise<{ accounts: number; 
     const conversas = async (conta: SocialRow, plataforma: 'FACEBOOK' | 'INSTAGRAM', pasta: string, minhaId: string) => {
       // INSTAGRAM em dois passos (13/11/2026): conta grande (78,7k) recusa a lista com as mensagens dentro («Please reduce the amount
       // of data»). Primeiro só a lista de conversas, enxuta; depois as mensagens das mais recentes, uma conversa por vez.
-      const q: Record<string, string> = plataforma === 'FACEBOOK' ? { platform: 'messenger', fields: MSG, limit: '25', folder: pasta } : { platform: 'instagram', fields: 'id,updated_time', limit: '10' }
+      const q: Record<string, string> = plataforma === 'FACEBOOK' ? { platform: 'messenger', fields: MSG, limit: '25', folder: pasta } : { platform: 'instagram', fields: 'id', limit: '3' }
       const r = await graph(`${page.external_id}/conversations`, token, q)
       if (r.ok && plataforma === 'INSTAGRAM') {
         for (const c of r.data?.data || []) {
