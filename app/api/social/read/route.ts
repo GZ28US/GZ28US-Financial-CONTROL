@@ -4,6 +4,9 @@ import { nyStart, nyEnd } from '@/lib/nyDay'
 import { socialDb, rowsOf, accessToken, platformOn, GRAPH, SWITCH, type Platform, type SocialRow, type Kind } from '@/lib/social.server'
 
 // SOCIAL LINK — READ ONLY (09/11/2026). How the app and Claude read the brand accounts: posts, comments, DMs, insights, profile.
+// Instagram reads: ig_profile · ig_media · ig_stories · ig_comments(id) · ig_comment_replies(id) · ig_comments_recent[id=N][since] ·
+//   ig_mentions · ig_mentioned_media(id) · ig_mentioned_comment(id) · ig_conversations[id=folder] · ig_conversation(id) ·
+//   ig_conversation_with(id=IGSID) · ig_message(id) · ig_insights
 // GET /ca/api/social/read?what=<name>[&account=<row id | external id | @handle>][&id=<post/media/video id>][&metric=a,b][&period=day]
 //      [&since=YYYY-MM-DD&until=YYYY-MM-DD][&after=<cursor>]
 // Who: a logged-in screen (requireUser) or a reading session/script (x-read-key header — never in the URL).
@@ -26,7 +29,17 @@ const WHAT: Record<string, Spec> = {
   ig_media: { platform: 'META', kind: 'IG_ACCOUNT' },
   ig_comments: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },
   ig_insights: { platform: 'META', kind: 'IG_ACCOUNT' },
-  ig_conversations: { platform: 'META', kind: 'IG_ACCOUNT' },
+  ig_conversations: { platform: 'META', kind: 'IG_ACCOUNT' },                         // LEAN list (no messages). optional id = folder; &after= pages
+  ig_conversation: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },           // id = conversation id → that thread's messages
+  ig_conversation_with: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },      // id = the other person's Instagram-scoped id (IGSID)
+  ig_message: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },                // id = message id
+  ig_mentions: { platform: 'META', kind: 'IG_ACCOUNT' },                              // media where the account is TAGGED (/tags)
+  ig_mentioned_media: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },        // id = media id of a caption @mention (comes from a webhook)
+  ig_mentioned_comment: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },      // id = comment id of a comment @mention (comes from a webhook)
+  ig_comment_replies: { platform: 'META', kind: 'IG_ACCOUNT', needsId: true },        // id = comment id; &after= pages
+  ig_comments_recent: { platform: 'META', kind: 'IG_ACCOUNT' },                       // one call: comments of the last N media (id = N, 1–25, default 10); &since=YYYY-MM-DD filters
+  ig_stories: { platform: 'META', kind: 'IG_ACCOUNT' },                               // stories live right now
+  fb_conversation: { platform: 'META', kind: 'FB_PAGE', needsId: true },              // id = conversation id → that thread's messages
   meta_businesses: { platform: 'META', kind: 'META_USER' },
   meta_ad_accounts: { platform: 'META', kind: 'META_USER' },
   meta_ads_insights: { platform: 'META', kind: 'META_USER', needsId: true },        // id = act_<ad account id>
@@ -53,6 +66,9 @@ const METRIC = /^[a-z_,]{1,400}$/
 const CURSOR = /^[A-Za-z0-9_=%-]{1,600}$/
 const DAY = /^\d{4}-\d{2}-\d{2}$/
 const PERIODS = new Set(['day', 'week', 'days_28', 'month', 'lifetime', 'total_over_range'])
+
+const IG_FOLDER = /^(inbox|other|pending|spam|page_done)$/
+const THREAD_FIELDS = 'id,updated_time,participants,messages.limit(25){id,message,from,to,created_time}'
 
 function pickRow(rows: SocialRow[], kind: Kind, account: string | null): SocialRow | undefined {
   // conta desligada (REVOKED/EXPIRED) só entra se for pedida pelo nome; sem nome, a primeira CONECTADA
@@ -81,6 +97,9 @@ export async function GET(req: NextRequest) {
   if (after && !CURSOR.test(after)) return NextResponse.json({ error: 'bad cursor' }, { status: 400 })
   if ((since && !DAY.test(since)) || (until && !DAY.test(until))) return NextResponse.json({ error: 'dates are YYYY-MM-DD' }, { status: 400 })
 
+  if (/^ig_mentioned_|^ig_comments_recent$/.test(what) && id && !/^\d{1,40}$/.test(id)) return NextResponse.json({ error: 'id = digits' }, { status: 400 })
+  if (what === 'ig_conversations' && id && !IG_FOLDER.test(id)) return NextResponse.json({ error: 'folder = inbox | other | pending | spam | page_done' }, { status: 400 })
+
   const db = socialDb()
   const rows = await rowsOf(db, spec.platform)
   const row = pickRow(rows, spec.kind, sp.get('account'))
@@ -90,7 +109,23 @@ export async function GET(req: NextRequest) {
   try { token = await accessToken(db, row) } catch (e) { return NextResponse.json({ error: e instanceof Error ? e.message : String(e) }, { status: 502 }) }
 
   const out = await call(what, row, rows, token, { id, metric, period, after, since, until })
-  return NextResponse.json({ what, account: { id: row.id, kind: row.kind, account: row.account, external_id: row.external_id }, ...out }, { status: out.status })
+
+  // The handle on the row follows Instagram (13/11/2026: the accounts swapped names and the rows kept the old ones, so
+  // &account=@handle stopped matching). Every good ig_profile read refreshes it.
+  let accountName = row.account
+  if (what === 'ig_profile' && out.status === 200) {
+    const u = String((out.data as { username?: string })?.username || '')
+    if (u && `@${u}` !== row.account) {
+      await db.from('social_auth').update({ account: `@${u}`, updated_at: new Date().toISOString() }).eq('id', row.id)
+      accountName = `@${u}`
+    }
+  }
+  // No &account= and more than one account of this kind: say which one answered, and which others exist.
+  const same = rows.filter(r => r.kind === spec.kind)
+  const picked = sp.get('account') ? {} : same.length > 1
+    ? { picked: 'default', warning: `no &account= given — answered by ${accountName} (row ${row.id}); pass &account= to choose`, accounts: same.map(r => ({ id: r.id, account: r.id === row.id ? accountName : r.account, status: r.status })) }
+    : { picked: 'only' }
+  return NextResponse.json({ what, account: { id: row.id, kind: row.kind, account: accountName, external_id: row.external_id, status: row.status }, ...picked, ...out }, { status: out.status })
 }
 
 type P = { id: string | null; metric: string | null; period: string | null; after: string | null; since: string | null; until: string | null }
@@ -110,9 +145,21 @@ async function call(what: string, row: SocialRow, rows: SocialRow[], token: stri
       fb_conversations_folder: () => [`${row.external_id}/conversations`, { platform: 'messenger', folder: /^(inbox|other|spam|page_done)$/.test(p.id || '') ? p.id! : 'inbox', fields: MSG_FIELDS, limit: '25' }],
       ig_profile: () => [row.external_id, { fields: 'id,username,name,biography,website,followers_count,follows_count,media_count,profile_picture_url' }],
       ig_media: () => [`${row.external_id}/media`, { fields: 'id,caption,media_type,media_product_type,permalink,timestamp,like_count,comments_count', limit: '25' }],
-      ig_comments: () => [`${p.id}/comments`, { fields: 'id,text,username,timestamp,like_count,replies{id,text,username,timestamp}', limit: '50' }],
+      ig_comments: () => [`${p.id}/comments`, { fields: 'id,text,username,timestamp,like_count,replies.limit(25){id,text,username,timestamp}', limit: '50' }],
+      ig_comment_replies: () => [`${p.id}/replies`, { fields: 'id,text,username,timestamp,like_count', limit: '50' }],
+      ig_comments_recent: () => [`${row.external_id}/media`, { fields: 'id,permalink,timestamp,media_type,comments_count,comments.limit(50){id,text,username,timestamp,like_count,replies.limit(25){id,text,username,timestamp}}', limit: String(Math.min(25, Math.max(1, Number(p.id) || 10))) }],
+      ig_mentions: () => [`${row.external_id}/tags`, { fields: 'id,caption,media_type,permalink,timestamp,username,comments_count,like_count', limit: '25' }],
+      ig_mentioned_media: () => [row.external_id, { fields: `mentioned_media.media_id(${p.id}){id,caption,media_type,permalink,timestamp,username,comments_count,like_count}` }],
+      ig_mentioned_comment: () => [row.external_id, { fields: `mentioned_comment.comment_id(${p.id}){id,text,timestamp,username,like_count,media{id,permalink}}` }],
+      ig_stories: () => [`${row.external_id}/stories`, { fields: 'id,media_type,permalink,timestamp,caption', limit: '25' }],
+      ig_conversation: () => [`${p.id}`, { fields: THREAD_FIELDS }],
+      ig_conversation_with: () => [`${pageOfIg}/conversations`, { platform: 'instagram', user_id: p.id!, fields: THREAD_FIELDS }],
+      ig_message: () => [`${p.id}`, { fields: 'id,created_time,from,to,message,attachments,story,reactions' }],
+      fb_conversation: () => [`${p.id}`, { fields: THREAD_FIELDS }],
       ig_insights: () => [`${row.external_id}/insights`, { metric: p.metric || 'reach,follower_count', period: p.period || 'day', ...(p.metric && /total_value|views|accounts_engaged|total_interactions|profile_views/.test(p.metric) ? { metric_type: 'total_value' } : {}) }],
-      ig_conversations: () => [`${pageOfIg}/conversations`, { platform: 'instagram', fields: MSG_FIELDS.replace('messages.limit(10)', 'messages.limit(5)'), limit: '8' }],
+      // LEAN on purpose (14/11/2026): the 78.7k account refuses the list with messages inside («Please reduce the amount of
+      // data»). The list brings only who and when; the messages of one thread come from ig_conversation.
+      ig_conversations: () => [`${pageOfIg}/conversations`, { platform: 'instagram', fields: 'id,updated_time,participants', limit: '5', ...(p.id && IG_FOLDER.test(p.id) ? { folder: p.id } : {}) }],
       meta_businesses: () => ['me/businesses', { fields: 'id,name,verification_status' }],
       meta_ad_accounts: () => ['me/adaccounts', { fields: 'id,name,account_status,currency,amount_spent,business' }],
       meta_ads_insights: () => [`${p.id}/insights`, { level: 'campaign', fields: 'campaign_id,campaign_name,spend,impressions,reach,clicks,cpc,ctr,actions', ...(p.since || p.until ? {} : { date_preset: 'last_30d' }), time_increment: p.period === 'day' ? '1' : 'all_days', limit: '100' }],
@@ -122,10 +169,18 @@ async function call(what: string, row: SocialRow, rows: SocialRow[], token: stri
     for (const [k, v] of Object.entries(q)) u.searchParams.set(k, v)
     if (p.after) u.searchParams.set('after', p.after)
     if (what === 'meta_ads_insights' && (p.since || p.until)) u.searchParams.set('time_range', JSON.stringify({ since: p.since || p.until, until: p.until || p.since }))
-    else { if (p.since) u.searchParams.set('since', p.since); if (p.until) u.searchParams.set('until', p.until) }
+    else if (what !== 'ig_comments_recent') { if (p.since) u.searchParams.set('since', p.since); if (p.until) u.searchParams.set('until', p.until) }
     u.searchParams.set('access_token', token)
-    const r = await fetch(u)
+    let r: Response
+    try { r = await fetch(u, { signal: AbortSignal.timeout(45000) }) }
+    catch (e) { return { status: 504, data: { error: `Meta did not answer in 45s (${(e as Error)?.name || 'error'})` } } }
     const j = await r.json().catch(() => ({}))
+    if (what === 'ig_comments_recent' && r.ok && p.since && Array.isArray(j?.data)) {
+      const from = Date.parse(`${p.since}T00:00:00-05:00`)
+      const novo = (t: unknown) => Date.parse(String(t || '')) >= from
+      for (const m of j.data) if (m?.comments?.data) m.comments.data = m.comments.data.filter((c: { timestamp?: string; replies?: { data?: { timestamp?: string }[] } }) => novo(c.timestamp) || (c.replies?.data || []).some(x => novo(x.timestamp)))
+      j.data = j.data.filter((m: { comments?: { data?: unknown[] } }) => (m.comments?.data || []).length)
+    }
     return { status: r.ok ? 200 : 502, data: strip(j) }
   }
 
