@@ -1,20 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createHmac, timingSafeEqual } from 'node:crypto'
-import { socialDb, rowsOf } from '@/lib/social.server'
+import { socialDb, rowsOf, metaWebhookVerifyToken } from '@/lib/social.server'
 import { saveItems } from '@/lib/socialInbox.server'
 
 // WEBHOOK DA META (13/11/2026) — a porta por onde Facebook/Instagram EMPURRAM mensagem, comentário e menção na hora.
-//   GET  = a verificação do painel da Meta: devolve hub.challenge só se hub.verify_token == META_WEBHOOK_VERIFY_TOKEN.
+//   GET  = a verificação da Meta: devolve hub.challenge só se hub.verify_token == o token do webhook (metaWebhookVerifyToken:
+//          META_WEBHOOK_VERIFY_TOKEN, ou derivado do segredo do app). Quem pede a inscrição é /api/social/meta/subscribe.
 //   POST = o evento. A assinatura X-Hub-Signature-256 (HMAC-SHA256 do corpo cru com META_APP_SECRET) é conferida; evento com
 //          assinatura errada é RECUSADO (401) e não vira item. O cru de todo evento aceito fica em social_webhook_events.
-// Sem as duas variáveis no ambiente a porta fica FECHADA (falha fechada). Não responde nada a ninguém, não envia nada.
+// Sem META_APP_SECRET no ambiente a porta fica FECHADA (falha fechada). Não responde nada a ninguém, não envia nada.
 // LIMITE: com o app em modo Development a Meta só entrega eventos de quem tem papel no app. Até o app ficar Live, quem alimenta
 // o inbox é a leitura periódica (/api/cron/social-inbox); isto aqui já fica pronto para o dia.
 export const dynamic = 'force-dynamic'
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export async function GET(req: NextRequest) {
-  const sp = req.nextUrl.searchParams, need = process.env.META_WEBHOOK_VERIFY_TOKEN
+  const sp = req.nextUrl.searchParams, need = metaWebhookVerifyToken()
   const got = sp.get('hub.verify_token') || ''
   if (!need || sp.get('hub.mode') !== 'subscribe' || got.length !== need.length || !timingSafeEqual(Buffer.from(got), Buffer.from(need))) return new NextResponse('forbidden', { status: 403 })
   return new NextResponse(sp.get('hub.challenge') || '', { status: 200, headers: { 'Content-Type': 'text/plain' } })
@@ -22,7 +23,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   const secret = process.env.META_APP_SECRET
-  if (!secret || !process.env.META_WEBHOOK_VERIFY_TOKEN) return new NextResponse('closed', { status: 503 })
+  if (!secret) return new NextResponse('closed', { status: 503 })
   const raw = await req.text()
   const sig = req.headers.get('x-hub-signature-256') || ''
   const want = 'sha256=' + createHmac('sha256', secret).update(raw).digest('hex')

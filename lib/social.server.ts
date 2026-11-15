@@ -15,6 +15,7 @@
 //   TIKTOK  access 24 h; refresh 365 days and ROTATES (each refresh may return a new one — always store it). → on demand + daily.
 
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
+import { createHmac } from 'node:crypto'
 import { createHash, randomBytes } from 'node:crypto'
 import { seal, unseal } from './socialCrypto.server'
 import { settingOn } from './appSettings.server'
@@ -205,6 +206,15 @@ export async function accessToken(db: SupabaseClient, row: SocialRow, force = fa
   if (j.refresh_token && j.refresh_token !== rt) { patch.refresh_token_enc = seal(j.refresh_token); patch.refresh_expires_at = inSecs(j.refresh_expires_in) }
   await mark(db, row.id, patch)
   return j.access_token as string
+}
+
+// The webhook's verify token (14/11/2026). Meta only wants a string both sides know. If META_WEBHOOK_VERIFY_TOKEN is not in the
+// environment it is DERIVED from the app secret, so nobody has to invent, type or store another secret: the server that asks Meta
+// to subscribe (/api/social/meta/subscribe) and the door that answers the challenge compute the same value.
+export function metaWebhookVerifyToken(): string | null {
+  if (process.env.META_WEBHOOK_VERIFY_TOKEN) return process.env.META_WEBHOOK_VERIFY_TOKEN
+  const secret = process.env.META_APP_SECRET
+  return secret ? createHmac('sha256', secret).update('gz28us-meta-webhook-verify-v1').digest('hex') : null
 }
 
 // Meta: is the token alive, and with which scopes? (debug_token with the app token — server to Meta only.)
