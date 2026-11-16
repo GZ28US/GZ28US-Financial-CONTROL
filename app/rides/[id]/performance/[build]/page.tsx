@@ -1399,7 +1399,8 @@ const BS_FUEL_OPTIONS = ['93', 'E85', '91']
 // 'so' = Stock/Other com texto livre · 'enum' = lista fechada · 'text' = campo aberto,
 // pro que a ficha não pergunta (NOTES). 'text' não tem valor de fábrica: em branco é
 // em branco, e não conta como modificação em lugar nenhum.
-type BSField = { key: string; label: string; kind: 'so' | 'enum' | 'text'; options?: string[]; show?: (ps: string) => boolean }
+// line: true = campo aberto de UMA linha (PCM OS) — mesmo comportamento do 'text', só que sem a caixa grande.
+type BSField = { key: string; label: string; kind: 'so' | 'enum' | 'text'; options?: string[]; show?: (ps: string) => boolean; line?: boolean }
 const BS_FIELDS: BSField[] = [
   { key: 'intake', label: 'Intake', kind: 'so', show: (ps) => ps !== 'Turbo Fitted' },
   { key: 'throttle_body', label: 'Throttle-Body', kind: 'so' },
@@ -1434,6 +1435,9 @@ const BS_FIELDS: BSField[] = [
   { key: 'traction_tires', label: 'Traction Tires Size', kind: 'so' },
   // Últimos campos (pedido 06/set/2026): a atualização de OS do módulo, e um espaço
   // aberto pro que a ficha não tem coluna.
+  // PCM OS (Márcio, 16/11/2026): o número do sistema operacional gravado na PCM do carro — o que a leitura do módulo mostra.
+  // Campo aberto: não tem «Stock», e preenchido não conta como modificação.
+  { key: 'pcm_os', label: 'PCM OS', kind: 'text', line: true },
   { key: 'os_update', label: 'OS Update', kind: 'so' },
   { key: 'notes', label: 'Notes', kind: 'text' },
 ]
@@ -2010,9 +2014,11 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           </select>
         </div>
         {BS_FIELDS.filter((f) => !f.show || f.show(sheet.power_source)).map((f) => (
-          <div key={f.key} className={f.kind === 'text' ? 'md:col-span-2 xl:col-span-3' : undefined}>
+          <div key={f.key} className={f.kind === 'text' && !f.line ? 'md:col-span-2 xl:col-span-3' : undefined}>
             <label className="block mb-1 text-sm text-gray-400 font-bold">{f.label.toUpperCase()}</label>
-            {f.kind === 'text' ? (
+            {f.line ? (
+              <input type="text" value={sheet[f.key] || ''} onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })} className={inp} />
+            ) : f.kind === 'text' ? (
               <textarea
                 value={sheet[f.key] || ''}
                 onChange={(e) => setSheet({ ...sheet, [f.key]: e.target.value })}
