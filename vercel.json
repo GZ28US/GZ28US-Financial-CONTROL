@@ -79,6 +79,10 @@
     {
       "path": "/ca/api/cron/social-inbox",
       "schedule": "7,22,37,52 * * * *"
+    },
+    {
+      "path": "/ca/api/cron/parcel-locker",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
