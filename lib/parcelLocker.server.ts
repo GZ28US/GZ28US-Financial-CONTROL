@@ -86,9 +86,15 @@ const CARRIER_KEYS: Array<[RegExp, RegExp]> = [
 const AMAZON_ORDER = /\b\d{3}-\d{7}-\d{7}\b/g
 const TABELAS_ITEM = ['part_streams', 'invoice_expenses', 'inputs', 'inventory', 'staff_expenses', 'assets_expenses', 'fixed_cost_expenses'] as const
 
-type Achado = { texto: string; via: string }
+type Achado = { texto: string; via: string; loja: string | null }
 
-async function itemNoApp(db: SupabaseClient, coluna: 'order_number' | 'tracking_number', valor: string): Promise<{ item: string; supplier: string | null; tabela: string } | null> {
+// O APP É A FONTE (Márcio, 17/11/2026: «All the info should already be in the app when it's bought… you find in the app all the
+// other infos, don't expect to get all the info in the email»). O e-mail dá a PISTA (nº do pedido, rastreio, hora, quem entregou);
+// o que é, de que loja e quanto custou sai do app: as 7 tabelas de item, o registro de pedidos (supplier_orders) e a fila de
+// compras do AutoBook (auto_book_mail) — nessa ordem, do lançamento pronto para o que ainda espera lançamento.
+const usd = (v: unknown) => { const n = Number(v); return Number.isFinite(n) && n > 0 ? `US$ ${n.toFixed(2)}` : '' }
+type NoApp = { item: string; supplier: string | null; tabela: string }
+async function itemNoApp(db: SupabaseClient, coluna: 'order_number' | 'tracking_number', valor: string): Promise<NoApp | null> {
   for (const t of TABELAS_ITEM) {
     if (coluna === 'tracking_number' && t === 'fixed_cost_expenses') continue
     const { data, error } = await db.from(t).select('*').ilike(coluna, `%${valor}%`).limit(3)
@@ -96,6 +102,28 @@ async function itemNoApp(db: SupabaseClient, coluna: 'order_number' | 'tracking_
     for (const r of data as Record<string, unknown>[]) {
       const item = String(r.item || r.description || r.name || r.title || '').trim()
       if (item) return { item: item.slice(0, 140), supplier: r.supplier ? String(r.supplier) : null, tabela: t }
+    }
+  }
+  if (coluna !== 'order_number') return null
+  {
+    const { data } = await db.from('supplier_orders').select('supplier_name, description, total, car_label').ilike('order_number', `%${valor}%`).limit(1)
+    const r = (data || [])[0] as Record<string, unknown> | undefined
+    const desc = String(r?.description || '').trim()
+    if (r && desc) return { item: [desc.slice(0, 140), r.car_label ? `para ${r.car_label}` : '', usd(r.total)].filter(Boolean).join(' · '), supplier: r.supplier_name ? String(r.supplier_name) : null, tabela: 'supplier_orders' }
+  }
+  {
+    // A fila do AutoBook: a compra foi lida do e-mail e espera lançamento. Tem loja e valor; o item só quando o e-mail trouxe.
+    const { data } = await db.from('auto_book_mail').select('vendor, amount, currency, extracted, subject').eq('order_number', valor).eq('kind', 'PURCHASE').limit(1)
+    const r = (data || [])[0] as Record<string, any> | undefined
+    if (r) {
+      const item = String(r.extracted?.item || '').trim()
+      const categoria = String(r.subject || '').match(/(?:Ordered|Delivered|Shipped)(?:\s+\d+\s+items?)?\s*:\s*(.+)$/i)?.[1]?.trim() || ''
+      const valorTxt = String(r.currency || 'USD') === 'USD' ? usd(r.amount) : `${r.currency} ${r.amount}`
+      return {
+        item: item ? [item.slice(0, 140), valorTxt].filter(Boolean).join(' · ')
+          : [categoria ? `${categoria} (categoria; a loja não informa o produto)` : 'produto não informado pela loja', valorTxt, 'compra na fila do AutoBook, ainda sem item lançado'].filter(Boolean).join(' · '),
+        supplier: r.vendor ? String(r.vendor) : null, tabela: 'auto_book_mail',
+      }
     }
   }
   return null
@@ -132,7 +160,7 @@ export async function oQueE(db: SupabaseClient, auths: MailAuth[], carrier: stri
   const chave = CARRIER_KEYS.find(([k]) => carrier && k.test(carrier))?.[1] || null
   const entregas = (await entregasNaJanela(db, auths, noticeMs))
     .filter(m => !chave || chave.test(m.fromAddr) || chave.test(m.from) || chave.test(m.subject) || chave.test(m.text.slice(0, 3000)))
-  const linhas: string[] = [], vias: string[] = [], vistos = new Set<string>()
+  const linhas: string[] = [], vias: string[] = [], lojas: string[] = [], vistos = new Set<string>()
 
   for (const m of entregas) {
     const corpo = `${m.subject} ${m.text}`
@@ -145,11 +173,11 @@ export async function oQueE(db: SupabaseClient, auths: MailAuth[], carrier: stri
     if (vistos.has(id)) continue
     vistos.add(id)
 
-    let achado: Awaited<ReturnType<typeof itemNoApp>> = null
+    let achado: NoApp | null = null
     for (const p of pedidos) { achado = await itemNoApp(db, 'order_number', p); if (achado) break }
     if (!achado) for (const r of rastreios) { achado = await itemNoApp(db, 'tracking_number', r); if (achado) break }
     const ref = pedidos[0] ? `pedido ${pedidos[0]}` : rastreios[0] ? `rastreio ${rastreios[0]}` : `e-mail «${m.subject.slice(0, 60)}»`
-    if (achado) { linhas.push(`${achado.item} (${ref})`); vias.push(`${achado.tabela}`) }
+    if (achado) { linhas.push(`${achado.item} (${ref})`); vias.push(`${achado.tabela}`); if (achado.supplier) lojas.push(achado.supplier) }
     else if (categoria) { linhas.push(`${categoria} — é só a categoria que a loja informa; ${ref}, ainda sem lançamento no app`); vias.push('e-mail de entrega') }
     else { linhas.push(`${ref} — ainda sem lançamento no app`); vias.push('e-mail de entrega') }
   }
@@ -160,17 +188,18 @@ export async function oQueE(db: SupabaseClient, auths: MailAuth[], carrier: stri
       .gte('delivered_at', new Date(noticeMs - 6 * 3600_000).toISOString()).lte('delivered_at', new Date(noticeMs + 2 * 3600_000).toISOString()).limit(5)
     for (const r of (data || []) as Record<string, unknown>[]) {
       if (chave && !chave.test(`${r.carrier || ''} ${r.supplier || ''}`)) continue
-      linhas.push(`${String(r.item || '').slice(0, 140)}${r.order_number ? ` (pedido ${r.order_number})` : ''}`); vias.push('part_streams (entrega)')
+      linhas.push(`${String(r.item || '').slice(0, 140)}${r.order_number ? ` (pedido ${r.order_number})` : ''}`); vias.push('part_streams (entrega)'); if (r.supplier) lojas.push(String(r.supplier))
     }
   }
 
-  if (!linhas.length) return { texto: 'não identificado — nenhum pedido nosso bate com esta entrega (pode ser compra pessoal ou do Heraldo)', via: 'sem casamento' }
-  if (linhas.length === 1) return { texto: linhas[0], via: vias[0] }
-  return { texto: `um destes, entregues na mesma hora:\n${linhas.map(l => `   • ${l}`).join('\n')}`, via: [...new Set(vias)].join(' + ') }
+  const loja = new Set(lojas).size === 1 ? lojas[0] : null
+  if (!linhas.length) return { texto: 'não identificado — nenhum pedido no app nem nas nossas caixas bate com esta entrega (pode ser compra pessoal ou do Heraldo)', via: 'sem casamento', loja: null }
+  if (linhas.length === 1) return { texto: linhas[0], via: vias[0], loja }
+  return { texto: `um destes, entregues na mesma hora:\n${linhas.map(l => `   • ${l}`).join('\n')}`, via: [...new Set(vias)].join(' + '), loja }
 }
 
 // ── A MENSAGEM ──────────────────────────────────────────────────────────────
-export function montaMensagem(n: Notice, item: string, receivedIso: string, firstIso: string, textoCru?: string): string {
+export function montaMensagem(n: Notice, item: string, receivedIso: string, firstIso: string, textoCru?: string, loja?: string | null): string {
   const s = semMarcacao
   if (!n.code || !n.box) {
     // Serviço sem leitor próprio, ou modelo que mudou: vai o corpo do e-mail, limpo, para a instrução não se perder.
@@ -180,7 +209,8 @@ export function montaMensagem(n: Notice, item: string, receivedIso: string, firs
   const prazo = n.feeDays && !n.isReminder ? new Date(new Date(firstIso).getTime() + n.feeDays * 86400_000) : null
   return [
     `📦 *ENCOMENDA NO LOCKER*${n.location ? ` — ${s(n.location)}` : ''}`,
-    `Fornecedor: *${s(n.carrier || 'não informado')}*`,
+    // Fornecedor = a LOJA que o app tem para o pedido; quem entregou (o que o e-mail do locker diz) vai ao lado quando é outro.
+    `Fornecedor: *${s(loja || n.carrier || 'não informado')}*${loja && n.carrier && loja.toLowerCase() !== n.carrier.toLowerCase() ? ` · entregue por ${s(n.carrier)}` : ''}`,
     `O que é: ${s(item)}`,
     '',
     `Locker: *${s(n.box)}*${n.unit ? ` · unidade ${s(n.unit)}` : ''}`,
@@ -272,8 +302,8 @@ export async function runParcelLocker(db: SupabaseClient, origin: string, opts: 
       if ((Date.now() - new Date(c.received).getTime()) / 3600_000 > dry) continue
       const n = c.service === 'Parcel Pending' ? parseParcelPending(c.subject, c.text)
         : { service: c.service, isReminder: /reminder/i.test(c.subject), unit: null, location: null, box: null, code: null, carrier: null, feePerDay: null, feeDays: null } as Notice
-      const achado = await oQueE(db, auths, n.carrier, c.received).catch(e => ({ texto: `não identificado (a busca falhou: ${String(e).slice(0, 80)})`, via: 'erro' }))
-      res.dry.push({ account: c.account, received: c.received, subject: c.subject, body: montaMensagem(n, achado.texto, c.received, c.received, c.text), via: achado.via })
+      const achado = await oQueE(db, auths, n.carrier, c.received).catch(e => ({ texto: `não identificado (a busca falhou: ${String(e).slice(0, 80)})`, via: 'erro', loja: null }))
+      res.dry.push({ account: c.account, received: c.received, subject: c.subject, body: montaMensagem(n, achado.texto, c.received, c.received, c.text, achado.loja), via: achado.via })
     }
     return res
   }
@@ -318,8 +348,8 @@ export async function runParcelLocker(db: SupabaseClient, origin: string, opts: 
       continue
     }
 
-    const achado = await oQueE(db, auths, n.carrier, c.received).catch(e => { console.error('[parcel-locker] oQueE', e); return { texto: 'não identificado (a busca do pedido falhou)', via: 'erro' } })
-    const corpo = `${montaMensagem(n, achado.texto, c.received, c.received, c.text)}\n\n${SIGNATURE}`
+    const achado = await oQueE(db, auths, n.carrier, c.received).catch(e => { console.error('[parcel-locker] oQueE', e); return { texto: 'não identificado (a busca do pedido falhou)', via: 'erro', loja: null } })
+    const corpo = `${montaMensagem(n, achado.texto, c.received, c.received, c.text, achado.loja)}\n\n${SIGNATURE}`
     const base = { item_text: achado.texto, match_via: achado.via, wa_to: CHRIS_US, wa_body: corpo, deadline_at: n.feeDays ? new Date(new Date(c.received).getTime() + n.feeDays * 86400_000).toISOString() : null }
     if (parcelKey) porPacote.set(parcelKey, c.received)
 
