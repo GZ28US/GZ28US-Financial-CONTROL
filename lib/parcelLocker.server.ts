@@ -116,7 +116,9 @@ async function entregasNaJanela(db: SupabaseClient, auths: MailAuth[], noticeMs:
         const ms = new Date(m.received).getTime()
         if (!Number.isFinite(ms) || ms > ate) continue
         if (!/deliver|entreg/i.test(m.subject)) continue
-        if (LOCKER_SENDERS.some(s => s.from.test(m.fromAddr))) continue
+        // Só o AVISO DE LOCKER fica de fora (remetente E assunto): o «Delivered» da Amazon vem do mesmo domínio do Amazon Hub e é
+        // justamente o e-mail que diz o que é o pacote (17/11/2026: o ensaio saiu «não identificado» por causa disto).
+        if (LOCKER_SENDERS.some(s => s.from.test(m.fromAddr) && s.subject.test(m.subject))) continue
         out.push(m)
       }
     } catch (e) { console.error('[parcel-locker] entregas', auth.id, e) }
@@ -174,7 +176,8 @@ export function montaMensagem(n: Notice, item: string, receivedIso: string, firs
     // Serviço sem leitor próprio, ou modelo que mudou: vai o corpo do e-mail, limpo, para a instrução não se perder.
     return [`📦 *ENCOMENDA NO LOCKER* — ${s(n.service)}`, `O que é: ${s(item)}`, '', s(String(textoCru || '').replace(/https?:\/\/\S+/g, '').replace(/\s+/g, ' ').trim().slice(0, 900)), '', `Aviso recebido ${L(receivedIso)}`].join('\n')
   }
-  const prazo = n.feeDays ? new Date(new Date(firstIso).getTime() + n.feeDays * 86400_000) : null
+  // O prazo conta do PRIMEIRO aviso. Num lembrete que chegou sem o primeiro, a data não é conhecida — então não é escrita.
+  const prazo = n.feeDays && !n.isReminder ? new Date(new Date(firstIso).getTime() + n.feeDays * 86400_000) : null
   return [
     `📦 *ENCOMENDA NO LOCKER*${n.location ? ` — ${s(n.location)}` : ''}`,
     `Fornecedor: *${s(n.carrier || 'não informado')}*`,
@@ -183,7 +186,8 @@ export function montaMensagem(n: Notice, item: string, receivedIso: string, firs
     `Locker: *${s(n.box)}*${n.unit ? ` · unidade ${s(n.unit)}` : ''}`,
     `Código de retirada: *${s(n.code)}*`,
     'Como retirar: digite o código (ou escaneie o código de barras do e-mail) na tela do locker; a porta abre sozinha.',
-    prazo ? `Prazo: retirar até *${L(prazo)}* — depois, ${s(n.feePerDay || '')} por dia de armazenagem.` : '',
+    prazo ? `Prazo: retirar até *${L(prazo)}* — depois, ${s(n.feePerDay || '')} por dia de armazenagem.`
+      : n.feeDays ? `Prazo: ${n.feeDays} dias a contar do primeiro aviso — depois, ${s(n.feePerDay || '')} por dia de armazenagem.` : '',
     `Aviso do ${s(n.service)} recebido ${L(receivedIso)}${n.isReminder ? ' (lembrete)' : ''}.`,
   ].filter(l => l !== '').join('\n').replace(/\n\n\n+/g, '\n\n')
 }
