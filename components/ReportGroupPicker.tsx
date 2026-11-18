@@ -8,6 +8,8 @@
 export const REPORT_GROUPS = [
   { label: 'Tcal US', name: 'GZ28US - Tcal' },
   { label: 'Ghost Performance', name: 'GZ28 & Ghost Performance' },
+  // Márcio, 17/11/2026: «no report de dyno, inclua o grupo de sócios como opção no envio, além do tcal us e ghost».
+  { label: 'Sócios', name: 'GZ28US | SOCIOS' },
 ] as const
 
 export function ReportGroupPicker({ value, onChange, disabled }: { value: string; onChange: (name: string) => void; disabled?: boolean }) {
