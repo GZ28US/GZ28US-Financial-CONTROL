@@ -955,7 +955,23 @@ export default function EditInvoicePage() {
   }
   // Insert a parts-database item as a fresh, unpaid expense. A KIT expands into a
   // group (members share a purchase_group + carry the kit_name for the header).
+  // A MÃO DE OBRA VEM COM A PEÇA (Márcio, 17/11/2026: «a m.o das peças deve morar no parts db também»). A peça — ou o kit —
+  // importada do Parts DB traz o que o cadastro dela diz: labor_price vira uma linha de SERVICE (preço × quantidade, gravada
+  // no SAVE como as outras) e labor_hours vira uma DUTY sem dono com o tempo previsto. Sem cadastro, não entra nada.
+  // É a única escrita automática em services, e por ordem dele; pack aplicado segue com a mão de obra do próprio pack.
+  async function laborFromDbRow(it: any) {
+    const q = Number(it?.quantity) > 0 ? Number(it.quantity) : 1
+    const price = Number(it?.labor_price) || 0, hours = Number(it?.labor_hours) || 0
+    const nome = String(it?.alias || it?.item || it?.part_number || 'part').trim()
+    if (price > 0) setServices(prev => [...prev, { description: `Installation — ${nome}${q > 1 ? ` (x${q})` : ''}`, price: String(Math.round(price * q * 100) / 100) }])
+    if (hours > 0 && invoiceId) {
+      const { data, error } = await supabase.from('invoice_duties').insert([{ invoice_id: invoiceId, staff_id: null, description: `Install ${nome}`, done: false, priority: '1', estimated_seconds: Math.round(hours * q * 3600) }]).select().single()
+      if (error || !data) { alert(`The part was imported, but its install duty was not created: ${error?.message || 'no row returned'}`); return }
+      setDuties(prev => sortDuties([...prev, { id: data.id, staff_id: data.staff_id, description: data.description, done: false, priority: String(data.priority || '1'), estimated_seconds: Number(data.estimated_seconds) > 0 ? Math.round(Number(data.estimated_seconds)) : null }], staffList))
+    }
+  }
   function addDbItem(it: any) {
+    void laborFromDbRow(it)
     if (it.is_kit) {
       // purchase_group is a uuid column — the group id must be a real UUID, not a
       // "kit-…" string (that's what triggered "invalid input syntax for type uuid").

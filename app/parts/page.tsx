@@ -38,6 +38,9 @@ type Part = {
   shipping: number | null
   handling: number | null
   part_discount: number | null
+  // MÃO DE OBRA DA PEÇA (17/11/2026): horas para instalar UMA unidade e o que o cliente paga por isso (USD). Nulo = não cadastrada.
+  labor_hours?: number | null
+  labor_price?: number | null
   weight_lbs: number | null
   dealer_supplier: string | null
   is_kit?: boolean
@@ -70,6 +73,10 @@ export default function PartsPage() {
   const [ecOur, setEcOur] = useState('')
   const [ecShip, setEcShip] = useState('')
   const [ecHand, setEcHand] = useState('')
+  // LABOR modal — a mão de obra de instalação da peça (parts_database.labor_hours / labor_price).
+  const [laborPart, setLaborPart] = useState<Part | null>(null)
+  const [lbHours, setLbHours] = useState('')
+  const [lbPrice, setLbPrice] = useState('')
   // Manual ADD PART modal (source_type = MANUAL).
   const [showAdd, setShowAdd] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -202,6 +209,35 @@ export default function PartsPage() {
 
   // The part's ONE status — shared definition in lib/utils (LOCKED/HUNT/MANUAL/SCAN).
   const sourceBadge = (p: Part) => partStatusBadge(p)
+
+  // MÃO DE OBRA DA PEÇA (Márcio, 17/11/2026: «a m.o das peças deve morar no parts db também, sem campo duplicado»).
+  // Dois fatos, nenhum cópia do outro: as HORAS para instalar uma unidade e o PREÇO que o cliente paga pela instalação.
+  // A peça importada sozinha numa quote/invoice chega com os dois (uma linha de serviço e uma duty). Os packs seguem com a
+  // mão de obra própria deles — é preço de pacote, não soma de peças.
+  function openLabor(p: Part) {
+    setLaborPart(p)
+    setLbHours(p.labor_hours != null ? String(p.labor_hours) : '')
+    setLbPrice(p.labor_price != null ? String(p.labor_price) : '')
+  }
+  async function saveLabor() {
+    if (!laborPart) return
+    const h = numOf(lbHours), pr = numOf(lbPrice)
+    // shop_locked = false na própria gravação: peça GZ28 SHOP LOCKED só muda pela sessão Parts & Packs.
+    const { data, error } = await supabase.from('parts_database').update({ labor_hours: h > 0 ? h : null, labor_price: pr > 0 ? pr : null, updated_at: new Date().toISOString() })
+      .eq('id', laborPart.id).eq('shop_locked', false).select('id')
+    if (error) { alert(error.message); return }
+    if (!data?.length) { alert('Not saved: this part is GZ28 SHOP LOCKED.'); return }
+    setLaborPart(null)
+    load()
+  }
+  // US$/h do serviço pela regra dele: (lucro da peça + mão de obra) ÷ horas. O lucro aqui é MAP − nosso custo (o preço
+  // de venda real é decidido na quote); sem MAP ou sem custo, conta só a mão de obra.
+  const laborPerHour = (p: Part, hours: number, price: number): number | null => {
+    if (!(hours > 0)) return null
+    const map = Number(p.map_price) || 0, our = Number(p.unit_price) || 0
+    const lucro = map > 0 && our > 0 ? Math.max(0, map - our) : 0
+    return (lucro + price) / hours
+  }
 
   function openCostEditor(p: Part) {
     setEditPart(p)
@@ -442,6 +478,32 @@ export default function PartsPage() {
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
+
+      {laborPart && (() => {
+        const h = numOf(lbHours), pr = numOf(lbPrice), ph = laborPerHour(laborPart, h, pr)
+        return (
+        <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-3xl p-8 max-w-md w-full">
+            <h2 className="text-2xl font-bold mb-1">INSTALL LABOR</h2>
+            <p className="text-gray-400">{laborPart.alias || laborPart.item}{laborPart.part_number ? ` · ${laborPart.part_number}` : ''}</p>
+            <p className="text-gray-500 text-sm mb-6">For ONE unit. Imported on its own into a quote or invoice, the part brings this labor with it.</p>
+            <div className="grid grid-cols-2 gap-3 mb-4">
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">INSTALL HOURS</label><input value={lbHours} onChange={(e) => setLbHours(e.target.value)} className={`${inputClass} w-full`} placeholder="0" autoFocus /></div>
+              <div><label className="block mb-1 text-sm font-bold text-gray-400">LABOR PRICE (USD)</label><input value={lbPrice} onChange={(e) => setLbPrice(e.target.value)} className={`${inputClass} w-full`} placeholder="0" /></div>
+            </div>
+            <p className="text-sm text-gray-400 mb-6">
+              {ph != null
+                ? <>Job rate: <span className="text-teal-300 font-bold">{formatUSD(ph)}/h</span> <span className="text-gray-500">= (part profit at MAP {formatUSD(Math.max(0, (Number(laborPart.map_price) || 0) - (Number(laborPart.unit_price) || 0)))} + labor {formatUSD(pr)}) ÷ {h} h</span></>
+                : 'Enter the hours to see the job rate per hour.'}
+            </p>
+            <div className="flex gap-4">
+              <button onClick={() => setLaborPart(null)} className="flex-1 bg-gray-700 hover:bg-gray-600 px-5 py-4 rounded-2xl font-bold text-lg">CANCEL</button>
+              <button onClick={saveLabor} className="flex-1 bg-green-700 hover:bg-green-600 px-5 py-4 rounded-2xl font-bold text-lg">SAVE LABOR</button>
+            </div>
+          </div>
+        </div>
+        )
+      })()}
 
       {editPart && (
         <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 p-4">
@@ -737,6 +799,9 @@ export default function PartsPage() {
                       {(Number(p.extra) || 0) > 0 ? ` · Extra ${formatUSD(Number(p.extra) || 0)}` : ''}
                       {Math.abs(landedOf(p) - (Number(p.unit_price) || 0)) >= 0.01 && landedOf(p) > 0 ? ` · Landed ${formatUSD(landedOf(p))}` : ''}
                       {` · ${p.is_extra ? 'cheapest' : 'last'}: ${formatDate(p.purchase_date)}`}
+                      {(Number(p.labor_price) > 0 || Number(p.labor_hours) > 0) && (
+                        <> · LABOR: <span className="text-teal-300 font-bold">{Number(p.labor_price) > 0 ? formatUSD(Number(p.labor_price)) : '—'}</span>{Number(p.labor_hours) > 0 ? ` · ${Number(p.labor_hours)} h` : ''}{laborPerHour(p, Number(p.labor_hours) || 0, Number(p.labor_price) || 0) != null ? ` · ${formatUSD(laborPerHour(p, Number(p.labor_hours) || 0, Number(p.labor_price) || 0) || 0)}/h` : ''}</>
+                      )}
                     </p>
                     {(p.category || p.donor || p.notes) && (
                       <p className="text-xs text-gray-500">
@@ -764,6 +829,7 @@ export default function PartsPage() {
                   />
                 </div>
                 <button onClick={() => saveAlias(p)} className="bg-blue-700 hover:bg-blue-600 px-4 py-2 rounded-2xl font-bold text-sm">SAVE</button>
+                <button onClick={() => openLabor(p)} className={`px-4 py-2 rounded-2xl font-bold text-sm ${Number(p.labor_price) > 0 || Number(p.labor_hours) > 0 ? 'bg-teal-800 hover:bg-teal-700' : 'bg-gray-600 hover:bg-gray-500'}`} title="install hours and labor price of this part">LABOR</button>
                 {isHunt(p) && <button onClick={() => openCostEditor(p)} className={`px-4 py-2 rounded-2xl font-bold text-sm ${isPending(p) ? 'bg-yellow-600 hover:bg-yellow-500 text-black' : 'bg-gray-600 hover:bg-gray-500'}`}>{isPending(p) ? 'FILL COST' : 'EDIT COST'}</button>}
                 <button onClick={() => removePart(p)} className="bg-red-700 hover:bg-red-600 px-4 py-2 rounded-2xl font-bold text-sm">REMOVE</button>
               </div>
