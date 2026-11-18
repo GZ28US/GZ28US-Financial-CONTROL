@@ -270,7 +270,9 @@ export type RunResult = { on: boolean; read: number; sent: string[]; preview: st
 
 // `dryHours` = ENSAIO: monta a mensagem de todo aviso das últimas N horas e devolve o texto. Não grava, não manda, não arquiva —
 // é como se confere o que o robô escreveria, inclusive de aviso velho.
-export async function runParcelLocker(db: SupabaseClient, origin: string, opts: { dryHours?: number } = {}): Promise<RunResult> {
+export async function runParcelLocker(db: SupabaseClient, origin: string, opts: { dryHours?: number; force?: string[] } = {}): Promise<RunResult> {
+  // `force` = ids de e-mail que o Marcio mandou avisar mesmo velhos (17/11/2026: «do 1 and 2» — L 24 e S 116 do dia). So vale com a chave ligada.
+  const force = new Set((opts.force || []).filter(Boolean))
   const dry = Number(opts.dryHours) > 0 ? Math.min(240, Number(opts.dryHours)) : 0
   const on = dry ? false : await settingOn(PARCEL_SWITCH)
   const res: RunResult = { on, read: 0, sent: [], preview: [], duplicate: 0, stale: 0, failed: [], already: 0 }
@@ -314,14 +316,15 @@ export async function runParcelLocker(db: SupabaseClient, origin: string, opts: 
     // PREVIEW que ainda estiver FRESCO é enviado; o resto fica como está.
     // Volta a olhar, com a chave ligada: o PREVIEW ainda fresco (vira envio), o envio que FALHOU e a cópia que ficou sem arquivar.
     const reabre = on && !!visto && (visto.status === 'PREVIEW' || visto.status === 'FAILED' || (visto.status === 'DUPLICATE' && !visto.filed))
-    if (visto && !reabre) { res.already++; continue }
+    const forcado = on && force.has(c.id)
+    if (visto && !reabre && !forcado) { res.already++; continue }
 
     const n = c.service === 'Parcel Pending' ? parseParcelPending(c.subject, c.text)
       : { service: c.service, isReminder: /reminder/i.test(c.subject), unit: null, location: null, box: null, code: null, carrier: null, feePerDay: null, feeDays: null } as Notice
     const parcelKey = n.box && n.code ? `${n.box}|${n.code}` : null
     const idadeH = (Date.now() - new Date(c.received).getTime()) / 3600_000
     const primeiro = parcelKey ? porPacote.get(parcelKey) : undefined
-    const repetido = !!primeiro && primeiro < c.received && !(visto?.status === 'PREVIEW')
+    const repetido = !!primeiro && primeiro < c.received && !(visto?.status === 'PREVIEW') && !forcado
     const pasta = /luma/i.test(`${n.location || ''} ${c.text}`) ? 'Apartment - Luma 01-306' : 'Lockers'
 
     const linha: Record<string, unknown> = {
@@ -340,7 +343,7 @@ export async function runParcelLocker(db: SupabaseClient, origin: string, opts: 
       await grava({ status: 'DUPLICATE', filed }); res.duplicate++
       continue
     }
-    if (idadeH > FRESH_HOURS) {
+    if (idadeH > FRESH_HOURS && !forcado) {
       // Aviso velho: não manda (ela costuma já ter retirado). Fica registrado e conta como 1º aviso do pacote.
       await grava({ status: 'STALE', deadline_at: n.feeDays ? new Date(new Date(c.received).getTime() + n.feeDays * 86400_000).toISOString() : null })
       if (parcelKey && !porPacote.has(parcelKey)) porPacote.set(parcelKey, c.received)

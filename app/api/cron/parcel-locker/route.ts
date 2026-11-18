@@ -16,7 +16,7 @@ export async function GET(req: NextRequest) {
   try {
     const origin = process.env.SOCIAL_PUBLIC_ORIGIN || 'https://www.gz28us.com'
     // ?dry=N (horas) = ensaio: devolve o texto que o robô escreveria, sem gravar, mandar ou arquivar.
-    const r = await runParcelLocker(streamDb(), origin, { dryHours: Number(req.nextUrl.searchParams.get('dry')) || 0 })
+    const r = await runParcelLocker(streamDb(), origin, { dryHours: Number(req.nextUrl.searchParams.get('dry')) || 0, force: (req.nextUrl.searchParams.get('force') || '').split(',').map(x => x.trim()).filter(Boolean) })
     return NextResponse.json({ ok: true, ms: Date.now() - t0, ...r })
   } catch (e) {
     console.error('[parcel-locker]', e)
