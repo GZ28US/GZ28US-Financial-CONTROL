@@ -35,7 +35,10 @@ export async function POST(req: NextRequest) {
   "correction": "the correction factor printed on the sheet (e.g. 'CF: STD 1.05', 'STD:1,03', 'Correção 1,09', 'Fator SAE 1.100') as a number string like 1.05, else empty string",
   "correction_standard": "which standard that printed factor belongs to — exactly one of \"STD\", \"SAE\", \"DIN\", \"EEC\", \"JIS\". American Dynojet sheets usually print 'CF: STD'. Empty string if the sheet does not say",
   "date": "the test date in YYYY-MM-DD format, or empty string if not found",
-  "dyno": "the dyno operator. If a GZ28 or GZ28US logo/name appears, return 'GZ28US DynoJet'. If a DynoSolutions logo/name appears, return 'DynoSolutions DynoJet'. Otherwise empty string."
+  "dyno": "the dyno operator. If a GZ28 or GZ28US logo/name appears, return 'GZ28US DynoJet'. If a DynoSolutions logo/name appears, return 'DynoSolutions DynoJet'. Otherwise empty string.",
+  "runs": [
+    { "power": "this run's Max Power as printed", "torque": "this run's Max Torque as printed", "correction": "this run's own correction factor as printed (e.g. the 'STD:1,03' on its legend line or 'CF: STD 1,03' on its footer line), else empty string", "timestamp": "this run's own printed date and time as YYYY-MM-DDTHH:MM:SS (24h), else empty string" }
+  ]
 }
 Rules:
 1. Numbers may use a comma as the decimal separator (e.g. 911,55 means 911.55). Convert every value to a dot decimal and remove any thousands separators. Output plain number strings only — no units.
@@ -43,7 +46,8 @@ Rules:
 3. power_unit: "Power (hp)" / "HP" / "wHP" → "hp"; "cv" / "CV" / "PS" → "cv".
 4. date: parse any printed timestamp such as "11:23:49 PM, Tuesday, June 9, 2026" into "2026-06-09".
 5. dyno: inspect logos and any header/footer text. Prefer exactly 'GZ28US DynoJet' or 'DynoSolutions DynoJet'. Use empty string if you cannot tell.
-6. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
+6. runs — a sheet may OVERLAY SEVERAL RUNS (one colour each). The legend box prints one line per run ("Max Power = 833,55 … Max Torque = 829,30 …", next to that run's weather and "STD:1,02"), and the footer prints one line per run with its colour square and its own timestamp ("[ 3:25:29 PM, Friday, November 20, 2026 ] … [ CF: STD 1,03 ]"). Return ONE entry per run, matching each run's figures to ITS OWN timestamp and correction factor BY COLOUR / line order — never mix one run's power with another run's date. A sheet with a single run returns one entry. The top-level "power", "torque", "correction" and "date" must be those of the MOST RECENT run (the latest timestamp), NOT the highest one.
+7. Output must be a single raw JSON object. Do NOT wrap it in markdown code fences. Do NOT add any text before or after the JSON.`
 
     const anthropicRes = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -91,6 +95,23 @@ Rules:
     }
     const r2 = (n: number) => Math.round(n * 100) / 100
 
+    // ---- FOLHA COM VÁRIAS PUXADAS: VALE A ÚLTIMA (Márcio, 20/11/2026) ----
+    // «no pdf tinham gráficos e ele escolheu o mais alto, mas o certo é escolher o último… é sempre bom eu gerar o pdf com 2
+    // gráficos, mas o report tem que ser baseado no último». Cada puxada da folha tem a própria data e hora no rodapé: a
+    // escolha é feita AQUI, pelo carimbo mais recente — não pelo modelo. Sem carimbo legível, vale a última da lista.
+    // (HellMonster US.037: 833,55 de 19/11 22:35 junto com 827,05 de 20/11 15:25 — o report saiu com 833,55.)
+    const runs = (Array.isArray(parsed.runs) ? parsed.runs : [])
+      .map((r: any) => ({ power: num(r?.power), torque: num(r?.torque), correction: num(r?.correction), timestamp: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/.test(String(r?.timestamp || '')) ? String(r.timestamp) : '' }))
+      .filter((r: any) => r.power != null && r.power > 0)
+    if (runs.length > 1) {
+      const comHora = runs.filter((r: any) => r.timestamp)
+      const ultima = comHora.length === runs.length ? [...runs].sort((a: any, b: any) => a.timestamp.localeCompare(b.timestamp))[runs.length - 1] : runs[runs.length - 1]
+      parsed.power = ultima.power
+      if (ultima.torque != null) parsed.torque = ultima.torque
+      if (ultima.correction != null) parsed.correction = ultima.correction
+      if (ultima.timestamp) parsed.date = ultima.timestamp.slice(0, 10)
+    }
+
     // ---- POWER → hp (in code) ----
     const powerRaw = num(parsed.power ?? parsed.whp)
     const powerUnit = /cv|ps/i.test(String(parsed.power_unit || '')) ? 'cv' : 'hp'
@@ -136,6 +157,8 @@ Rules:
       correction_factor: cfStd != null ? String(cfStd) : '',   // STD
       correction_printed: cfPrinted != null ? String(cfPrinted) : '',
       correction_standard: cfStandard,
+      // todas as puxadas lidas na folha (a escolhida é a mais recente) — a tela avisa quando havia mais de uma
+      runs: runs.map((r: any) => ({ power: String(r.power), timestamp: r.timestamp })),
     })
 
   } catch (err) {
