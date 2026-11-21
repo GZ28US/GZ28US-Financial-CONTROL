@@ -80,7 +80,9 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
     if (cu && cu.amount_usd != null) row[1] = num(Number(cu.amount_usd), 'usd')
     else if (cu && cu.text_value) row[1] = cel(cu.text_value, { c: R })
     if (a) {
-      const m = a.deal_movements, st = a.sheet_style || {}
+      const m = a.deal_movements, raw = a.sheet_style || {}
+      // as chaves valem nas duas grafias (a carga da CC Sidney gravou usd_color / origin_centered / dest_bold…)
+      const st = { ...raw, usdColor: raw.usdColor ?? raw.usd_color, usdBold: raw.usdBold ?? raw.usd_bold, destBold: raw.destBold ?? raw.dest_bold, center: raw.center ?? raw.origin_centered, remarkColor: raw.remarkColor ?? raw.remark_color, remarkBold: raw.remarkBold ?? raw.remark_bold }
       const cor = a.sheet_color || K, corUsd = st.usdColor || cor
       const usd = Number(a.amount_usd) || 0
       const whole = Math.abs(usd - (Number(m.amount_usd) || 0)) < 0.005
