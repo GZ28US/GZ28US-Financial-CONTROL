@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -24,6 +24,8 @@ export default function CarDealPage() {
   const [docs, setDocs] = useState<any[]>([])
   const [newDoc, setNewDoc] = useState<any>({ kind: 'TITLE', label: '', doc_date: '' })
   const [uploading, setUploading] = useState('')
+  const [incomes, setIncomes] = useState<any[]>([])
+  const [expenses, setExpenses] = useState<any[]>([])
   const [sheet, setSheet] = useState<any>(null)
   const [sheetBusy, setSheetBusy] = useState('')
   const [newTarget, setNewTarget] = useState<any>({ chat_id: '', label: '', view: 'TRIPA' })
@@ -77,8 +79,16 @@ export default function CarDealPage() {
     ])
     // movimentos: os alocados a este deal + todo PROPOSED (a caixa de entrada é uma só para todos os deals)
     const { data: mv } = await supabase.from('deal_movements').select('*').order('occurred_on', { ascending: false })
-    const { data: dc } = await supabase.from('deal_documents').select('*').eq('deal_id', dealId).order('created_at', { ascending: false })
+    // documentos: os do carro (deal_id) e as provas de movimento (movement_id) — o comprovante mora num lugar só
+    const { data: dc } = await supabase.from('deal_documents').select('*').or(`deal_id.eq.${dealId},movement_id.not.is.null`).order('created_at', { ascending: false })
     setDocs(dc || [])
+    if (d?.purchase_invoice_id) {
+      const [inc, exp] = await Promise.all([
+        supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).eq('invoice_id', d.purchase_invoice_id),
+        supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).eq('invoice_id', d.purchase_invoice_id),
+      ])
+      setIncomes(inc.data || []); setExpenses(exp.data || [])
+    }
     if (d?.client_id) { const { data: c } = await supabase.from('clients').select('name').eq('id', d.client_id).single(); setClientName(c?.name || '') }
     setDeal(d); setAllDeals((ad.data || []).map(flatDeal)); setCharges(ch.data || []); setObligations(ob.data || [])
     setAllocations(al.data || []); setMilestones(ms.data || []); setMovements(mv || [])
@@ -182,15 +192,14 @@ export default function CarDealPage() {
       if (!fail(error)) { setNewDoc({ ...newDoc, label: '', doc_date: '' }); load() }
     } finally { setUploading('') }
   }
-  // comprovante do movimento: fica no próprio movimento (receipt_urls) — vale para todos os deals em que ele foi alocado
+  // comprovante do movimento: um deal_documents com movement_id — vale para todos os deals em que ele foi alocado
   async function attachProof(m: any, file: File | undefined) {
     if (!file) return
     setUploading(m.id)
     try {
       const url = await uploadFile(file, 'proofs')
       if (!url) return
-      const next = [...(Array.isArray(m.receipt_urls) ? m.receipt_urls : []), url]
-      const { error } = await supabase.from('deal_movements').update({ receipt_urls: next, updated_at: new Date().toISOString() }).eq('id', m.id)
+      const { error } = await supabase.from('deal_documents').insert({ movement_id: m.id, kind: 'PAYMENT_PROOF', file_url: url })
       if (!fail(error)) load()
     } finally { setUploading('') }
   }
@@ -231,7 +240,8 @@ export default function CarDealPage() {
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!deal) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Deal not found.</p></main>
 
-  const positions = dealPositions(dealId, obligations, movements, allocations, milestones)
+  const positions = dealPositions(deal, { charges, obligations, movements, allocations, milestones, incomes, expenses })
+  const proofsOf = (m: any) => docs.filter(x => x.movement_id === m.id)
   const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount_usd) || 0), 0)
   const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `VIN ${vinTail(d.rides?.vin) || '----'} · ${dealLabel(d.deal_no)} · ${carDescription(d.rides)}` : '?' }
   const myMovIds = new Set(allocations.filter(a => a.deal_id === dealId).map(a => a.movement_id))
@@ -382,9 +392,9 @@ export default function CarDealPage() {
                       </span>
                     ) : <span className="font-bold">{PARTY_LABEL[m.from_party]} → {PARTY_LABEL[m.to_party]}</span>}
                     <span className="text-gray-300">{dealDate(m.occurred_on)} · {m.kind}</span>
-                    {(Array.isArray(m.receipt_urls) ? m.receipt_urls : []).map((u: string, i: number) => <a key={i} href={u} target="_blank" rel="noreferrer" className="underline text-blue-300">proof{m.receipt_urls.length > 1 ? ` ${i + 1}` : ''}</a>)}
+                    {proofsOf(m).map((x: any, i: number, all: any[]) => <a key={x.id} href={x.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300">{x.label || `proof${all.length > 1 ? ` ${i + 1}` : ''}`}</a>)}
                     {m.source_message_id && <span className="px-2 py-1 rounded-lg bg-gray-800 text-sm text-gray-300">read from the group</span>}
-                    {!(Array.isArray(m.receipt_urls) && m.receipt_urls.length) && m.kind !== 'OFFSET' && <span className="px-2 py-1 rounded-lg bg-red-950 text-sm font-bold text-red-300">NO PROOF</span>}
+                    {!proofsOf(m).length && m.kind !== 'OFFSET' && <span className="px-2 py-1 rounded-lg bg-red-950 text-sm font-bold text-red-300">NO PROOF</span>}
                     <label className="cursor-pointer underline text-gray-300 text-sm">{uploading === m.id ? 'uploading…' : 'attach proof'}<input type="file" className="hidden" accept="image/*,application/pdf" onChange={e => { attachProof(m, e.target.files?.[0]); e.target.value = '' }} /></label>
                     {m.amount_brl != null && <span className="text-gray-400">R$ {Number(m.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}{Number(m.amount_usd) ? ` @ ${(Number(m.amount_brl) / Number(m.amount_usd)).toFixed(2)}` : ''}</span>}
                     {m.counterparty_label && <span className="text-gray-400">{m.counterparty_label}</span>}
@@ -426,10 +436,11 @@ export default function CarDealPage() {
       )}
 
       {tab === 'DOCUMENTS' && (() => {
-        const titleDocs = docs.filter(d => d.kind === 'TITLE')
+        const titleDocs = docs.filter(d => d.kind === 'TITLE' && d.deal_id === dealId)
         const titleStep = milestones.find(m => m.kind === 'TITLE_RECEIVED')
         const proofs = movements.filter(m => myMovIds.has(m.id))
-        const noProof = proofs.filter(m => m.status === 'CONFIRMED' && m.kind !== 'OFFSET' && !(Array.isArray(m.receipt_urls) && m.receipt_urls.length))
+        const noProof = proofs.filter(m => m.status === 'CONFIRMED' && m.kind !== 'OFFSET' && !proofsOf(m).length)
+        const carDocs = docs.filter(x => x.deal_id === dealId)
         return (
           <div className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -440,8 +451,8 @@ export default function CarDealPage() {
               </div>
               <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5">
                 <p className="text-sm font-bold text-gray-400">DOCUMENTS ON FILE</p>
-                <p className="text-2xl font-bold mt-1">{docs.length}</p>
-                <p className="text-sm text-gray-400 mt-1">{DOC_KINDS.filter(k => docs.some(d => d.kind === k.kind)).map(k => k.label).join(' · ') || 'none yet'}</p>
+                <p className="text-2xl font-bold mt-1">{carDocs.length}</p>
+                <p className="text-sm text-gray-400 mt-1">{DOC_KINDS.filter(k => carDocs.some(d => d.kind === k.kind)).map(k => k.label).join(' · ') || 'none yet'}</p>
               </div>
               <div className={`bg-gray-900 border rounded-3xl p-5 ${noProof.length ? 'border-red-900' : 'border-gray-800'}`}>
                 <p className="text-sm font-bold text-gray-400">CONFIRMED MOVEMENTS WITHOUT PROOF</p>
@@ -462,9 +473,9 @@ export default function CarDealPage() {
 
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
               <h2 className="text-2xl font-bold mb-4">ON FILE</h2>
-              {docs.length === 0 && <p className="text-gray-500">No documents yet.</p>}
+              {carDocs.length === 0 && <p className="text-gray-500">No documents yet.</p>}
               <div className="space-y-2">
-                {DOC_KINDS.flatMap(k => docs.filter(d => d.kind === k.kind)).map(d => (
+                {DOC_KINDS.flatMap(k => carDocs.filter(d => d.kind === k.kind)).map(d => (
                   <div key={d.id} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
                     <span className="w-44 font-bold">{DOC_LABEL[d.kind] || d.kind}</span>
                     <a href={d.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300 flex-1 min-w-40">{d.label || decodeURIComponent(String(d.file_url).split('/').pop() || '').replace(/^\d{10,}-/, '') || 'open'}</a>
@@ -486,8 +497,8 @@ export default function CarDealPage() {
                     <span className="w-36 text-right font-bold">{formatUSD(Number(m.amount_usd) || 0)}</span>
                     <span className="w-64">{PARTY_LABEL[m.from_party]} → {PARTY_LABEL[m.to_party]}</span>
                     <span className="text-gray-400 flex-1 min-w-40">{m.counterparty_label || m.kind}</span>
-                    {(Array.isArray(m.receipt_urls) ? m.receipt_urls : []).length
-                      ? m.receipt_urls.map((u: string, i: number) => <a key={i} href={u} target="_blank" rel="noreferrer" className="underline text-blue-300">proof{m.receipt_urls.length > 1 ? ` ${i + 1}` : ''}</a>)
+                    {proofsOf(m).length
+                      ? proofsOf(m).map((x: any, i: number, all: any[]) => <a key={x.id} href={x.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300">{x.label || `proof${all.length > 1 ? ` ${i + 1}` : ''}`}</a>)
                       : <span className="text-red-400 font-bold">{m.kind === 'OFFSET' ? '' : 'no proof'}</span>}
                   </div>
                 ))}

@@ -117,9 +117,10 @@ export async function scanDealGroups(db: SupabaseClient, opts: { max: number; de
           occurred_on: date, kind: KINDS.includes(String(p.kind)) ? p.kind : 'WIRE', from_party: 'SIDNEY', to_party: 'TRIPA_TRADING',
           amount_usd: amountUsd, amount_brl: brl, counterparty_label: String(p.recipient || '').slice(0, 80) || null,
           payer_label: String(p.payer || '').slice(0, 80) || null, fiscal_ref: String(p.reference || '').slice(0, 80) || null,
-          receipt_urls: fileUrl ? [fileUrl] : [], source_message_id: m.message_id, status: 'PROPOSED', note,
+          source_message_id: m.message_id, status: 'PROPOSED', note,
         }).select('id').single()
         if (e2 || !mov) throw new Error('deal_movements: ' + (e2?.message || 'sem linha'))
+        if (fileUrl) await db.from('deal_documents').insert({ movement_id: mov.id, kind: 'PAYMENT_PROOF', file_url: fileUrl })   // a prova mora num lugar só
         await db.from('deal_group_scans').upsert({ ...base, status: 'PROPOSED', movement_id: mov.id, raw: p, reason: null })
         out.proposed++
       } catch (e) {

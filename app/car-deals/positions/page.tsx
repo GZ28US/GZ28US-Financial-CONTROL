@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
-import { DEAL_SELECT, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
+import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
 
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
@@ -29,6 +29,9 @@ export default function CarDealPositionsPage() {
   const [allocations, setAllocations] = useState<any[]>([])
   const [view, setView] = useState<View>('GZ28')
   const [milestones, setMilestones] = useState<any[]>([])
+  const [charges, setCharges] = useState<any[]>([])
+  const [incomes, setIncomes] = useState<any[]>([])
+  const [expenses, setExpenses] = useState<any[]>([])
 
   useEffect(() => {
     (async () => {
@@ -40,13 +43,20 @@ export default function CarDealPositionsPage() {
         supabase.from('deal_allocations').select('*'),
       ])
       setMilestones(ms.data || [])
+      const invIds = (d.data || []).map((x: any) => x.purchase_invoice_id).filter(Boolean)
+      const [ch, inc, exp] = await Promise.all([
+        supabase.from('deal_charges').select('*'),
+        invIds.length ? supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
+        invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
+      ])
+      setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
       setDeals((d.data || []).map(flatDeal).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
       setLoading(false)
     })()
   }, [])
 
   const dirs = DIRECTIONS.filter(d => !HIDDEN[view].includes(d.key))
-  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d.id, obligations, movements, allocations, milestones) })), [deals, obligations, movements, allocations, milestones])
+  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses }) })), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses])
   const totals = dirs.map(dir => Math.round(rows.reduce((s, r) => s + (r.pos.find(p => p.key === dir.key)?.open || 0), 0) * 100) / 100)
   // VIN primeiro; o apelido interno (US.0xx / Joker…) só na visão GZ28
   const carName = (d: any) => [d.rides?.vin ? `VIN ${d.rides.vin}` : 'no VIN', carDescription(d.rides), view === 'GZ28' ? carInternal(d.rides) : ''].filter(Boolean).join(' · ')
@@ -55,6 +65,12 @@ export default function CarDealPositionsPage() {
   const schedule = obligations
     .filter(o => !o.cancelled && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
     .map(o => ({ ...o, _due: obligationDue(o, milestones) }))
+    .concat(dirs.some(d => d.key === 'SIDNEY>GZ28US') ? incomes.filter(i => !i.paid_at).map(i => {
+      const deal = deals.find(x => x.purchase_invoice_id === i.invoice_id)
+      const date = i.payment_date || null, due = !!date && date <= new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+      return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'SIDNEY', to_party: 'GZ28US', label: i.description || 'Payment on the purchase invoice', amount_usd: i.amount,
+        _due: { date, due, label: date ? `${due ? 'DUE ' : ''}${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : 'no date' } } : null
+    }).filter(Boolean) as any[] : [])
     .sort((a, b) => (a._due.date ? 0 : 1) - (b._due.date ? 0 : 1) || String(a._due.date || '').localeCompare(String(b._due.date || '')))
   const when = (o: any) => o._due.label
 
@@ -135,7 +151,7 @@ export default function CarDealPositionsPage() {
               </tfoot>
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Open = owed minus confirmed movements allocated to that car. A negative number means more was paid in that direction than is recorded as owed.</p>
+          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Sidney → Tripa Trading = the car&apos;s cost lines minus his confirmed payments to them; Sidney → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them. A negative number means more was paid than is owed.</p>
 
           <h2 className="text-2xl font-bold mt-8 mb-3">PAYMENT SCHEDULE ({schedule.length})</h2>
           <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-x-auto">

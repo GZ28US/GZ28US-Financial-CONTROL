@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
-import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEALS (21/11/2026): a compra dos carros, fora das invoices de oficina. Uma linha por compra, com as 4 posições
 // (quem ainda deve a quem) e o total no rodapé. Invoice de compra ainda sem deal aparece embaixo, com o botão de criar.
@@ -22,6 +22,9 @@ export default function CarDealsPage() {
   const [fExporter, setFExporter] = useState('ALL')
   const [busy, setBusy] = useState<string | null>(null)
   const [search, setSearch] = useState('')
+  const [charges, setCharges] = useState<any[]>([])
+  const [incomes, setIncomes] = useState<any[]>([])
+  const [expenses, setExpenses] = useState<any[]>([])
 
   useEffect(() => { load() }, [])
 
@@ -38,6 +41,14 @@ export default function CarDealsPage() {
     setDeals((d.data || []).map(flatDeal)); setPurchases(p.data || []); setObligations(o.data || []); setMovements(m.data || [])
     setAllocations(a.data || []); setMilestones(ms.data || [])
     setClients(Object.fromEntries((c.data || []).map((x: any) => [x.id, x.name || ''])))
+    // as 4 posições leem os custos dos deals e as rendas/despesas das invoices de compra
+    const invIds = (d.data || []).map((x: any) => x.purchase_invoice_id).filter(Boolean)
+    const [ch, inc, exp] = await Promise.all([
+      supabase.from('deal_charges').select('*'),
+      invIds.length ? supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
+      invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
+    ])
+    setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
     setLoading(false)
   }
 
@@ -61,7 +72,7 @@ export default function CarDealsPage() {
     && (!q || [d.rides?.vin, d.deal_no, carDescription(d.rides), carInternal(d.rides)].join(' ').toLowerCase().includes(q)))
     .sort((a, b) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))
 
-  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d.id, obligations, movements, allocations, milestones)])), [deals, obligations, movements, allocations, milestones])
+  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses })])), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses])
   const totals = DIRECTIONS.map((dir, i) => shown.reduce((s, d) => s + (posByDeal[d.id]?.[i]?.open || 0), 0))
   // movimentos propostos que ainda esperam alocação/confirmação humana (o robô nunca aloca sozinho)
   const pending = movements.filter(m => m.status === 'PROPOSED')
@@ -152,7 +163,7 @@ export default function CarDealsPage() {
               )}
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Open = what is owed in that direction minus the confirmed movements allocated to the deal. Proposed movements do not count.</p>
+          <p className="text-sm text-gray-500 mt-2">Sidney → Tripa Trading = the car&apos;s cost lines minus his confirmed payments to them. Sidney → GZ28US = open payments on the purchase invoice. Tripa Trading → GZ28US = open payments he already paid to them. GZ28US → Tripa Trading = our unpaid expenses to them on the purchase invoice. Proposed movements do not count.</p>
 
           {orphanPurchases.length > 0 && (
             <div className="mt-8">

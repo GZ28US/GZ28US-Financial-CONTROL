@@ -90,27 +90,53 @@ export const dealDate = (d: string | null | undefined) => {
   return m ? `${m[3]}/${m[2]}/${m[1]}` : ''
 }
 
-// Posição de UM deal nas 4 direções.
-//   devido = soma das obrigações não canceladas daquela direção (pago/vencido não se grava: é conta)
-//   pago   = soma das alocações, neste deal, de movimentos CONFIRMADOS daquela direção (proposta não conta)
-//   aberto = devido − pago
-// «next» = a próxima obrigação em aberto: a data, ou a condição (o marco) que a dispara.
-export function dealPositions(dealId: string, obligations: any[], movements: any[], allocations: any[], milestones: any[] = []): Position[] {
-  const movById = new Map<string, any>(movements.map(m => [m.id, m]))
-  return DIRECTIONS.map(d => {
-    const obs = obligations.filter(o => o.deal_id === dealId && o.from_party === d.from && o.to_party === d.to && !o.cancelled)
-    const owed = obs.reduce((s, o) => s + (Number(o.amount_usd) || 0), 0)
-    const paid = allocations.reduce((s, a) => {
-      if (a.deal_id !== dealId) return s
-      const m = movById.get(a.movement_id)
-      if (!m || m.status !== 'CONFIRMED' || m.from_party !== d.from || m.to_party !== d.to) return s
-      return s + (Number(a.amount_usd) || 0)
-    }, 0)
-    const dues = obs.map(o => obligationDue(o, milestones))
-    const dated = dues.filter(x => x.date).sort((a, b) => String(a.date).localeCompare(String(b.date)))
-    const next = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
-    return { key: d.key, label: d.label, owed: cents(owed), paid: cents(paid), open: cents(owed - paid), next }
-  })
+// AS 4 POSIÇÕES de um deal — cada direção tem UMA fonte, nada é gravado em dobro (lei «uma info, um campo», 21/11/2026):
+//   Sidney → GZ28US         rendas ABERTAS da invoice de compra que nenhum movimento do cliente cobre (data = payment_date)
+//   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
+//   GZ28US → Tripa Trading  despesas em aberto da invoice de compra para o fornecedor Tripa
+//   Sidney → Tripa Trading  custos do deal (deal_charges) − alocações CONFIRMED Sidney→Tripa Trading no deal = o «Saldo a
+//                           pagar» da planilha; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
+export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[] }
+export const POSITION_INCOME_COLS = 'id, invoice_id, amount, payment_date, paid_at, description'
+export const POSITION_EXPENSE_COLS = 'id, invoice_id, supplier, price, quantity, tax, extra, payment_date, cancel_status'
+const isTripa = (supplier: unknown) => /tripa/i.test(String(supplier || ''))
+const expenseValue = (e: any) => (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0)
+
+export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
+  const movById = new Map<string, any>(ctx.movements.map(m => [m.id, m]))
+  const clientToTripa = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'SIDNEY' && m.to_party === 'TRIPA_TRADING' }
+  const fromClient = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'SIDNEY' }
+  const sum = (xs: any[], f: (x: any) => number) => xs.reduce((t, x) => t + f(x), 0)
+  const inv = deal.purchase_invoice_id
+  const incs = inv ? ctx.incomes.filter(i => i.invoice_id === inv) : []
+  // quanto de cada renda aberta já foi pago pelo cliente (a nós, ou a terceiro por conta dele)
+  let sgOpen = 0, tgOpen = 0, sgNext: string | null = null
+  for (const i of incs) {
+    if (i.paid_at) continue
+    const amount = Number(i.amount) || 0
+    const mine = ctx.allocations.filter(a => a.invoice_income_id === i.id)
+    const viaTripa = Math.min(amount, sum(mine.filter(clientToTripa), a => Number(a.amount_usd) || 0))
+    const covered = Math.min(amount, sum(mine.filter(fromClient), a => Number(a.amount_usd) || 0))
+    tgOpen += viaTripa
+    const rest = amount - covered
+    if (rest > 0.004) { sgOpen += rest; if (i.payment_date && (!sgNext || i.payment_date < sgNext)) sgNext = i.payment_date }
+  }
+  const sgOwed = sum(incs, i => Number(i.amount) || 0)
+  const exps = inv ? ctx.expenses.filter(e => e.invoice_id === inv && isTripa(e.supplier) && !e.cancel_status) : []
+  const gtOwed = sum(exps, expenseValue), gtOpen = sum(exps.filter(e => !e.payment_date), expenseValue)
+  const stOwed = sum(ctx.charges.filter(c => c.deal_id === deal.id), c => Number(c.amount_usd) || 0)
+  const stPaid = sum(ctx.allocations.filter(a => a.deal_id === deal.id && clientToTripa(a)), a => Number(a.amount_usd) || 0)
+  const dues = ctx.obligations.filter(o => o.deal_id === deal.id && !o.cancelled && o.from_party === 'SIDNEY' && o.to_party === 'TRIPA_TRADING').map(o => obligationDue(o, ctx.milestones))
+  const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
+  const stNext = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
+  const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
+    'SIDNEY>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOwed - stPaid), next: stNext },
+    'SIDNEY>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgOpen), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
+    'TRIPA_TRADING>GZ28US': { owed: cents(tgOpen), paid: 0, open: cents(tgOpen), next: null },
+    'GZ28US>TRIPA_TRADING': { owed: cents(gtOwed), paid: cents(gtOwed - gtOpen), open: cents(gtOpen), next: null },
+  }
+  return DIRECTIONS.map(d => ({ key: d.key, label: d.label, ...byKey[d.key] }))
 }
 
 // Quanto de um movimento ainda não foi alocado.
