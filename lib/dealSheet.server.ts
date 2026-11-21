@@ -31,7 +31,10 @@ const num = (n: number, fmt: 'usd' | 'brl', o: Partial<Cel> = {}): Cel => ({ v: 
 const money = (n: number, prefix: string) => `${prefix} ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const usdNote = (n: number) => `$ ${Math.round(n).toLocaleString('pt-BR')}`
 
-export async function buildDealSheet(db: SupabaseClient, dealId: string): Promise<DealSheet | null> {
+// VISÃO: 'SIDNEY' tira TODA nota da direita (a perna Tripa Trading ↔ GZ28US não vai a grupo com o cliente — no RedHot
+// o Sidney nem sabe que o carro é do Tripa/Edison). 'GZ28' e 'TRIPA' levam a planilha inteira.
+export type SheetView = 'GZ28' | 'TRIPA' | 'SIDNEY'
+export async function buildDealSheet(db: SupabaseClient, dealId: string, view: SheetView = 'GZ28'): Promise<DealSheet | null> {
   const { data: deal } = await db.from('car_deals').select('*, rides(project_code, project_name, vin, color)').eq('id', dealId).maybeSingle()
   if (!deal) return null
   const [{ data: charges }, { data: allocs }, { data: client }] = await Promise.all([
@@ -100,7 +103,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string): Promis
 
   // notas à direita
   const notes: any[] = Array.isArray(deal.sheet_notes) ? deal.sheet_notes : []
-  if (notes.length) {
+  if (view === 'SIDNEY') { /* sem notas */ } else if (notes.length) {
     for (const nt of notes) {
       const r = Number(nt.row) || 0, c = COLS.indexOf(String(nt.col || '').toUpperCase())
       if (c < 0 || !body[r]) continue

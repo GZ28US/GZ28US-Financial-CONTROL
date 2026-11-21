@@ -23,6 +23,8 @@ export default function CarDealPage() {
   const [tab, setTab] = useState<'SUMMARY' | 'MOVEMENTS' | 'TRIPA SHEET' | 'MILESTONES'>('SUMMARY')
   const [sheet, setSheet] = useState<any>(null)
   const [sheetBusy, setSheetBusy] = useState('')
+  const [newTarget, setNewTarget] = useState<any>({ chat_id: '', label: '', view: 'TRIPA' })
+  const [postLog, setPostLog] = useState<any>(null)
   const [deal, setDeal] = useState<any>(null)
   const [form, setForm] = useState<any>({})
   const [allDeals, setAllDeals] = useState<any[]>([])
@@ -79,6 +81,7 @@ export default function CarDealPage() {
     setForm({ deal_no: d?.deal_no || '', exporter: d?.exporter || '', status: d?.status || 'OPEN', declared_value_usd: d?.declared_value_usd ?? '', wa_chat_id: d?.wa_chat_id || '', wa_chat_app: d?.wa_chat_app || '', notes: d?.notes || '' })
     setLoading(false)
   }
+  const targetList: any[] = Array.isArray(deal?.post_targets) ? deal.post_targets : []
   const fail = (e: any) => { if (e) { alert(e.message || String(e)); return true } return false }
   const flash = (t: string) => { setMsg(t); setTimeout(() => setMsg(''), 2500) }
 
@@ -146,7 +149,47 @@ export default function CarDealPage() {
       status, confirmed_at: status === 'CONFIRMED' ? new Date().toISOString() : null,
       confirmed_by: status === 'CONFIRMED' ? (u?.user?.email || null) : null, updated_at: new Date().toISOString(),
     }).eq('id', m.id)
+    if (fail(error)) return
+    await load()
+    if (status === 'CONFIRMED') autoPost(m.id)
+  }
+  // Depois de um CONFIRM: pede a postagem automática para cada deal tocado pelo movimento. O servidor só manda com as
+  // DUAS chaves ligadas (a geral e a do deal) e nunca repete planilha igual; desligado, não acontece nada.
+  async function autoPost(movementId: string) {
+    const ids = [...new Set(allocations.filter(a => a.movement_id === movementId).map(a => a.deal_id))]
+    for (const id of ids) {
+      const r = await fetch(`${BASE_PATH}/api/car-deals/post`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ deal: id, auto: true }) }).then(x => x.json()).catch(() => null)
+      if (r?.posted) flash(`Sheet posted automatically (${r.sent.filter((s: any) => s.ok).length} files)`)
+    }
+  }
+  async function setMovParty(m: any, field: 'from_party' | 'to_party', value: string) {
+    const other = field === 'from_party' ? m.to_party : m.from_party
+    if (value === other) { alert('From and To must be different parties.'); return }
+    const { error } = await supabase.from('deal_movements').update({ [field]: value, updated_at: new Date().toISOString() }).eq('id', m.id)
     if (!fail(error)) load()
+  }
+  async function saveTargets(next: any[], autoFlag?: boolean) {
+    const patch: any = { post_targets: next, updated_at: new Date().toISOString() }
+    if (autoFlag !== undefined) patch.auto_post = autoFlag
+    const { error } = await supabase.from('car_deals').update(patch).eq('id', dealId)
+    if (!fail(error)) load()
+  }
+  function addTarget() {
+    const chat = newTarget.chat_id.trim()
+    if (!chat.endsWith('@g.us') && !chat.endsWith('@c.us')) { alert('The chat id must end in @g.us (group) or @c.us (person).'); return }
+    saveTargets([...targetList, { chat_id: chat, app: 'us', label: newTarget.label.trim() || null, view: newTarget.view }])
+    setNewTarget({ chat_id: '', label: '', view: 'TRIPA' })
+  }
+  async function postNow() {
+    if (!targetList.length) { alert('Add at least one target first.'); return }
+    const list = targetList.map((t: any) => `• ${t.label || t.chat_id} — ${t.view || 'GZ28'} view`).join('\n')
+    if (!confirm(`Send the Excel and the PDF of this sheet by WhatsApp, now, to:\n\n${list}\n\nThis reaches people outside the app. Send?`)) return
+    setSheetBusy('post'); setPostLog(null)
+    try {
+      const r = await fetch(`${BASE_PATH}/api/car-deals/post`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ deal: dealId, auto: false, force: true }) })
+      setPostLog(await r.json().catch(() => ({ error: `HTTP ${r.status}` })))
+      load()
+    } finally { setSheetBusy('') }
   }
   async function setMilestone(kind: string, done_at: string) {
     const { error } = await supabase.from('deal_milestones').upsert({ deal_id: dealId, kind, done_at: done_at || null }, { onConflict: 'deal_id,kind' })
@@ -301,8 +344,16 @@ export default function CarDealPage() {
                   <div className="flex items-center gap-4 flex-wrap">
                     <span className={`px-3 py-1 rounded-full text-sm font-bold ${proposed ? 'bg-amber-600 text-black' : 'bg-green-800 text-green-300'}`}>{m.status}</span>
                     <span className="text-xl font-bold">{formatUSD(Number(m.amount_usd) || 0)}</span>
-                    <span className="font-bold">{PARTY_LABEL[m.from_party]} → {PARTY_LABEL[m.to_party]}</span>
+                    {proposed ? (
+                      <span className="flex items-center gap-2">
+                        <select className={inp} value={m.from_party} onChange={e => setMovParty(m, 'from_party', e.target.value)}>{PARTIES.map(p => <option key={p} value={p}>{PARTY_LABEL[p]}</option>)}</select>
+                        →
+                        <select className={inp} value={m.to_party} onChange={e => setMovParty(m, 'to_party', e.target.value)}>{PARTIES.map(p => <option key={p} value={p}>{PARTY_LABEL[p]}</option>)}</select>
+                      </span>
+                    ) : <span className="font-bold">{PARTY_LABEL[m.from_party]} → {PARTY_LABEL[m.to_party]}</span>}
                     <span className="text-gray-300">{dealDate(m.occurred_on)} · {m.kind}</span>
+                    {(Array.isArray(m.receipt_urls) ? m.receipt_urls : []).map((u: string, i: number) => <a key={i} href={u} target="_blank" rel="noreferrer" className="underline text-blue-300">proof{m.receipt_urls.length > 1 ? ` ${i + 1}` : ''}</a>)}
+                    {m.source_message_id && <span className="px-2 py-1 rounded-lg bg-gray-800 text-sm text-gray-300">read from the group</span>}
                     {m.amount_brl != null && <span className="text-gray-400">R$ {Number(m.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}{m.fx_rate != null ? ` @ ${m.fx_rate}` : ''}</span>}
                     {m.counterparty_label && <span className="text-gray-400">{m.counterparty_label}</span>}
                     {m.payer_label && <span className="text-gray-400">paid by {m.payer_label}</span>}
@@ -350,6 +401,39 @@ export default function CarDealPage() {
             {sheet?.grid && <span className="text-gray-400">Car total {formatUSD(sheet.total)} · paid {formatUSD(sheet.paid)} · balance {formatUSD(sheet.balance)} · {sheet.payments} payment line{sheet.payments === 1 ? '' : 's'}</span>}
           </div>
           <p className="text-gray-400">Same layout as the exporter&apos;s screen. It shows confirmed movements only, and nothing here is posted anywhere: the files are downloaded to this computer.</p>
+          <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+            <h2 className="text-2xl font-bold mb-1">WHERE THIS SHEET GOES</h2>
+            <p className="text-gray-400 mb-4">Each target gets the Excel and the PDF. A SIDNEY-view target gets the sheet WITHOUT the notes on the right (the Tripa Trading ↔ GZ28US leg). Never add a group the client is in with a TRIPA or GZ28 view.</p>
+            <div className="space-y-2">
+              {targetList.length === 0 && <p className="text-gray-500">No targets yet — nothing can be posted for this deal.</p>}
+              {targetList.map((t: any, i: number) => (
+                <div key={i} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
+                  <span className="font-bold w-64">{t.label || '(no label)'}</span>
+                  <span className="text-gray-400 flex-1 min-w-40">{t.chat_id}</span>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${t.view === 'SIDNEY' ? 'bg-blue-900 text-blue-200' : 'bg-gray-700 text-gray-200'}`}>{t.view || 'GZ28'} view</span>
+                  <button onClick={() => saveTargets(targetList.filter((_: any, k: number) => k !== i))} className="text-gray-500 hover:text-red-400 font-bold">REMOVE</button>
+                </div>
+              ))}
+            </div>
+            <div className="flex gap-3 mt-4 flex-wrap items-end">
+              <input className={`${inp} w-64`} placeholder="Label (Tripa private, group…)" value={newTarget.label} onChange={e => setNewTarget({ ...newTarget, label: e.target.value })} />
+              <input className={`${inp} flex-1 min-w-40`} placeholder="WhatsApp chat id (…@g.us or …@c.us)" value={newTarget.chat_id} onChange={e => setNewTarget({ ...newTarget, chat_id: e.target.value })} />
+              <select className={inp} value={newTarget.view} onChange={e => setNewTarget({ ...newTarget, view: e.target.value })}><option value="TRIPA">TRIPA view (full sheet)</option><option value="SIDNEY">SIDNEY view (no right-side notes)</option><option value="GZ28">GZ28 view (full sheet)</option></select>
+              <button onClick={addTarget} className={`${btn} bg-green-700 hover:bg-green-600`}>ADD TARGET</button>
+            </div>
+            <div className="flex gap-4 mt-5 items-center flex-wrap border-t border-gray-800 pt-4">
+              <button onClick={postNow} disabled={!sheet?.grid || !!sheetBusy} className={`${btn} bg-blue-800 hover:bg-blue-700 disabled:opacity-40 text-lg`}>{sheetBusy === 'post' ? 'SENDING…' : 'POST NOW (WhatsApp)'}</button>
+              <label className="flex items-center gap-2 text-gray-300"><input type="checkbox" checked={!!deal.auto_post} onChange={e => saveTargets(targetList, e.target.checked)} /> Post by itself when a movement of this deal is confirmed</label>
+              <span className="text-sm text-gray-500">Automatic posting also needs the general switch (car_deals.auto_post), which is OFF until Márcio turns it on.</span>
+            </div>
+            {postLog && (
+              <div className="mt-4 text-sm">
+                {postLog.error && <p className="text-red-400 font-bold">{postLog.error}</p>}
+                {postLog.reason && <p className="text-amber-300 font-bold">{postLog.reason}</p>}
+                {(postLog.sent || []).map((s: any, i: number) => <p key={i} className={s.ok ? 'text-green-400' : 'text-red-400'}>{s.ok ? 'sent' : 'FAILED'} — {s.label || s.to} — {s.file}{s.error ? ` — ${s.error}` : ''}</p>)}
+              </div>
+            )}
+          </div>
           {!sheet ? <p className="text-xl text-gray-400">Loading...</p> : sheet.error ? <p className="text-xl text-red-400">Could not build the sheet: {sheet.error}</p> : (
             <div className="overflow-x-auto bg-white rounded-xl p-2">
               <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: '100%', minWidth: 1300, fontFamily: 'Arial, Helvetica, sans-serif' }}>
