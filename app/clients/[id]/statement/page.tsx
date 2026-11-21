@@ -35,7 +35,7 @@ export default function ClientStatementPage() {
     setBusy(format)
     try {
       const r = await fetch(`${BASE_PATH}/api/statement?client=${clientId}&view=${view}${ride ? `&ride=${ride}` : ''}&format=${format}`, { headers: await sessionHeaders() })
-      if (!r.ok) { alert(`Could not generate the ${format.toUpperCase()}: HTTP ${r.status}`); return }
+      if (!r.ok) { const j = await r.json().catch(() => ({})); alert(j.error || `Could not generate the ${format.toUpperCase()}: HTTP ${r.status}`); return }
       const name = (r.headers.get('content-disposition') || '').match(/filename="([^"]+)"/)?.[1] || `Conta Corrente.${format}`
       const a = document.createElement('a'); a.href = URL.createObjectURL(await r.blob()); a.download = name; a.click()
       setTimeout(() => URL.revokeObjectURL(a.href), 5000)
@@ -82,13 +82,19 @@ export default function ClientStatementPage() {
             <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5"><p className="text-sm font-bold text-gray-400">STILL TO RECEIVE IN THE APP</p><p className="text-3xl font-bold mt-1">{formatUSD(openInApp)}</p><p className="text-sm text-gray-400 mt-1">of which already paid by the client to a third party: {formatUSD(st.thirdParty || 0)}</p><p className={`text-sm mt-1 ${Math.abs(st.balance + openInApp - (st.thirdParty || 0)) < 0.01 ? 'text-green-400' : 'text-amber-300'}`}>check: balance + open − third party = {formatUSD(Math.round((st.balance + openInApp - (st.thirdParty || 0)) * 100) / 100)} (should be 0)</p></div>
           </div>
 
+          {(st.leaks || []).length > 0 && (
+            <div className="bg-red-950 border border-red-700 rounded-3xl p-5 mb-6">
+              <p className="text-lg font-bold text-red-300">{st.leaks.length} line{st.leaks.length > 1 ? 's' : ''} of this version mention the exporter (Tripa / Edison / Tamiami / EMC) — marked in red below</p>
+              <p className="text-gray-300 mt-1">The Excel and the PDF of this version will not be generated until the text is fixed on the invoice (its SERVICE title).</p>
+            </div>
+          )}
           {rows.length === 0 ? <p className="text-xl text-gray-400">Nothing in this client&apos;s current account yet.</p> : (
             <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead><tr className="text-gray-400 border-b border-gray-800"><th className="p-3">CAR</th><th className="p-3">CODE</th><th className="p-3">DATE</th><th className="p-3">ITEM</th><th className="p-3 text-right">DEBIT</th><th className="p-3 text-right">CREDIT</th><th className="p-3 text-right">BALANCE</th><th className="p-3 text-right">R$</th><th className="p-3">OBS</th></tr></thead>
                 <tbody>
                   {rows.map(r => (
-                    <tr key={r.key} className={`border-b border-gray-800 ${r.kind === 'CREDIT' ? 'bg-green-950/40' : ''}`}>
+                    <tr key={r.key} className={`border-b border-gray-800 ${(st.leaks || []).includes(r.key) ? 'bg-red-950' : r.kind === 'CREDIT' ? 'bg-green-950/40' : ''}`}>
                       <td className="p-3 whitespace-nowrap font-bold">{r.car}{r.personal && <span className="ml-2 px-2 py-0.5 rounded-full text-xs bg-gray-700 text-gray-300">personal</span>}</td>
                       <td className="p-3 whitespace-nowrap">{r.code}</td>
                       <td className="p-3 whitespace-nowrap">{d2(r.date)}</td>

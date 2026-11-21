@@ -34,7 +34,7 @@ export async function loadStatementData(db: SupabaseClient, clientId: string): P
       const inv = b.invoice
       invoices.push({ id: inv.id, invoice_code: inv.invoice_code, service: inv.service, kind: inv.kind, origin: inv.origin,
         date: inv.hiring_date || inv.client_hiring_date || inv.entry_date || dayNY(inv.created_at), grand: b.money.grand,
-        ride: b.ride ? { id: b.ride.id, model: b.ride.model, color: b.ride.color, project_code: b.ride.project_code } : null, dealNo: dealNoOf.get(inv.id) || null })
+        ride: b.ride ? { id: b.ride.id, model: b.ride.model, version: b.ride.version, color: b.ride.color, vin: b.ride.vin, project_code: b.ride.project_code } : null, dealNo: dealNoOf.get(inv.id) || null })
       for (const r of b.incomes) incomes.push({ id: r.id, invoice_id: r.invoice_id, amount: r.amount, description: r.description, amount_brl: r.amount_brl,
         paid: !!r.paid_at, date: r.payment_date || dayNY(r.paid_at), due: r.payment_date || null })
     }

@@ -33,6 +33,11 @@ export type StatementRow = {
 // incomes:  [{ id, invoice_id, amount, date, description, amount_brl, paid }]
 export type StatementData = { invoices: any[]; incomes: any[]; movements: any[]; allocations: any[]; deals: any[] }
 // thirdParty = o que o cliente já pagou a terceiro por conta de renda que ainda está aberta no app (a receber de terceiros)
+// TRAVA DE VAZAMENTO: nas versões do cliente e do contador nenhuma linha pode citar o exportador nem quem está por trás
+// dele (caso RedHot: o cliente não sabe de quem é o carro). O texto vem de invoices.service, que alguém digita.
+export const LEAK_WORDS = /tripa|edison|tamiami|\bemc\b/i
+export const leakingRows = (rows: StatementRow[]) => rows.filter(r => LEAK_WORDS.test([r.car, r.code, r.item, r.obs].join(' | ')))
+
 export type Statement = { rows: StatementRow[]; debit: number; credit: number; balance: number; brl: number; thirdParty: number; cars: { id: string; name: string }[] }
 
 const cents = (n: number) => Math.round(n * 100) / 100
@@ -41,7 +46,20 @@ const DEPOSIT = 'DEPÓSITO'
 
 export function buildStatement(d: StatementData, view: StatementView, opts: { rideId?: string } = {}): Statement {
   const invById = new Map<string, any>(d.invoices.map(i => [i.id, i]))
-  const carOf = (inv: any) => inv?.ride ? [inv.ride.model, inv.ride.color].map(txt).filter(Boolean).join(' ') : ''
+  // NOME DO CARRO para o cliente — derivado de rides, sem campo: modelo + versão (sem a cilindrada) + cor; se dois carros
+  // do cliente ainda derem o mesmo nome, entram os 4 finais do VIN. («Challenger TorRed» era ao mesmo tempo o HellCat
+  // RedEye e o Demon 170.) Nunca o apelido interno.
+  const cap = (w: string) => /^[A-Z]{4,}$/.test(w) ? w[0] + w.slice(1).toLowerCase() : w
+  const baseName = (r: any) => [txt(r.model).split(/\s+/).map(cap).join(' '), txt(r.version).replace(/\s*\b\d\.\d\b/g, '').trim(), txt(r.color)].filter(Boolean).join(' ')
+  const rideById = new Map<string, any>(d.invoices.filter(i => i.ride?.id).map(i => [i.ride.id, i.ride]))
+  const nameCount = new Map<string, number>()
+  for (const r of rideById.values()) nameCount.set(baseName(r), (nameCount.get(baseName(r)) || 0) + 1)
+  const carOf = (inv: any) => {
+    const r = inv?.ride
+    if (!r) return ''
+    const n = baseName(r)
+    return (nameCount.get(n) || 0) > 1 && txt(r.vin) ? `${n} (VIN ${txt(r.vin).slice(-4)})` : n
+  }
   const codeOf = (inv: any) => inv ? (inv.dealNo ? `Compra ${txt(inv.dealNo).replace(/^compra\s*/i, '')}` : txt(inv.invoice_code)) : ''
   const isPersonal = (inv: any) => txt(inv?.origin).toUpperCase() === 'PERSONAL'
 
