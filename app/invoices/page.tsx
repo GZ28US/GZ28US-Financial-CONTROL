@@ -71,6 +71,8 @@ export default function InvoicesPage() {
       // exclui o balde A ATRIBUIR (origin BUCKET); a guarda fica explícita
       // porque o REMOVE desta lista apagaria o balde inteiro em cascata.
       .neq('origin', 'BUCKET')
+      // CAR DEALS (21/11/2026): a invoice de COMPRA do carro não é serviço de oficina — mora em CARS → CAR DEALS.
+      .neq('kind', 'CAR_PURCHASE')
       .not('ride_id', 'is', null)
       .order('updated_at', { ascending: false, nullsFirst: false })
       .order('created_at', { ascending: false })

@@ -42,6 +42,14 @@ const MENU: MenuItem[] = [
     ],
   },
   {
+    // CARS (21/11/2026): a compra dos carros sai das invoices de oficina e ganha área própria.
+    type: 'dropdown',
+    label: 'CARS',
+    items: [
+      ['/car-deals', 'CAR DEALS'],
+    ],
+  },
+  {
     type: 'dropdown',
     label: 'QUOTES',
     items: [

@@ -91,6 +91,7 @@ export default function InvoicesPage() {
   const [stats, setStats] = useState<Record<string, InvoiceStats>>({})
   const [loading, setLoading] = useState(true)
   const [confirmId, setConfirmId] = useState<string | null>(null)
+  const [purchases, setPurchases] = useState<any[]>([])
   // Whether this owner (client or ride) is a quote entity — drives label + create button.
   const [ownerIsQuote, setOwnerIsQuote] = useState(false)
   // Ride mode: each invoice belongs to the client stamped on it (ownership
@@ -146,7 +147,14 @@ export default function InvoicesPage() {
     if (isClient) query = query.is('ride_id', null)
     const { data } = await query
 
-    const invoiceList = data || []
+    // CAR DEALS (21/11/2026): a invoice de COMPRA do carro sai da lista de serviço e vira um cartão que abre o deal.
+    const todas = data || []
+    const compras = todas.filter((i: any) => i.kind === 'CAR_PURCHASE')
+    const invoiceList = todas.filter((i: any) => i.kind !== 'CAR_PURCHASE')
+    if (compras.length) {
+      const { data: ds } = await supabase.from('car_deals').select('id, deal_no, purchase_invoice_id').in('purchase_invoice_id', compras.map((i: any) => i.id))
+      setPurchases(compras.map((i: any) => ({ ...i, deal: (ds || []).find((d: any) => d.purchase_invoice_id === i.id) || null })))
+    } else setPurchases([])
     setInvoices(invoiceList)
     // FL SALES TAX PELA LEI (lib/flTax): o carro (OWNER & DESTINATION) e o endereço do cliente de cada invoice
     const { data: taxRide } = isClient ? { data: null } : await supabase.from('rides').select('client_id, title_scope').eq('id', ownerId).single()
@@ -310,6 +318,20 @@ export default function InvoicesPage() {
           </div>
         </div>
       )}
+
+      {purchases.map((pc) => (
+        <div key={pc.id} className="bg-gray-900 border border-blue-900 rounded-3xl p-6 mb-5 flex items-center justify-between gap-6 flex-wrap">
+          <div>
+            <p className="text-sm font-bold text-blue-300">CAR PURCHASE{pc.deal?.deal_no ? ` — COMPRA ${pc.deal.deal_no}` : ''}</p>
+            <h2 className="text-2xl font-bold">{pc.invoice_code}</h2>
+            <p className="text-gray-400">{pc.service || ''}</p>
+          </div>
+          <div className="flex gap-3">
+            <Link href={`${basePath}/${pc.id}`} className="bg-gray-700 hover:bg-gray-600 px-5 py-3 rounded-2xl text-lg font-bold">PURCHASE INVOICE</Link>
+            <Link href={pc.deal ? `/car-deals/${pc.deal.id}` : '/car-deals'} className="bg-blue-800 hover:bg-blue-700 px-5 py-3 rounded-2xl text-lg font-bold">{pc.deal ? 'OPEN DEAL' : 'CAR DEALS'}</Link>
+          </div>
+        </div>
+      ))}
 
       {loading ? (
         <p className="text-2xl text-gray-400">Loading...</p>
