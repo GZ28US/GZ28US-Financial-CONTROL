@@ -216,6 +216,7 @@ export default function ViewClientPage() {
         <div className="flex gap-3">
           <button onClick={handleSendClient} disabled={sending || justSent} className={`disabled:opacity-60 px-6 py-4 rounded-2xl text-xl font-bold ${justSent ? 'bg-green-600' : 'bg-green-700 hover:bg-green-600'}`}>{sending ? 'SENDING…' : justSent ? '✓ SENT' : '📲 SEND CLIENT'}</button>
           <Link href="/clients" className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">BACK</Link>
+          <Link href={`/clients/${clientId}/statement`} className="bg-gray-700 hover:bg-gray-600 px-6 py-4 rounded-2xl text-xl font-bold">CONTA-CORRENTE</Link>
           <Link href={`/clients/edit/${clientId}`} className="bg-blue-700 hover:bg-blue-600 px-6 py-4 rounded-2xl text-xl font-bold">EDIT</Link>
         </div>
       </div>
