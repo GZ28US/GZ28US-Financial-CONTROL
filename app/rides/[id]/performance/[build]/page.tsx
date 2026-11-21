@@ -305,11 +305,12 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       if (isBoneStock({ pack: effPack })) {
         if (!(scannedWhp > 0)) { alert('The scan found no WHP figure on this sheet — BoneStock cannot be saved without it. Scan a clearer sheet.'); return }
         if (!car) { alert('Car identity not loaded yet — try again in a second.'); return }
-        // TRX = 18% FIXO (Márcio, 17/11/2026: «na trx, use 18% de loss, mesmo que a medição bonestock passe de 700bhp»).
-        // Na TRX a perda NÃO se deduz da potência de fábrica: a roda medida ÷ 0,82 dá o virabrequim, mesmo acima dos 702 hp
-        // declarados (HellMonster US.037: 582,99 whp → 710,96 bhp).
+        // TRX = 20% FIXO (Márcio, 21/11/2026: «use 20% of loss to the TRX»; era 18% desde 17/11: «na trx, use 18% de loss,
+        // mesmo que a medição bonestock passe de 700bhp»).
+        // Na TRX a perda NÃO se deduz da potência de fábrica: a roda medida ÷ 0,80 dá o virabrequim, mesmo acima dos 702 hp
+        // declarados (HellMonster US.037: 582,99 whp → 728,74 bhp).
         if (/\btrx\b/i.test(`${car.model || ''} ${car.version || ''}`)) {
-          await savePull({ pack: effPack, whp: String(scannedWhp), wnm: String(data.wnm ?? ''), loss: '18', dmonth: m ? m[2] : '', dday: m ? m[3] : '', dyear: m ? m[1] : '', dyno: data.dyno || 'GZ28US DynoJet' }, file)
+          await savePull({ pack: effPack, whp: String(scannedWhp), wnm: String(data.wnm ?? ''), loss: '20', dmonth: m ? m[2] : '', dday: m ? m[3] : '', dyear: m ? m[1] : '', dyno: data.dyno || 'GZ28US DynoJet' }, file)
           return
         }
         let hp = 0
@@ -582,7 +583,7 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       } else if (isBoneStock(p) && !(p.document_url && !isPredictedBaseline(p.pack))) {
         // Só a linha de base SEM folha (prediction / fábrica) é re-ancorada no virabrequim de fábrica. BoneStock MEDIDA (tem a
         // folha do dyno) guarda a roda que o dinamômetro leu e re-deriva o virabrequim, como qualquer puxada (17/11/2026: a
-        // TRX a 18% tem de dar 710,96 bhp sobre 582,99 whp — antes, mudar a perda aqui reescrevia a roda medida).
+        // TRX a 20% tem de dar 728,74 bhp sobre 582,99 whp — antes, mudar a perda aqui reescrevia a roda medida).
         const whp = p.bhp != null ? Math.round(p.bhp * lf * 100) / 100 : p.whp
         const wnm = p.bnm != null ? Math.round(p.bnm * lf * 100) / 100 : p.wnm
         await supabase.from('dyno_pulls').update({ loss_pct: v, whp, wnm }).eq('id', p.id)
@@ -2124,8 +2125,8 @@ export default function RidePerformancePage() {
     // HELLCAT WIDEBODY = 17% (Márcio, 13/10/2026: «todos os HellCats com 20" WideBody» — a perda das rodas 20" do WideBody).
     // DURANGO = 20% (Márcio, 14/10/2026: «A Durango tem que ser 20% de perda»).
     if (/durango/.test(txt)) return '20'
-    // RAM TRX = 18% (Márcio, 17/11/2026: «na trx, use 18% de loss, mesmo que a medição bonestock passe de 700bhp»).
-    if (/\btrx\b/.test(txt)) return '18'
+    // RAM TRX = 20% (Márcio, 21/11/2026: «use 20% of loss to the TRX»; era 18% desde 17/11).
+    if (/\btrx\b/.test(txt)) return '20'
     return isCC && isHellcatOrRedeye && isWidebody && !isSuperStock ? '17' : ''
   })()
 

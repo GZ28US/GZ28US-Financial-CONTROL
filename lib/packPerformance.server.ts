@@ -35,7 +35,7 @@ type Row = Record<string, any>
 function perdaPadrao(ride: Row): number {
   const txt = [ride.brand, ride.model, ride.version, ride.special_edition].filter(Boolean).join(' ').toLowerCase()
   if (/durango/.test(txt)) return 20
-  if (/\btrx\b/.test(txt)) return 18 // RAM TRX (Márcio, 17/11/2026)
+  if (/\btrx\b/.test(txt)) return 20 // RAM TRX (Márcio, 21/11/2026; era 18 desde 17/11)
   if (/(challenger|charger)/.test(txt) && /(hellcat|red\s*eye)/.test(txt) && /(wide\s*body)/.test(txt) && !/(super\s*stock)/.test(txt)) return 17
   return 15
 }
