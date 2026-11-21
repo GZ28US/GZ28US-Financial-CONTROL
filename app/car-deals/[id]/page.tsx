@@ -26,6 +26,7 @@ export default function CarDealPage() {
   const [uploading, setUploading] = useState('')
   const [incomes, setIncomes] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
+  const [incomeReceipts, setIncomeReceipts] = useState<Record<string, string>>({})
   const [sheet, setSheet] = useState<any>(null)
   const [sheetBusy, setSheetBusy] = useState('')
   const [newTarget, setNewTarget] = useState<any>({ chat_id: '', label: '', view: 'TRIPA' })
@@ -82,6 +83,15 @@ export default function CarDealPage() {
     // documentos: os do carro (deal_id) e as provas de movimento (movement_id) — o comprovante mora num lugar só
     const { data: dc } = await supabase.from('deal_documents').select('*').or(`deal_id.eq.${dealId},movement_id.not.is.null`).order('created_at', { ascending: false })
     setDocs(dc || [])
+    // PROVA DERIVADA (uma info, um campo): movimento alocado a uma renda já tem o recibo na própria renda
+    // (invoice_incomes.receipt_url) — não se copia para deal_documents; lê-se de lá.
+    const incIds = [...new Set((al.data || []).map((a: any) => a.invoice_income_id).filter(Boolean))] as string[]
+    const rec: Record<string, string> = {}
+    for (let i = 0; i < incIds.length; i += 150) {
+      const { data: rs } = await supabase.from('invoice_incomes').select('id, receipt_url').in('id', incIds.slice(i, i + 150)).not('receipt_url', 'is', null)
+      for (const r of rs || []) if (r.receipt_url) rec[r.id] = r.receipt_url
+    }
+    setIncomeReceipts(rec)
     if (d?.purchase_invoice_id) {
       const [inc, exp] = await Promise.all([
         supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).eq('invoice_id', d.purchase_invoice_id),
@@ -241,7 +251,12 @@ export default function CarDealPage() {
   if (!deal) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Deal not found.</p></main>
 
   const positions = dealPositions(deal, { charges, obligations, movements, allocations, milestones, incomes, expenses })
-  const proofsOf = (m: any) => docs.filter(x => x.movement_id === m.id)
+  // a prova de um movimento: os documentos dele + o recibo das rendas que as alocações dele pagam (só leitura)
+  const proofsOf = (m: any) => [
+    ...docs.filter(x => x.movement_id === m.id),
+    ...[...new Set(allocations.filter(a => a.movement_id === m.id && a.invoice_income_id && incomeReceipts[a.invoice_income_id]).map(a => incomeReceipts[a.invoice_income_id]))]
+      .map((u, i) => ({ id: `inc:${m.id}:${i}`, file_url: u, label: 'receipt on the invoice' })),
+  ]
   const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount_usd) || 0), 0)
   const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `VIN ${vinTail(d.rides?.vin) || '----'} · ${dealLabel(d.deal_no)} · ${carDescription(d.rides)}` : '?' }
   const myMovIds = new Set(allocations.filter(a => a.deal_id === dealId).map(a => a.movement_id))
