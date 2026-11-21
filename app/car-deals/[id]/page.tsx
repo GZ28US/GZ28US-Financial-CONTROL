@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -26,6 +26,7 @@ export default function CarDealPage() {
   const [uploading, setUploading] = useState('')
   const [incomes, setIncomes] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
+  const [exporterIncomes, setExporterIncomes] = useState<any[]>([])
   const [incomeReceipts, setIncomeReceipts] = useState<Record<string, string>>({})
   const [sheet, setSheet] = useState<any>(null)
   const [sheetBusy, setSheetBusy] = useState('')
@@ -92,6 +93,7 @@ export default function CarDealPage() {
       for (const r of rs || []) if (r.receipt_url) rec[r.id] = r.receipt_url
     }
     setIncomeReceipts(rec)
+    setExporterIncomes(d ? await loadExporterIncomes(supabase, [d]) : [])
     if (d?.purchase_invoice_id) {
       const [inc, exp] = await Promise.all([
         supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).eq('invoice_id', d.purchase_invoice_id),
@@ -250,7 +252,7 @@ export default function CarDealPage() {
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!deal) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Deal not found.</p></main>
 
-  const positions = dealPositions(deal, { charges, obligations, movements, allocations, milestones, incomes, expenses })
+  const positions = dealPositions(deal, { charges, obligations, movements, allocations, milestones, incomes, expenses, exporterIncomes })
   // a prova de um movimento: os documentos dele + o recibo das rendas que as alocações dele pagam (só leitura)
   const proofsOf = (m: any) => [
     ...docs.filter(x => x.movement_id === m.id),

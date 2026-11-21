@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
-import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
+import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
 
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
@@ -32,6 +32,7 @@ export default function CarDealPositionsPage() {
   const [charges, setCharges] = useState<any[]>([])
   const [incomes, setIncomes] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
+  const [exporterIncomes, setExporterIncomes] = useState<any[]>([])
 
   useEffect(() => {
     (async () => {
@@ -50,13 +51,14 @@ export default function CarDealPositionsPage() {
         invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
       ])
       setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
+    setExporterIncomes(await loadExporterIncomes(supabase, (d.data || []).map(flatDeal)))
       setDeals((d.data || []).map(flatDeal).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
       setLoading(false)
     })()
   }, [])
 
   const dirs = DIRECTIONS.filter(d => !HIDDEN[view].includes(d.key))
-  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses }) })), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses])
+  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses, exporterIncomes }) })), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses, exporterIncomes])
   const totals = dirs.map(dir => Math.round(rows.reduce((s, r) => s + (r.pos.find(p => p.key === dir.key)?.open || 0), 0) * 100) / 100)
   // VIN primeiro; o apelido interno (US.0xx / Joker…) só na visão GZ28
   const carName = (d: any) => [d.rides?.vin ? `VIN ${d.rides.vin}` : 'no VIN', carDescription(d.rides), view === 'GZ28' ? carInternal(d.rides) : ''].filter(Boolean).join(' · ')

@@ -93,10 +93,28 @@ export const dealDate = (d: string | null | undefined) => {
 // AS 4 POSIÇÕES de um deal — cada direção tem UMA fonte, nada é gravado em dobro (lei «uma info, um campo», 21/11/2026):
 //   Sidney → GZ28US         rendas ABERTAS da invoice de compra que nenhum movimento do cliente cobre (data = payment_date)
 //   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
+//                           + rendas abertas de invoice do MESMO carro cujo cliente é o exportador (frete a reembolsar…)
 //   GZ28US → Tripa Trading  despesas em aberto da invoice de compra para o fornecedor Tripa
-//   Sidney → Tripa Trading  custos do deal (deal_charges) − alocações CONFIRMED Sidney→Tripa Trading no deal = o «Saldo a
-//                           pagar» da planilha; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
-export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[] }
+//   Sidney → Tripa Trading  custos do deal (deal_charges) − alocações CONFIRMED Sidney→Tripa Trading no deal − o que já
+//                           aparece em GZ28US → Tripa Trading (dinheiro que passa por nós não conta duas vezes), nunca
+//                           negativo; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
+export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[]; exporterIncomes?: any[] }
+
+// O que o EXPORTADOR nos deve fora da compra (Márcio 21/11/2026, caso RedHot: «ponha o frete que pagamos pra Genesis, a
+// Tripa Trading nos deve 1.5k disso»): rendas ABERTAS de qualquer invoice do MESMO carro cujo cliente é o exportador.
+// Nada é copiado — lê-se a renda que já existe. Devolve as rendas com o ride_id da invoice delas.
+export async function loadExporterIncomes(db: any, deals: any[]): Promise<any[]> {
+  const rideIds = [...new Set(deals.filter(d => d.exporter === 'TRIPA_TRADING').map(d => d.ride_id).filter(Boolean))]
+  if (!rideIds.length) return []
+  const { data: cls } = await db.from('clients').select('id').ilike('name', '%tripa%')
+  const clientIds = (cls || []).map((c: any) => c.id)
+  if (!clientIds.length) return []
+  const { data: invs } = await db.from('invoices').select('id, ride_id').in('ride_id', rideIds).in('client_id', clientIds).eq('is_quote', false)
+  const rideOf = new Map<string, string>((invs || []).map((i: any) => [i.id, i.ride_id]))
+  if (!rideOf.size) return []
+  const { data: incs } = await db.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', [...rideOf.keys()]).is('paid_at', null)
+  return (incs || []).map((i: any) => ({ ...i, ride_id: rideOf.get(i.invoice_id) }))
+}
 export const POSITION_INCOME_COLS = 'id, invoice_id, amount, payment_date, paid_at, description'
 export const POSITION_EXPENSE_COLS = 'id, invoice_id, supplier, price, quantity, tax, extra, payment_date, cancel_status'
 const isTripa = (supplier: unknown) => /tripa/i.test(String(supplier || ''))
@@ -128,10 +146,13 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const stPaid = sum(ctx.allocations.filter(a => a.deal_id === deal.id && clientToTripa(a)), a => Number(a.amount_usd) || 0)
   const dues = ctx.obligations.filter(o => o.deal_id === deal.id && !o.cancelled && o.from_party === 'SIDNEY' && o.to_party === 'TRIPA_TRADING').map(o => obligationDue(o, ctx.milestones))
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
+  // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
+  tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id), i => Number(i.amount) || 0)
+  const stOpen = Math.max(0, stOwed - stPaid - gtOpen)
   const stNext = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
-    'SIDNEY>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOwed - stPaid), next: stNext },
+    'SIDNEY>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOpen), next: stNext },
     'SIDNEY>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgOpen), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
     'TRIPA_TRADING>GZ28US': { owed: cents(tgOpen), paid: 0, open: cents(tgOpen), next: null },
     'GZ28US>TRIPA_TRADING': { owed: cents(gtOwed), paid: cents(gtOwed - gtOpen), open: cents(gtOpen), next: null },

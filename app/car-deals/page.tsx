@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
-import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEALS (21/11/2026): a compra dos carros, fora das invoices de oficina. Uma linha por compra, com as 4 posições
 // (quem ainda deve a quem) e o total no rodapé. Invoice de compra ainda sem deal aparece embaixo, com o botão de criar.
@@ -25,6 +25,7 @@ export default function CarDealsPage() {
   const [charges, setCharges] = useState<any[]>([])
   const [incomes, setIncomes] = useState<any[]>([])
   const [expenses, setExpenses] = useState<any[]>([])
+  const [exporterIncomes, setExporterIncomes] = useState<any[]>([])
 
   useEffect(() => { load() }, [])
 
@@ -49,6 +50,7 @@ export default function CarDealsPage() {
       invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
     ])
     setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
+    setExporterIncomes(await loadExporterIncomes(supabase, (d.data || []).map(flatDeal)))
     setLoading(false)
   }
 
@@ -72,7 +74,7 @@ export default function CarDealsPage() {
     && (!q || [d.rides?.vin, d.deal_no, carDescription(d.rides), carInternal(d.rides)].join(' ').toLowerCase().includes(q)))
     .sort((a, b) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))
 
-  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses })])), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses])
+  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d, { charges, obligations, movements, allocations, milestones, incomes, expenses, exporterIncomes })])), [deals, charges, obligations, movements, allocations, milestones, incomes, expenses, exporterIncomes])
   const totals = DIRECTIONS.map((dir, i) => shown.reduce((s, d) => s + (posByDeal[d.id]?.[i]?.open || 0), 0))
   // movimentos propostos que ainda esperam alocação/confirmação humana (o robô nunca aloca sozinho)
   const pending = movements.filter(m => m.status === 'PROPOSED')
