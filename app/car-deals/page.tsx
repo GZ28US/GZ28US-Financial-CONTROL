@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
-import { carDescription, carInternal, dealLabel, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEALS (21/11/2026): a compra dos carros, fora das invoices de oficina. Uma linha por compra, com as 4 posições
 // (quem ainda deve a quem) e o total no rodapé. Invoice de compra ainda sem deal aparece embaixo, com o botão de criar.
@@ -27,7 +27,7 @@ export default function CarDealsPage() {
 
   async function load() {
     const [d, p, o, m, a, ms, c] = await Promise.all([
-      supabase.from('car_deals').select('*, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition), invoices:purchase_invoice_id(invoice_code)').order('deal_no', { ascending: true }),
+      supabase.from('car_deals').select(DEAL_SELECT).order('deal_no', { ascending: true }),
       supabase.from('invoices').select('id, invoice_code, service, ride_id, client_id, rides(project_code, project_name, vin)').eq('kind', 'CAR_PURCHASE').order('invoice_code'),
       supabase.from('deal_obligations').select('*'),
       supabase.from('deal_movements').select('*'),
@@ -35,7 +35,7 @@ export default function CarDealsPage() {
       supabase.from('deal_milestones').select('*'),
       supabase.from('clients').select('id, name'),
     ])
-    setDeals(d.data || []); setPurchases(p.data || []); setObligations(o.data || []); setMovements(m.data || [])
+    setDeals((d.data || []).map(flatDeal)); setPurchases(p.data || []); setObligations(o.data || []); setMovements(m.data || [])
     setAllocations(a.data || []); setMilestones(ms.data || [])
     setClients(Object.fromEntries((c.data || []).map((x: any) => [x.id, x.name || ''])))
     setLoading(false)
@@ -44,7 +44,7 @@ export default function CarDealsPage() {
   async function createDeal(inv: any) {
     setBusy(inv.id)
     const { data, error } = await supabase.from('car_deals')
-      .insert({ purchase_invoice_id: inv.id, ride_id: inv.ride_id, client_id: inv.client_id })
+      .insert({ purchase_invoice_id: inv.id })
       .select('id').single()
     setBusy(null)
     if (error || !data) { alert(`Could not create the deal: ${error?.message || 'no row returned'}`); return }
@@ -61,7 +61,7 @@ export default function CarDealsPage() {
     && (!q || [d.rides?.vin, d.deal_no, carDescription(d.rides), carInternal(d.rides)].join(' ').toLowerCase().includes(q)))
     .sort((a, b) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))
 
-  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d.id, obligations, movements, allocations)])), [deals, obligations, movements, allocations])
+  const posByDeal = useMemo(() => Object.fromEntries(deals.map(d => [d.id, dealPositions(d.id, obligations, movements, allocations, milestones)])), [deals, obligations, movements, allocations, milestones])
   const totals = DIRECTIONS.map((dir, i) => shown.reduce((s, d) => s + (posByDeal[d.id]?.[i]?.open || 0), 0))
   // movimentos propostos que ainda esperam alocação/confirmação humana (o robô nunca aloca sozinho)
   const pending = movements.filter(m => m.status === 'PROPOSED')

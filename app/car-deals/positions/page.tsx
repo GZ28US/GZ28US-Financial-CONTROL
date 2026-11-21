@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
-import { DIRECTIONS, MILESTONE_LABEL, PARTY_LABEL, carDescription, carInternal, dealDate, dealLabel, dealPositions } from '@/lib/carDeals'
+import { DEAL_SELECT, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
 
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
@@ -28,31 +28,35 @@ export default function CarDealPositionsPage() {
   const [movements, setMovements] = useState<any[]>([])
   const [allocations, setAllocations] = useState<any[]>([])
   const [view, setView] = useState<View>('GZ28')
+  const [milestones, setMilestones] = useState<any[]>([])
 
   useEffect(() => {
     (async () => {
-      const [d, o, m, a] = await Promise.all([
-        supabase.from('car_deals').select('id, deal_no, status, exporter, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition)').neq('status', 'CANCELLED').order('deal_no'),
+      const [d, ms, o, m, a] = await Promise.all([
+        supabase.from('car_deals').select(DEAL_SELECT).neq('status', 'CANCELLED').order('deal_no'),
+        supabase.from('deal_milestones').select('*'),
         supabase.from('deal_obligations').select('*'),
         supabase.from('deal_movements').select('*'),
         supabase.from('deal_allocations').select('*'),
       ])
-      setDeals((d.data || []).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
+      setMilestones(ms.data || [])
+      setDeals((d.data || []).map(flatDeal).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
       setLoading(false)
     })()
   }, [])
 
   const dirs = DIRECTIONS.filter(d => !HIDDEN[view].includes(d.key))
-  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d.id, obligations, movements, allocations) })), [deals, obligations, movements, allocations])
+  const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d.id, obligations, movements, allocations, milestones) })), [deals, obligations, movements, allocations, milestones])
   const totals = dirs.map(dir => Math.round(rows.reduce((s, r) => s + (r.pos.find(p => p.key === dir.key)?.open || 0), 0) * 100) / 100)
   // VIN primeiro; o apelido interno (US.0xx / Joker…) só na visão GZ28
   const carName = (d: any) => [d.rides?.vin ? `VIN ${d.rides.vin}` : 'no VIN', carDescription(d.rides), view === 'GZ28' ? carInternal(d.rides) : ''].filter(Boolean).join(' · ')
   const dealById = new Map(deals.map(d => [d.id, d]))
   // a programação: toda obrigação em aberto das direções visíveis, a vencida/datada primeiro, a condicionada depois
   const schedule = obligations
-    .filter(o => (o.status === 'OPEN' || o.status === 'DUE') && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
-    .sort((a, b) => (a.due_date ? 0 : 1) - (b.due_date ? 0 : 1) || String(a.due_date || '').localeCompare(String(b.due_date || '')))
-  const when = (o: any) => o.due_date ? `${o.status === 'DUE' ? 'DUE ' : ''}${dealDate(o.due_date)}` : o.trigger_milestone ? `when ${MILESTONE_LABEL[o.trigger_milestone] || o.trigger_milestone}${o.trigger_offset_days ? ` + ${o.trigger_offset_days}d` : ''}` : 'no date'
+    .filter(o => !o.cancelled && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
+    .map(o => ({ ...o, _due: obligationDue(o, milestones) }))
+    .sort((a, b) => (a._due.date ? 0 : 1) - (b._due.date ? 0 : 1) || String(a._due.date || '').localeCompare(String(b._due.date || '')))
+  const when = (o: any) => o._due.label
 
   function exportPdf() {
     const doc = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'letter' })
@@ -141,7 +145,7 @@ export default function CarDealPositionsPage() {
                 {schedule.length === 0 && <tr><td colSpan={6} className="p-6 text-xl text-gray-400">No open obligations recorded.</td></tr>}
                 {schedule.map(o => { const d = dealById.get(o.deal_id); return (
                   <tr key={o.id} className="border-b border-gray-800">
-                    <td className={`p-4 whitespace-nowrap font-bold ${o.status === 'DUE' ? 'text-red-400' : ''}`}>{when(o)}</td>
+                    <td className={`p-4 whitespace-nowrap font-bold ${o._due.due ? 'text-red-400' : ''}`}>{when(o)}</td>
                     <td className="p-4 whitespace-nowrap">{dealLabel(d.deal_no)}</td>
                     <td className="p-4">{carName(d)}</td>
                     <td className="p-4 whitespace-nowrap">{PARTY_LABEL[o.from_party]} → {PARTY_LABEL[o.to_party]}</td>

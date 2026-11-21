@@ -8,6 +8,7 @@ import type { StatementView } from '@/lib/statement'
 //   GET ?client=<id>&view=GZ28|CLIENT|ACCOUNTANT[&ride=<id>]&format=json|xlsx|pdf
 // Entra tela logada (sessionHeaders) ou sessão/script com x-read-key.
 export const runtime = 'nodejs'
+export const maxDuration = 120
 
 const dayNY = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
 
@@ -34,7 +35,7 @@ export async function GET(req: NextRequest) {
         'Content-Disposition': `attachment; filename="${name}"`, 'Cache-Control': 'no-store',
       } })
     }
-    return NextResponse.json({ client: data.client, view, asOf, ...statement, schedule: await loadSchedule(db, clientId), counts: { charges: data.charges.length, movements: data.movements.length, allocations: data.allocations.length } })
+    return NextResponse.json({ client: data.client, view, asOf, ...statement, schedule: await loadSchedule(db, data), counts: { invoices: data.invoices.length, incomes: data.incomes.length, movements: data.movements.length, allocations: data.allocations.length } })
   } catch (err) {
     return NextResponse.json({ error: String((err as Error)?.message || err) }, { status: 500 })
   }

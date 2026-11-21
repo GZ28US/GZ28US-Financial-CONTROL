@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { carDescription, carInternal, dealLabel, vinTail, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -41,7 +41,7 @@ export default function CarDealPage() {
   const [msg, setMsg] = useState('')
   const [newCharge, setNewCharge] = useState({ label: '', value: '' })
   const [newOb, setNewOb] = useState<any>({ from_party: 'SIDNEY', to_party: 'TRIPA_TRADING', label: '', amount: '', due_date: '', trigger_milestone: '', offset: '' })
-  const [newMov, setNewMov] = useState<any>({ occurred_on: today(), kind: 'WIRE', from_party: 'SIDNEY', to_party: 'GZ28US', amount_usd: '', amount_brl: '', fx_rate: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' })
+  const [newMov, setNewMov] = useState<any>({ occurred_on: today(), kind: 'WIRE', from_party: 'SIDNEY', to_party: 'GZ28US', amount_usd: '', amount_brl: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' })
   const [newAlloc, setNewAlloc] = useState<Record<string, { deal_id: string; amount: string }>>({})
 
   useEffect(() => { load() }, [])
@@ -66,11 +66,10 @@ export default function CarDealPage() {
   }
 
   async function load() {
-    const { data: d } = await supabase.from('car_deals')
-      .select('*, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition), invoices:purchase_invoice_id(id, invoice_code, service)')
-      .eq('id', dealId).single()
+    const { data: d0 } = await supabase.from('car_deals').select(DEAL_SELECT).eq('id', dealId).single()
+    const d = flatDeal(d0)
     const [ad, ch, ob, al, ms] = await Promise.all([
-      supabase.from('car_deals').select('id, deal_no, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition)').order('deal_no'),
+      supabase.from('car_deals').select(DEAL_SELECT).order('deal_no'),
       supabase.from('deal_charges').select('*').eq('deal_id', dealId).order('position'),
       supabase.from('deal_obligations').select('*').eq('deal_id', dealId).order('created_at'),
       supabase.from('deal_allocations').select('*'),
@@ -81,9 +80,9 @@ export default function CarDealPage() {
     const { data: dc } = await supabase.from('deal_documents').select('*').eq('deal_id', dealId).order('created_at', { ascending: false })
     setDocs(dc || [])
     if (d?.client_id) { const { data: c } = await supabase.from('clients').select('name').eq('id', d.client_id).single(); setClientName(c?.name || '') }
-    setDeal(d); setAllDeals(ad.data || []); setCharges(ch.data || []); setObligations(ob.data || [])
+    setDeal(d); setAllDeals((ad.data || []).map(flatDeal)); setCharges(ch.data || []); setObligations(ob.data || [])
     setAllocations(al.data || []); setMilestones(ms.data || []); setMovements(mv || [])
-    setForm({ deal_no: d?.deal_no || '', exporter: d?.exporter || '', status: d?.status || 'OPEN', declared_value_usd: d?.declared_value_usd ?? '', wa_chat_id: d?.wa_chat_id || '', wa_chat_app: d?.wa_chat_app || '', notes: d?.notes || '' })
+    setForm({ deal_no: d?.deal_no || '', exporter: d?.exporter || '', status: d?.status || 'OPEN', declared_value_usd: d?.declared_value_usd ?? '', wa_chat_id: d?.wa_chat_id || '', notes: d?.notes || '' })
     setLoading(false)
   }
   const targetList: any[] = Array.isArray(deal?.post_targets) ? deal.post_targets : []
@@ -94,7 +93,7 @@ export default function CarDealPage() {
     const { error } = await supabase.from('car_deals').update({
       deal_no: form.deal_no.trim() || null, exporter: form.exporter || null, status: form.status,
       declared_value_usd: num(form.declared_value_usd), wa_chat_id: form.wa_chat_id.trim() || null,
-      wa_chat_app: form.wa_chat_app || null, notes: form.notes.trim() || null, updated_at: new Date().toISOString(),
+      notes: form.notes.trim() || null, updated_at: new Date().toISOString(),
     }).eq('id', dealId)
     if (!fail(error)) { flash('Saved'); load() }
   }
@@ -123,8 +122,8 @@ export default function CarDealPage() {
     })
     if (!fail(error)) { setNewOb({ ...newOb, label: '', amount: '', due_date: '', trigger_milestone: '', offset: '' }); load() }
   }
-  async function setObStatus(id: string, status: string) {
-    const { error } = await supabase.from('deal_obligations').update({ status }).eq('id', id)
+  async function setObCancelled(id: string, cancelled: boolean) {
+    const { error } = await supabase.from('deal_obligations').update({ cancelled }).eq('id', id)
     if (!fail(error)) load()
   }
   async function addMovement() {
@@ -133,11 +132,11 @@ export default function CarDealPage() {
     if (newMov.from_party === newMov.to_party) { alert('From and To must be different parties.'); return }
     const { error } = await supabase.from('deal_movements').insert({
       occurred_on: newMov.occurred_on, kind: newMov.kind, from_party: newMov.from_party, to_party: newMov.to_party,
-      amount_usd: usd, amount_brl: num(newMov.amount_brl), fx_rate: num(newMov.fx_rate),
+      amount_usd: usd, amount_brl: num(newMov.amount_brl),
       counterparty_label: newMov.counterparty_label.trim() || null, payer_label: newMov.payer_label.trim() || null,
       fiscal_ref: newMov.fiscal_ref.trim() || null, note: newMov.note.trim() || null, status: 'PROPOSED',
     })
-    if (!fail(error)) { setNewMov({ ...newMov, amount_usd: '', amount_brl: '', fx_rate: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' }); load() }
+    if (!fail(error)) { setNewMov({ ...newMov, amount_usd: '', amount_brl: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' }); load() }
   }
   async function addAllocation(m: any) {
     const draft = newAlloc[m.id] || { deal_id: dealId, amount: '' }
@@ -149,11 +148,7 @@ export default function CarDealPage() {
   }
   async function setMovStatus(m: any, status: 'PROPOSED' | 'CONFIRMED') {
     if (status === 'CONFIRMED' && movementUnallocated(m, allocations) !== 0) { alert('Allocate the whole movement before confirming.'); return }
-    const { data: u } = await supabase.auth.getUser()
-    const { error } = await supabase.from('deal_movements').update({
-      status, confirmed_at: status === 'CONFIRMED' ? new Date().toISOString() : null,
-      confirmed_by: status === 'CONFIRMED' ? (u?.user?.email || null) : null, updated_at: new Date().toISOString(),
-    }).eq('id', m.id)
+    const { error } = await supabase.from('deal_movements').update({ status, updated_at: new Date().toISOString() }).eq('id', m.id)
     if (fail(error)) return
     await load()
     if (status === 'CONFIRMED') autoPost(m.id)
@@ -181,10 +176,8 @@ export default function CarDealPage() {
     try {
       const url = await uploadFile(file, 'docs')
       if (!url) return
-      const { data: u } = await supabase.auth.getUser()
       const { error } = await supabase.from('deal_documents').insert({
-        deal_id: dealId, kind: newDoc.kind, label: newDoc.label.trim() || null, doc_date: newDoc.doc_date || null,
-        file_url: url, file_name: file.name, uploaded_by: u?.user?.email || null,
+        deal_id: dealId, kind: newDoc.kind, label: newDoc.label.trim() || null, doc_date: newDoc.doc_date || null, file_url: url,
       })
       if (!fail(error)) { setNewDoc({ ...newDoc, label: '', doc_date: '' }); load() }
     } finally { setUploading('') }
@@ -238,7 +231,7 @@ export default function CarDealPage() {
   if (loading) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Loading...</p></main>
   if (!deal) return <main className="min-h-screen bg-black text-white p-8"><Header /><p className="text-2xl text-gray-400">Deal not found.</p></main>
 
-  const positions = dealPositions(dealId, obligations, movements, allocations)
+  const positions = dealPositions(dealId, obligations, movements, allocations, milestones)
   const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount_usd) || 0), 0)
   const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `VIN ${vinTail(d.rides?.vin) || '----'} · ${dealLabel(d.deal_no)} · ${carDescription(d.rides)}` : '?' }
   const myMovIds = new Set(allocations.filter(a => a.deal_id === dealId).map(a => a.movement_id))
@@ -293,8 +286,6 @@ export default function CarDealPage() {
                 <select className={inp} value={form.status} onChange={e => setForm({ ...form, status: e.target.value })}><option>OPEN</option><option>CLOSED</option><option>CANCELLED</option></select></label>
               <label className="flex flex-col gap-1 text-sm text-gray-400">DECLARED VALUE (proforma, US$)<input className={inp} value={form.declared_value_usd} onChange={e => setForm({ ...form, declared_value_usd: e.target.value })} /></label>
               <label className="flex flex-col gap-1 text-sm text-gray-400 md:col-span-2">WHATSAPP GROUP OF THE DEAL (chat id)<input className={inp} value={form.wa_chat_id} onChange={e => setForm({ ...form, wa_chat_id: e.target.value })} placeholder="1203…@g.us" /></label>
-              <label className="flex flex-col gap-1 text-sm text-gray-400">GROUP LIVES IN
-                <select className={inp} value={form.wa_chat_app} onChange={e => setForm({ ...form, wa_chat_app: e.target.value })}><option value="">—</option><option value="us">US number</option><option value="br">BR number</option></select></label>
               <label className="flex flex-col gap-1 text-sm text-gray-400 md:col-span-4">NOTES<textarea className={inp} rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></label>
             </div>
             <button onClick={saveDeal} className={`${btn} bg-green-700 hover:bg-green-600 mt-4 text-lg`}>SAVE</button>
@@ -329,8 +320,8 @@ export default function CarDealPage() {
                   <span className="w-64 font-bold">{PARTY_LABEL[o.from_party]} → {PARTY_LABEL[o.to_party]}</span>
                   <span className="flex-1 min-w-40">{o.label}</span>
                   <span className="w-36 text-right font-bold">{formatUSD(Number(o.amount_usd) || 0)}</span>
-                  <span className="w-56 text-gray-300">{o.due_date ? dealDate(o.due_date) : o.trigger_milestone ? `when ${MILESTONE_LABEL[o.trigger_milestone]}${o.trigger_offset_days ? ` + ${o.trigger_offset_days}d` : ''}` : 'no date'}</span>
-                  <select className={inp} value={o.status} onChange={e => setObStatus(o.id, e.target.value)}><option>OPEN</option><option>DUE</option><option>PAID</option><option>CANCELLED</option></select>
+                  <span className={`w-56 ${o.cancelled ? 'text-gray-600 line-through' : obligationDue(o, milestones).due ? 'text-red-400 font-bold' : 'text-gray-300'}`}>{obligationDue(o, milestones).label}</span>
+                  <button onClick={() => setObCancelled(o.id, !o.cancelled)} className="text-gray-400 hover:text-white font-bold">{o.cancelled ? 'RESTORE' : 'CANCEL'}</button>
                   <button onClick={() => delRow('deal_obligations', o.id, 'obligation')} className="text-gray-500 hover:text-red-400 font-bold">REMOVE</button>
                 </div>
               ))}
@@ -363,7 +354,6 @@ export default function CarDealPage() {
               <label className="flex flex-col text-xs text-gray-400">TO<select className={inp} value={newMov.to_party} onChange={e => setNewMov({ ...newMov, to_party: e.target.value })}>{PARTIES.map(p => <option key={p} value={p}>{PARTY_LABEL[p]}</option>)}</select></label>
               <label className="flex flex-col text-xs text-gray-400">US$<input className={`${inp} w-32`} value={newMov.amount_usd} onChange={e => setNewMov({ ...newMov, amount_usd: e.target.value })} /></label>
               <label className="flex flex-col text-xs text-gray-400">R$<input className={`${inp} w-32`} value={newMov.amount_brl} onChange={e => setNewMov({ ...newMov, amount_brl: e.target.value })} /></label>
-              <label className="flex flex-col text-xs text-gray-400">RATE<input className={`${inp} w-20`} value={newMov.fx_rate} onChange={e => setNewMov({ ...newMov, fx_rate: e.target.value })} /></label>
               <label className="flex flex-col text-xs text-gray-400">RECIPIENT (as on the sheet)<input className={`${inp} w-44`} placeholder="Planer 08/06" value={newMov.counterparty_label} onChange={e => setNewMov({ ...newMov, counterparty_label: e.target.value })} /></label>
               <label className="flex flex-col text-xs text-gray-400">PAYER<input className={`${inp} w-28`} placeholder="Sidney / JP / JV" value={newMov.payer_label} onChange={e => setNewMov({ ...newMov, payer_label: e.target.value })} /></label>
               <label className="flex flex-col text-xs text-gray-400">FISCAL REF<input className={`${inp} w-36`} placeholder="proforma / contract" value={newMov.fiscal_ref} onChange={e => setNewMov({ ...newMov, fiscal_ref: e.target.value })} /></label>
@@ -396,7 +386,7 @@ export default function CarDealPage() {
                     {m.source_message_id && <span className="px-2 py-1 rounded-lg bg-gray-800 text-sm text-gray-300">read from the group</span>}
                     {!(Array.isArray(m.receipt_urls) && m.receipt_urls.length) && m.kind !== 'OFFSET' && <span className="px-2 py-1 rounded-lg bg-red-950 text-sm font-bold text-red-300">NO PROOF</span>}
                     <label className="cursor-pointer underline text-gray-300 text-sm">{uploading === m.id ? 'uploading…' : 'attach proof'}<input type="file" className="hidden" accept="image/*,application/pdf" onChange={e => { attachProof(m, e.target.files?.[0]); e.target.value = '' }} /></label>
-                    {m.amount_brl != null && <span className="text-gray-400">R$ {Number(m.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}{m.fx_rate != null ? ` @ ${m.fx_rate}` : ''}</span>}
+                    {m.amount_brl != null && <span className="text-gray-400">R$ {Number(m.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}{Number(m.amount_usd) ? ` @ ${(Number(m.amount_brl) / Number(m.amount_usd)).toFixed(2)}` : ''}</span>}
                     {m.counterparty_label && <span className="text-gray-400">{m.counterparty_label}</span>}
                     {m.payer_label && <span className="text-gray-400">paid by {m.payer_label}</span>}
                     {m.fiscal_ref && <span className="px-2 py-1 rounded-lg bg-gray-800 text-sm text-gray-300">fiscal ref {m.fiscal_ref}</span>}
@@ -477,9 +467,9 @@ export default function CarDealPage() {
                 {DOC_KINDS.flatMap(k => docs.filter(d => d.kind === k.kind)).map(d => (
                   <div key={d.id} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
                     <span className="w-44 font-bold">{DOC_LABEL[d.kind] || d.kind}</span>
-                    <a href={d.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300 flex-1 min-w-40">{d.label || d.file_name || 'open'}</a>
+                    <a href={d.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300 flex-1 min-w-40">{d.label || decodeURIComponent(String(d.file_url).split('/').pop() || '').replace(/^\d{10,}-/, '') || 'open'}</a>
                     <span className="text-gray-400 w-28">{dealDate(d.doc_date) || ''}</span>
-                    <span className="text-gray-500 text-sm w-56">added {dealDate(String(d.created_at).slice(0, 10))}{d.uploaded_by ? ` by ${String(d.uploaded_by).split('@')[0]}` : ''}</span>
+                    <span className="text-gray-500 text-sm w-56">added {dealDate(String(d.created_at).slice(0, 10))}</span>
                     <button onClick={() => delRow('deal_documents', d.id, 'document')} className="text-gray-500 hover:text-red-400 font-bold">REMOVE</button>
                   </div>
                 ))}
@@ -583,7 +573,7 @@ export default function CarDealPage() {
                   <span className={`w-56 text-xl font-bold ${row?.done_at ? 'text-green-400' : ''}`}>{row?.done_at ? '✓ ' : ''}{k.label}</span>
                   <input type="date" className={inp} value={row?.done_at || ''} onChange={e => setMilestone(k.kind, e.target.value)} />
                   {row?.done_at && <button onClick={() => setMilestone(k.kind, '')} className="text-gray-500 hover:text-red-400 font-bold">CLEAR</button>}
-                  {waiting.length > 0 && <span className="text-gray-400">{waiting.length} obligation{waiting.length > 1 ? 's' : ''} tied to it: {waiting.map(o => `${PARTY_LABEL[o.from_party]} → ${PARTY_LABEL[o.to_party]} ${formatUSD(Number(o.amount_usd) || 0)} (${o.status})`).join(' · ')}</span>}
+                  {waiting.length > 0 && <span className="text-gray-400">{waiting.length} obligation{waiting.length > 1 ? 's' : ''} tied to it: {waiting.map(o => `${PARTY_LABEL[o.from_party]} → ${PARTY_LABEL[o.to_party]} ${formatUSD(Number(o.amount_usd) || 0)} (${o.cancelled ? 'cancelled' : obligationDue(o, milestones).label})`).join(' · ')}</span>}
                 </div>
               )
             })}

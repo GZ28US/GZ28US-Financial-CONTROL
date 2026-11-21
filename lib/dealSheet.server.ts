@@ -6,11 +6,11 @@
 // Uma fonte (a grade lógica) e três saídas: JSON (prévia na tela), XLSX (exceljs) e PDF (jsPDF).
 //
 // De onde vem cada pedaço:
-//   linha 1/2 ........ car_deals.sheet_title / sheet_headers / sheet_color_name / sheet_band_color (+ VIN do ride)
+//   linha 1/2 ........ car_deals.sheet {title, headers, color_name, band_color, band_text_color, notes} (+ VIN do ride)
 //   coluna A/B ....... deal_charges (valor em US$ ou o texto «Não vai ter», «Confirmar»)
 //   pagamentos ....... deal_allocations deste deal cujo movimento sai do SIDNEY e está CONFIRMED
-//                      (cor do lote = sheet_color; miudezas = sheet_style; ordem = sheet_position, depois a data)
-//   notas à direita .. car_deals.sheet_notes quando preenchido; senão a nota «EDISON PAGOU $ X PARA DEMA», derivada dos
+//                      (cor do lote = sheet_style.color; miudezas = sheet_style; ordem = sheet_position, depois a data)
+//   notas à direita .. car_deals.sheet.notes quando preenchido; senão a nota «EDISON PAGOU $ X PARA DEMA», derivada dos
 //                      movimentos Tripa Trading → GZ28US alocados ao deal
 //   rodapé ........... Total do veiculo (soma dos custos) · Total pago (soma dos pagamentos) · Saldo a pagar
 import type { SupabaseClient } from '@supabase/supabase-js'
@@ -35,14 +35,17 @@ const usdNote = (n: number) => `$ ${Math.round(n).toLocaleString('pt-BR')}`
 // o Sidney nem sabe que o carro é do Tripa/Edison). 'GZ28' e 'TRIPA' levam a planilha inteira.
 export type SheetView = 'GZ28' | 'TRIPA' | 'SIDNEY'
 export async function buildDealSheet(db: SupabaseClient, dealId: string, view: SheetView = 'GZ28'): Promise<DealSheet | null> {
-  const { data: deal } = await db.from('car_deals').select('*, rides(project_code, project_name, vin, color)').eq('id', dealId).maybeSingle()
+  // carro e cliente vêm da invoice de compra; a aparência da planilha mora em car_deals.sheet (um jsonb)
+  const { data: deal } = await db.from('car_deals').select('*, invoices:purchase_invoice_id(client_id, rides(project_code, project_name, vin, color))').eq('id', dealId).maybeSingle()
   if (!deal) return null
+  const inv = (deal as any).invoices || {}
+  const look = (deal as any).sheet || {}
   const [{ data: charges }, { data: allocs }, { data: client }] = await Promise.all([
     db.from('deal_charges').select('*').eq('deal_id', dealId).order('position'),
     db.from('deal_allocations').select('*, deal_movements(*)').eq('deal_id', dealId),
-    deal.client_id ? db.from('clients').select('name').eq('id', deal.client_id).maybeSingle() : Promise.resolve({ data: null as any }),
+    inv.client_id ? db.from('clients').select('name').eq('id', inv.client_id).maybeSingle() : Promise.resolve({ data: null as any }),
   ])
-  const ride = (deal as any).rides || {}
+  const ride = inv.rides || {}
   const confirmed = (allocs || []).filter((a: any) => a.deal_movements?.status === 'CONFIRMED')
 
   // pagamentos do cliente: movimentos que saem do SIDNEY (sheet_style.hide tira a linha da planilha sem tirar do livro)
@@ -55,14 +58,14 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   const tripaToGz = cents(confirmed.filter((a: any) => a.deal_movements.from_party === 'TRIPA_TRADING' && a.deal_movements.to_party === 'GZ28US')
     .reduce((s: number, a: any) => s + (Number(a.amount_usd) || 0), 0))
 
-  const hd = deal.sheet_headers
+  const hd = look.headers
   const headers: string[] = Array.isArray(hd) ? hd : Array.isArray(hd?.headers) ? hd.headers : HEADERS_PADRAO
   const italic = Array.isArray(hd) ? true : hd?.italic !== false
   const firstName = String(client?.name || '').trim().split(/\s+/)[0] || ''
-  const title = deal.sheet_title || `${firstName.toUpperCase()}  ${dealNumber(deal.deal_no)}`.trim()
-  const band = deal.sheet_band_color || K, bandTxt = deal.sheet_band_text_color || '#C9F23A'
+  const title = look.title || `${firstName.toUpperCase()}  ${dealNumber(deal.deal_no)}`.trim()
+  const band = look.band_color || K, bandTxt = look.band_text_color || '#C9F23A'
   const vin = ride.vin ? `VIN ${String(ride.vin).slice(-4)}` : ''
-  const colorName = deal.sheet_color_name || ride.color || ''
+  const colorName = look.color_name || ride.color || ''
 
   const L: Cel[][] = []
   const blank = () => Array.from({ length: 10 }, () => cel(''))
@@ -83,13 +86,14 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
       const m = a.deal_movements, raw = a.sheet_style || {}
       // as chaves valem nas duas grafias (a carga da CC Sidney gravou usd_color / origin_centered / dest_bold…)
       const st = { ...raw, usdColor: raw.usdColor ?? raw.usd_color, usdBold: raw.usdBold ?? raw.usd_bold, destBold: raw.destBold ?? raw.dest_bold, center: raw.center ?? raw.origin_centered, remarkColor: raw.remarkColor ?? raw.remark_color, remarkBold: raw.remarkBold ?? raw.remark_bold }
-      const cor = a.sheet_color || K, corUsd = st.usdColor || cor
+      const cor = st.color || K, corUsd = st.usdColor || cor
+      const rate = m.amount_brl != null && Number(m.amount_usd) ? Math.round(Number(m.amount_brl) / Number(m.amount_usd) * 100) / 100 : null   // a taxa é conta: R$ ÷ US$
       const usd = Number(a.amount_usd) || 0
       const whole = Math.abs(usd - (Number(m.amount_usd) || 0)) < 0.005
       const brl = m.amount_brl != null ? (whole ? Number(m.amount_brl) : cents(Number(m.amount_brl) * usd / (Number(m.amount_usd) || 1))) : null
-      const thin = !!st.thin, hasRate = m.fx_rate != null
+      const thin = !!st.thin, hasRate = rate != null
       paid += usd
-      if (hasRate) row[2] = num(Number(m.fx_rate), 'usd', { c: corUsd })
+      if (hasRate) row[2] = num(rate!, 'usd', { c: corUsd })
       row[3] = num(usd, 'usd', { c: corUsd, b: !!st.usdBold })
       row[4] = cel(m.counterparty_label || '', { c: cor, b: !!st.destBold || (!thin && hasRate) })
       if (brl != null) row[5] = num(brl, 'brl', { c: cor, b: !thin })
@@ -104,7 +108,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   for (let k = 0; k < pad; k++) body.push(Array.from({ length: 10 }, (_, j) => cel('', j === 0 && k < pad - 1 ? { fill: CINZA } : {})))
 
   // notas à direita
-  const notes: any[] = Array.isArray(deal.sheet_notes) ? deal.sheet_notes : []
+  const notes: any[] = Array.isArray(look.notes) ? look.notes : []
   if (view === 'SIDNEY') { /* sem notas */ } else if (notes.length) {
     for (const nt of notes) {
       const r = Number(nt.row) || 0, c = COLS.indexOf(String(nt.col || '').toUpperCase())

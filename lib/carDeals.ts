@@ -59,6 +59,27 @@ export const DOC_LABEL: Record<string, string> = Object.fromEntries(DOC_KINDS.ma
 
 export const MOVEMENT_KINDS = ['FX_CONTRACT', 'PIX', 'WIRE', 'ZELLE', 'STRIPE', 'CASH', 'OFFSET']
 
+// UM CAMPO PRO INFO (lei do Márcio, 21/11/2026): o carro e o cliente de um deal NÃO são colunas do deal — vêm da
+// invoice de compra. Toda tela busca com DEAL_SELECT e achata com flatDeal, que devolve d.rides / d.ride_id / d.client_id.
+export const RIDE_COLS = 'id, project_code, project_name, vin, color, year, brand, model, version, special_edition'
+export const DEAL_SELECT = `*, invoices:purchase_invoice_id(id, invoice_code, service, client_id, ride_id, rides(${RIDE_COLS}))`
+export const flatDeal = (d: any) => d ? { ...d, rides: d.invoices?.rides || null, ride_id: d.invoices?.ride_id || null, client_id: d.invoices?.client_id || null } : d
+
+// VENCIMENTO de uma obrigação — conta, não coluna: a data dela, ou a data do marco que a dispara + os dias.
+// due = já venceu (data ≤ hoje). Sem data e com o marco ainda não feito: «when <marco>».
+export function obligationDue(o: any, milestones: any[], today?: string): { date: string | null; due: boolean; label: string } {
+  const hoje = today || new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
+  let date: string | null = o.due_date || null
+  if (!date && o.trigger_milestone) {
+    const ms = milestones.find(m => m.deal_id === o.deal_id && m.kind === o.trigger_milestone && m.done_at)
+    if (ms) { const t = new Date(String(ms.done_at).slice(0, 10) + 'T00:00:00Z'); t.setUTCDate(t.getUTCDate() + (Number(o.trigger_offset_days) || 0)); date = t.toISOString().slice(0, 10) }
+  }
+  const due = !!date && date <= hoje
+  const label = date ? `${due ? 'DUE ' : ''}${dealDate(date)}`
+    : o.trigger_milestone ? `when ${MILESTONE_LABEL[o.trigger_milestone] || o.trigger_milestone}${o.trigger_offset_days ? ` + ${o.trigger_offset_days}d` : ''}` : 'no date'
+  return { date, due, label }
+}
+
 export type Position = { key: string; label: string; owed: number; paid: number; open: number; next: string | null }
 
 const cents = (n: number) => Math.round(n * 100) / 100
@@ -70,14 +91,14 @@ export const dealDate = (d: string | null | undefined) => {
 }
 
 // Posição de UM deal nas 4 direções.
-//   devido = soma das obrigações não canceladas daquela direção
+//   devido = soma das obrigações não canceladas daquela direção (pago/vencido não se grava: é conta)
 //   pago   = soma das alocações, neste deal, de movimentos CONFIRMADOS daquela direção (proposta não conta)
 //   aberto = devido − pago
 // «next» = a próxima obrigação em aberto: a data, ou a condição (o marco) que a dispara.
-export function dealPositions(dealId: string, obligations: any[], movements: any[], allocations: any[]): Position[] {
+export function dealPositions(dealId: string, obligations: any[], movements: any[], allocations: any[], milestones: any[] = []): Position[] {
   const movById = new Map<string, any>(movements.map(m => [m.id, m]))
   return DIRECTIONS.map(d => {
-    const obs = obligations.filter(o => o.deal_id === dealId && o.from_party === d.from && o.to_party === d.to && o.status !== 'CANCELLED')
+    const obs = obligations.filter(o => o.deal_id === dealId && o.from_party === d.from && o.to_party === d.to && !o.cancelled)
     const owed = obs.reduce((s, o) => s + (Number(o.amount_usd) || 0), 0)
     const paid = allocations.reduce((s, a) => {
       if (a.deal_id !== dealId) return s
@@ -85,12 +106,9 @@ export function dealPositions(dealId: string, obligations: any[], movements: any
       if (!m || m.status !== 'CONFIRMED' || m.from_party !== d.from || m.to_party !== d.to) return s
       return s + (Number(a.amount_usd) || 0)
     }, 0)
-    const pend = obs.filter(o => o.status !== 'PAID')
-    const dated = pend.filter(o => o.due_date).sort((a, b) => String(a.due_date).localeCompare(String(b.due_date)))
-    const cond = pend.find(o => !o.due_date && o.trigger_milestone)
-    const next = dated.length
-      ? `${dated[0].status === 'DUE' ? 'DUE ' : ''}${dealDate(dated[0].due_date)}`
-      : cond ? `when ${MILESTONE_LABEL[cond.trigger_milestone] || cond.trigger_milestone}${cond.trigger_offset_days ? ` + ${cond.trigger_offset_days}d` : ''}` : null
+    const dues = obs.map(o => obligationDue(o, milestones))
+    const dated = dues.filter(x => x.date).sort((a, b) => String(a.date).localeCompare(String(b.date)))
+    const next = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
     return { key: d.key, label: d.label, owed: cents(owed), paid: cents(paid), open: cents(owed - paid), next }
   })
 }

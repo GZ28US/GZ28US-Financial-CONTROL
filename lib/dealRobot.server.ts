@@ -62,14 +62,13 @@ export type ScanSummary = { on: boolean; scanned: number; proposed: number; erro
 export async function scanDealGroups(db: SupabaseClient, opts: { max: number; deadline: number; dry?: boolean; force?: boolean }): Promise<ScanSummary> {
   const out: ScanSummary = { on: await settingOn(KEY_SCAN), scanned: 0, proposed: 0, errors: [], notes: [] }
   if (!out.on && !opts.force) { out.notes.push(`chave ${KEY_SCAN} desligada — nada lido`); return out }
-  const { data: deals, error: e0 } = await db.from('car_deals').select('id, deal_no, wa_chat_id, wa_chat_app').eq('status', 'OPEN').not('wa_chat_id', 'is', null)
+  const { data: deals, error: e0 } = await db.from('car_deals').select('id, deal_no, wa_chat_id').eq('status', 'OPEN').not('wa_chat_id', 'is', null)
   if (e0) { out.errors.push('car_deals: ' + e0.message); return out }
   const today = dayNY(new Date())
   for (const deal of deals || []) {
     if (Date.now() > opts.deadline || out.scanned >= opts.max) break
-    const app = String(deal.wa_chat_app || 'us').toUpperCase()
     const { data: msgs, error } = await db.from('whatsapp_messages').select('message_id, chat_id, author, pushname, type, body, media_url, sent_at, from_me')
-      .eq('app', app).eq('chat_id', deal.wa_chat_id).gte('sent_at', SCAN_FLOOR).in('type', ['image', 'document']).order('sent_at', { ascending: true }).limit(500)
+      .eq('app', 'US').eq('chat_id', deal.wa_chat_id).gte('sent_at', SCAN_FLOOR).in('type', ['image', 'document']).order('sent_at', { ascending: true }).limit(500)
     if (error) { out.errors.push('whatsapp_messages: ' + error.message); continue }
     // o que o próprio app postou (a planilha) não é comprovante
     const docs = (msgs || []).filter((m: any) => m.media_url && !m.from_me)
@@ -79,7 +78,7 @@ export async function scanDealGroups(db: SupabaseClient, opts: { max: number; de
     const todo = docs.filter((m: any) => { const s = done.get(m.message_id); return !s || (s.status === 'ERROR' && (s.tries || 0) < 3) })
     for (const m of todo) {
       if (Date.now() > opts.deadline || out.scanned >= opts.max) break
-      const base = { message_id: m.message_id, chat_id: m.chat_id, deal_id: deal.id, sent_at: m.sent_at, author: m.author, pushname: m.pushname, tries: (done.get(m.message_id)?.tries || 0) + 1, scanned_at: new Date().toISOString() }
+      const base = { message_id: m.message_id, tries: (done.get(m.message_id)?.tries || 0) + 1, scanned_at: new Date().toISOString() }
       try {
         const bin = await fetch(m.media_url, { signal: AbortSignal.timeout(30_000) })
         if (!bin.ok) throw new Error('arquivo HTTP ' + bin.status)
@@ -116,12 +115,12 @@ export async function scanDealGroups(db: SupabaseClient, opts: { max: number; de
         // a direção é palpite: o robô não sabe se o dinheiro foi à Tripa Trading ou ao GZ28 — fica PROPOSED para gente corrigir
         const { data: mov, error: e2 } = await db.from('deal_movements').insert({
           occurred_on: date, kind: KINDS.includes(String(p.kind)) ? p.kind : 'WIRE', from_party: 'SIDNEY', to_party: 'TRIPA_TRADING',
-          amount_usd: amountUsd, amount_brl: brl, fx_rate: rate, counterparty_label: String(p.recipient || '').slice(0, 80) || null,
+          amount_usd: amountUsd, amount_brl: brl, counterparty_label: String(p.recipient || '').slice(0, 80) || null,
           payer_label: String(p.payer || '').slice(0, 80) || null, fiscal_ref: String(p.reference || '').slice(0, 80) || null,
-          receipt_urls: fileUrl ? [fileUrl] : [], source_chat_id: m.chat_id, source_message_id: m.message_id, status: 'PROPOSED', note,
+          receipt_urls: fileUrl ? [fileUrl] : [], source_message_id: m.message_id, status: 'PROPOSED', note,
         }).select('id').single()
         if (e2 || !mov) throw new Error('deal_movements: ' + (e2?.message || 'sem linha'))
-        await db.from('deal_group_scans').upsert({ ...base, status: 'PROPOSED', movement_id: mov.id, raw: p, file_url: fileUrl, reason: null })
+        await db.from('deal_group_scans').upsert({ ...base, status: 'PROPOSED', movement_id: mov.id, raw: p, reason: null })
         out.proposed++
       } catch (e) {
         const msg = String((e as Error)?.message || e).slice(0, 200)
