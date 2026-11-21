@@ -5,7 +5,8 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
-import { formatUSD } from '@/lib/utils'
+import { BASE_PATH, formatUSD } from '@/lib/utils'
+import { sessionHeaders } from '@/lib/sessionHeaders'
 import { MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
@@ -19,7 +20,9 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 
 export default function CarDealPage() {
   const dealId = String(useParams().id)
-  const [tab, setTab] = useState<'SUMMARY' | 'MOVEMENTS' | 'MILESTONES'>('SUMMARY')
+  const [tab, setTab] = useState<'SUMMARY' | 'MOVEMENTS' | 'TRIPA SHEET' | 'MILESTONES'>('SUMMARY')
+  const [sheet, setSheet] = useState<any>(null)
+  const [sheetBusy, setSheetBusy] = useState('')
   const [deal, setDeal] = useState<any>(null)
   const [form, setForm] = useState<any>({})
   const [allDeals, setAllDeals] = useState<any[]>([])
@@ -37,6 +40,25 @@ export default function CarDealPage() {
   const [newAlloc, setNewAlloc] = useState<Record<string, { deal_id: string; amount: string }>>({})
 
   useEffect(() => { load() }, [])
+  useEffect(() => { if (tab === 'TRIPA SHEET') loadSheet() }, [tab])
+
+  // PLANILHA TRIPA: a grade vem pronta da rota (a mesma que gera o Excel e o PDF) — a prévia é o que vai no arquivo.
+  async function loadSheet() {
+    setSheet(null)
+    const r = await fetch(`${BASE_PATH}/api/car-deals/sheet?deal=${dealId}&format=json`, { headers: await sessionHeaders() })
+    const j = await r.json().catch(() => ({}))
+    setSheet(r.ok ? j : { error: j.error || `HTTP ${r.status}` })
+  }
+  async function downloadSheet(format: 'xlsx' | 'pdf') {
+    setSheetBusy(format)
+    try {
+      const r = await fetch(`${BASE_PATH}/api/car-deals/sheet?deal=${dealId}&format=${format}`, { headers: await sessionHeaders() })
+      if (!r.ok) { alert(`Could not generate the ${format.toUpperCase()}: HTTP ${r.status}`); return }
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(await r.blob()); a.download = `${sheet?.fileName || 'car-deal'}.${format}`; a.click()
+      setTimeout(() => URL.revokeObjectURL(a.href), 5000)
+    } finally { setSheetBusy('') }
+  }
 
   async function load() {
     const { data: d } = await supabase.from('car_deals')
@@ -159,7 +181,7 @@ export default function CarDealPage() {
       </div>
 
       <div className="flex gap-2 mb-6">
-        {(['SUMMARY', 'MOVEMENTS', 'MILESTONES'] as const).map(t => (
+        {(['SUMMARY', 'MOVEMENTS', 'TRIPA SHEET', 'MILESTONES'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} className={`px-5 py-3 rounded-2xl text-lg font-bold border ${tab === t ? 'bg-white text-black border-white' : 'bg-gray-900 border-gray-700 hover:bg-gray-700'}`}>{t}</button>
         ))}
         {msg && <span className="self-center text-green-400 font-bold ml-3">{msg}</span>}
@@ -317,6 +339,36 @@ export default function CarDealPage() {
               )
             })}
           </div>
+        </div>
+      )}
+
+      {tab === 'TRIPA SHEET' && (
+        <div className="space-y-4">
+          <div className="flex items-center gap-3 flex-wrap">
+            <button onClick={() => downloadSheet('xlsx')} disabled={!sheet?.grid || !!sheetBusy} className={`${btn} bg-green-700 hover:bg-green-600 disabled:opacity-40 text-lg`}>{sheetBusy === 'xlsx' ? 'GENERATING…' : 'DOWNLOAD EXCEL'}</button>
+            <button onClick={() => downloadSheet('pdf')} disabled={!sheet?.grid || !!sheetBusy} className={`${btn} bg-green-700 hover:bg-green-600 disabled:opacity-40 text-lg`}>{sheetBusy === 'pdf' ? 'GENERATING…' : 'DOWNLOAD PDF'}</button>
+            {sheet?.grid && <span className="text-gray-400">Car total {formatUSD(sheet.total)} · paid {formatUSD(sheet.paid)} · balance {formatUSD(sheet.balance)} · {sheet.payments} payment line{sheet.payments === 1 ? '' : 's'}</span>}
+          </div>
+          <p className="text-gray-400">Same layout as the exporter&apos;s screen. It shows confirmed movements only, and nothing here is posted anywhere: the files are downloaded to this computer.</p>
+          {!sheet ? <p className="text-xl text-gray-400">Loading...</p> : sheet.error ? <p className="text-xl text-red-400">Could not build the sheet: {sheet.error}</p> : (
+            <div className="overflow-x-auto bg-white rounded-xl p-2">
+              <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', width: '100%', minWidth: 1300, fontFamily: 'Arial, Helvetica, sans-serif' }}>
+                <tbody>
+                  {sheet.grid.map((row: any[], r: number) => (
+                    <tr key={r}>
+                      {row.map((c: any, k: number) => (
+                        <td key={k} style={{ border: '1px solid #A6A6A6', height: 26, padding: '0 4px', fontSize: 14, width: '10%', whiteSpace: c.wrap ? 'normal' : 'nowrap', overflow: 'hidden', color: c.c || '#000', fontWeight: c.b ? 700 : 400, fontStyle: c.i ? 'italic' : 'normal', background: c.fill || '#fff', textAlign: c.al || 'left' }}>
+                          {c.n != null
+                            ? `${c.fmt === 'brl' ? 'R$' : 'US$'} ${Number(c.n).toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+                            : c.rich ? c.rich.map((x: any, i: number) => <span key={i} style={{ color: x[1], fontWeight: x[2] ? 700 : 400 }}>{x[0]}</span>) : (c.v || '')}
+                        </td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
