@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { dealLabel, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, vinTail, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -20,7 +20,10 @@ const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(
 
 export default function CarDealPage() {
   const dealId = String(useParams().id)
-  const [tab, setTab] = useState<'SUMMARY' | 'MOVEMENTS' | 'TRIPA SHEET' | 'MILESTONES'>('SUMMARY')
+  const [tab, setTab] = useState<'SUMMARY' | 'MOVEMENTS' | 'DOCUMENTS' | 'TRIPA SHEET' | 'MILESTONES'>('SUMMARY')
+  const [docs, setDocs] = useState<any[]>([])
+  const [newDoc, setNewDoc] = useState<any>({ kind: 'TITLE', label: '', doc_date: '' })
+  const [uploading, setUploading] = useState('')
   const [sheet, setSheet] = useState<any>(null)
   const [sheetBusy, setSheetBusy] = useState('')
   const [newTarget, setNewTarget] = useState<any>({ chat_id: '', label: '', view: 'TRIPA' })
@@ -64,10 +67,10 @@ export default function CarDealPage() {
 
   async function load() {
     const { data: d } = await supabase.from('car_deals')
-      .select('*, rides(id, project_code, project_name, vin, color, year, model, version), invoices:purchase_invoice_id(id, invoice_code, service)')
+      .select('*, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition), invoices:purchase_invoice_id(id, invoice_code, service)')
       .eq('id', dealId).single()
     const [ad, ch, ob, al, ms] = await Promise.all([
-      supabase.from('car_deals').select('id, deal_no, rides(project_name)').order('deal_no'),
+      supabase.from('car_deals').select('id, deal_no, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition)').order('deal_no'),
       supabase.from('deal_charges').select('*').eq('deal_id', dealId).order('position'),
       supabase.from('deal_obligations').select('*').eq('deal_id', dealId).order('created_at'),
       supabase.from('deal_allocations').select('*'),
@@ -75,6 +78,8 @@ export default function CarDealPage() {
     ])
     // movimentos: os alocados a este deal + todo PROPOSED (a caixa de entrada é uma só para todos os deals)
     const { data: mv } = await supabase.from('deal_movements').select('*').order('occurred_on', { ascending: false })
+    const { data: dc } = await supabase.from('deal_documents').select('*').eq('deal_id', dealId).order('created_at', { ascending: false })
+    setDocs(dc || [])
     if (d?.client_id) { const { data: c } = await supabase.from('clients').select('name').eq('id', d.client_id).single(); setClientName(c?.name || '') }
     setDeal(d); setAllDeals(ad.data || []); setCharges(ch.data || []); setObligations(ob.data || [])
     setAllocations(al.data || []); setMilestones(ms.data || []); setMovements(mv || [])
@@ -162,6 +167,40 @@ export default function CarDealPage() {
       if (r?.posted) flash(`Sheet posted automatically (${r.sent.filter((s: any) => s.ok).length} files)`)
     }
   }
+  // ARQUIVOS: o mesmo balde dos comprovantes do app (expense-receipts), numa pasta por deal.
+  async function uploadFile(file: File, folder: string): Promise<string | null> {
+    const safe = file.name.normalize('NFD').replace(/[^A-Za-z0-9._-]+/g, '_').slice(-80)
+    const path = `car-deals/${dealId}/${folder}/${Date.now()}-${safe}`
+    const { error } = await supabase.storage.from('expense-receipts').upload(path, file, { upsert: true })
+    if (error) { alert(`Upload failed: ${error.message}`); return null }
+    return supabase.storage.from('expense-receipts').getPublicUrl(path).data.publicUrl
+  }
+  async function addDocument(file: File | undefined) {
+    if (!file) return
+    setUploading('doc')
+    try {
+      const url = await uploadFile(file, 'docs')
+      if (!url) return
+      const { data: u } = await supabase.auth.getUser()
+      const { error } = await supabase.from('deal_documents').insert({
+        deal_id: dealId, kind: newDoc.kind, label: newDoc.label.trim() || null, doc_date: newDoc.doc_date || null,
+        file_url: url, file_name: file.name, uploaded_by: u?.user?.email || null,
+      })
+      if (!fail(error)) { setNewDoc({ ...newDoc, label: '', doc_date: '' }); load() }
+    } finally { setUploading('') }
+  }
+  // comprovante do movimento: fica no próprio movimento (receipt_urls) — vale para todos os deals em que ele foi alocado
+  async function attachProof(m: any, file: File | undefined) {
+    if (!file) return
+    setUploading(m.id)
+    try {
+      const url = await uploadFile(file, 'proofs')
+      if (!url) return
+      const next = [...(Array.isArray(m.receipt_urls) ? m.receipt_urls : []), url]
+      const { error } = await supabase.from('deal_movements').update({ receipt_urls: next, updated_at: new Date().toISOString() }).eq('id', m.id)
+      if (!fail(error)) load()
+    } finally { setUploading('') }
+  }
   async function setMovParty(m: any, field: 'from_party' | 'to_party', value: string) {
     const other = field === 'from_party' ? m.to_party : m.from_party
     if (value === other) { alert('From and To must be different parties.'); return }
@@ -201,19 +240,20 @@ export default function CarDealPage() {
 
   const positions = dealPositions(dealId, obligations, movements, allocations)
   const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount_usd) || 0), 0)
-  const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `${dealLabel(d.deal_no)}${d.rides?.project_name ? ` ${d.rides.project_name}` : ''}` : '?' }
+  const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `VIN ${vinTail(d.rides?.vin) || '----'} · ${dealLabel(d.deal_no)} · ${carDescription(d.rides)}` : '?' }
   const myMovIds = new Set(allocations.filter(a => a.deal_id === dealId).map(a => a.movement_id))
   const shownMovs = movements.filter(m => myMovIds.has(m.id) || m.status === 'PROPOSED')
-  const title = `${deal.deal_no ? dealLabel(deal.deal_no) : 'Car deal'}${deal.rides ? ` — ${[deal.rides.project_code, deal.rides.project_name].filter(Boolean).join(' ')}` : ''}`
+  const vin = String(deal.rides?.vin || '')
 
   return (
     <main className="min-h-screen bg-black text-white p-8">
       <Header />
       <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
         <div>
-          <h1 className="text-4xl font-bold">{title}</h1>
+          <h1 className="text-4xl font-bold font-mono">{vin ? <><span className="text-gray-400 text-2xl">VIN </span>{vin.slice(0, -4)}<span className="text-amber-300">{vin.slice(-4)}</span></> : 'no VIN'}</h1>
+          <p className="text-2xl font-bold mt-1">{deal.deal_no ? dealLabel(deal.deal_no) : 'Car deal'} · {[deal.rides?.year, carDescription(deal.rides)].filter(Boolean).join(' ')}</p>
           <p className="text-xl text-gray-400 mt-1">
-            {[deal.rides?.year, deal.rides?.model, deal.rides?.version].filter(Boolean).join(' ')}{deal.rides?.vin ? ` · VIN ${deal.rides.vin}` : ''}{deal.rides?.color ? ` · ${deal.rides.color}` : ''}{clientName ? ` · ${clientName}` : ''}
+            {[carInternal(deal.rides), clientName].filter(Boolean).join(' · ')}
           </p>
         </div>
         <div className="flex gap-3 flex-wrap">
@@ -224,7 +264,7 @@ export default function CarDealPage() {
       </div>
 
       <div className="flex gap-2 mb-6">
-        {(['SUMMARY', 'MOVEMENTS', 'TRIPA SHEET', 'MILESTONES'] as const).map(t => (
+        {(['SUMMARY', 'MOVEMENTS', 'DOCUMENTS', 'TRIPA SHEET', 'MILESTONES'] as const).map(t => (
           <button key={t} onClick={() => setTab(t)} className={`px-5 py-3 rounded-2xl text-lg font-bold border ${tab === t ? 'bg-white text-black border-white' : 'bg-gray-900 border-gray-700 hover:bg-gray-700'}`}>{t}</button>
         ))}
         {msg && <span className="self-center text-green-400 font-bold ml-3">{msg}</span>}
@@ -354,6 +394,8 @@ export default function CarDealPage() {
                     <span className="text-gray-300">{dealDate(m.occurred_on)} · {m.kind}</span>
                     {(Array.isArray(m.receipt_urls) ? m.receipt_urls : []).map((u: string, i: number) => <a key={i} href={u} target="_blank" rel="noreferrer" className="underline text-blue-300">proof{m.receipt_urls.length > 1 ? ` ${i + 1}` : ''}</a>)}
                     {m.source_message_id && <span className="px-2 py-1 rounded-lg bg-gray-800 text-sm text-gray-300">read from the group</span>}
+                    {!(Array.isArray(m.receipt_urls) && m.receipt_urls.length) && m.kind !== 'OFFSET' && <span className="px-2 py-1 rounded-lg bg-red-950 text-sm font-bold text-red-300">NO PROOF</span>}
+                    <label className="cursor-pointer underline text-gray-300 text-sm">{uploading === m.id ? 'uploading…' : 'attach proof'}<input type="file" className="hidden" accept="image/*,application/pdf" onChange={e => { attachProof(m, e.target.files?.[0]); e.target.value = '' }} /></label>
                     {m.amount_brl != null && <span className="text-gray-400">R$ {Number(m.amount_brl).toLocaleString('pt-BR', { minimumFractionDigits: 2 })}{m.fx_rate != null ? ` @ ${m.fx_rate}` : ''}</span>}
                     {m.counterparty_label && <span className="text-gray-400">{m.counterparty_label}</span>}
                     {m.payer_label && <span className="text-gray-400">paid by {m.payer_label}</span>}
@@ -392,6 +434,78 @@ export default function CarDealPage() {
           </div>
         </div>
       )}
+
+      {tab === 'DOCUMENTS' && (() => {
+        const titleDocs = docs.filter(d => d.kind === 'TITLE')
+        const titleStep = milestones.find(m => m.kind === 'TITLE_RECEIVED')
+        const proofs = movements.filter(m => myMovIds.has(m.id))
+        const noProof = proofs.filter(m => m.status === 'CONFIRMED' && m.kind !== 'OFFSET' && !(Array.isArray(m.receipt_urls) && m.receipt_urls.length))
+        return (
+          <div className="space-y-6">
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className={`bg-gray-900 border rounded-3xl p-5 ${titleDocs.length ? 'border-green-800' : 'border-red-900'}`}>
+                <p className="text-sm font-bold text-gray-400">TITLE</p>
+                <p className={`text-2xl font-bold mt-1 ${titleDocs.length ? 'text-green-400' : 'text-red-400'}`}>{titleDocs.length ? 'ON FILE' : 'NOT ON FILE'}</p>
+                <p className="text-sm text-gray-400 mt-1">{titleStep?.done_at ? `Title received ${dealDate(titleStep.done_at)}` : 'Title not marked as received (tab MILESTONES)'}</p>
+              </div>
+              <div className="bg-gray-900 border border-gray-800 rounded-3xl p-5">
+                <p className="text-sm font-bold text-gray-400">DOCUMENTS ON FILE</p>
+                <p className="text-2xl font-bold mt-1">{docs.length}</p>
+                <p className="text-sm text-gray-400 mt-1">{DOC_KINDS.filter(k => docs.some(d => d.kind === k.kind)).map(k => k.label).join(' · ') || 'none yet'}</p>
+              </div>
+              <div className={`bg-gray-900 border rounded-3xl p-5 ${noProof.length ? 'border-red-900' : 'border-gray-800'}`}>
+                <p className="text-sm font-bold text-gray-400">CONFIRMED MOVEMENTS WITHOUT PROOF</p>
+                <p className={`text-2xl font-bold mt-1 ${noProof.length ? 'text-red-400' : 'text-green-400'}`}>{noProof.length} of {proofs.filter(m => m.status === 'CONFIRMED').length}</p>
+                <p className="text-sm text-gray-400 mt-1">Attach each proof on the movement (tab MOVEMENTS).</p>
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+              <h2 className="text-2xl font-bold mb-4">ADD A DOCUMENT</h2>
+              <div className="flex gap-3 flex-wrap items-end">
+                <label className="flex flex-col text-xs text-gray-400">KIND<select className={inp} value={newDoc.kind} onChange={e => setNewDoc({ ...newDoc, kind: e.target.value })}>{DOC_KINDS.map(k => <option key={k.kind} value={k.kind}>{k.label}</option>)}</select></label>
+                <label className="flex flex-col text-xs text-gray-400 flex-1 min-w-40">LABEL (optional)<input className={inp} value={newDoc.label} onChange={e => setNewDoc({ ...newDoc, label: e.target.value })} placeholder="Front and back, contract 12345…" /></label>
+                <label className="flex flex-col text-xs text-gray-400">DOCUMENT DATE<input type="date" className={inp} value={newDoc.doc_date} onChange={e => setNewDoc({ ...newDoc, doc_date: e.target.value })} /></label>
+                <label className={`${btn} bg-green-700 hover:bg-green-600 cursor-pointer`}>{uploading === 'doc' ? 'UPLOADING…' : 'CHOOSE FILE AND SAVE'}<input type="file" className="hidden" accept="image/*,application/pdf" onChange={e => { addDocument(e.target.files?.[0]); e.target.value = '' }} /></label>
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+              <h2 className="text-2xl font-bold mb-4">ON FILE</h2>
+              {docs.length === 0 && <p className="text-gray-500">No documents yet.</p>}
+              <div className="space-y-2">
+                {DOC_KINDS.flatMap(k => docs.filter(d => d.kind === k.kind)).map(d => (
+                  <div key={d.id} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
+                    <span className="w-44 font-bold">{DOC_LABEL[d.kind] || d.kind}</span>
+                    <a href={d.file_url} target="_blank" rel="noreferrer" className="underline text-blue-300 flex-1 min-w-40">{d.label || d.file_name || 'open'}</a>
+                    <span className="text-gray-400 w-28">{dealDate(d.doc_date) || ''}</span>
+                    <span className="text-gray-500 text-sm w-56">added {dealDate(String(d.created_at).slice(0, 10))}{d.uploaded_by ? ` by ${String(d.uploaded_by).split('@')[0]}` : ''}</span>
+                    <button onClick={() => delRow('deal_documents', d.id, 'document')} className="text-gray-500 hover:text-red-400 font-bold">REMOVE</button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+              <h2 className="text-2xl font-bold mb-4">PAYMENT PROOFS (from the movements of this car)</h2>
+              {proofs.length === 0 && <p className="text-gray-500">No movements allocated to this car yet.</p>}
+              <div className="space-y-2">
+                {proofs.map(m => (
+                  <div key={m.id} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
+                    <span className="w-28 text-gray-300">{dealDate(m.occurred_on)}</span>
+                    <span className="w-36 text-right font-bold">{formatUSD(Number(m.amount_usd) || 0)}</span>
+                    <span className="w-64">{PARTY_LABEL[m.from_party]} → {PARTY_LABEL[m.to_party]}</span>
+                    <span className="text-gray-400 flex-1 min-w-40">{m.counterparty_label || m.kind}</span>
+                    {(Array.isArray(m.receipt_urls) ? m.receipt_urls : []).length
+                      ? m.receipt_urls.map((u: string, i: number) => <a key={i} href={u} target="_blank" rel="noreferrer" className="underline text-blue-300">proof{m.receipt_urls.length > 1 ? ` ${i + 1}` : ''}</a>)
+                      : <span className="text-red-400 font-bold">{m.kind === 'OFFSET' ? '' : 'no proof'}</span>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )
+      })()}
 
       {tab === 'TRIPA SHEET' && (
         <div className="space-y-4">

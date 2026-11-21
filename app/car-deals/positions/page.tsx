@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
-import { DIRECTIONS, MILESTONE_LABEL, PARTY_LABEL, dealDate, dealLabel, dealPositions } from '@/lib/carDeals'
+import { DIRECTIONS, MILESTONE_LABEL, PARTY_LABEL, carDescription, carInternal, dealDate, dealLabel, dealPositions } from '@/lib/carDeals'
 
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
@@ -32,12 +32,12 @@ export default function CarDealPositionsPage() {
   useEffect(() => {
     (async () => {
       const [d, o, m, a] = await Promise.all([
-        supabase.from('car_deals').select('id, deal_no, status, exporter, rides(project_code, project_name, vin)').neq('status', 'CANCELLED').order('deal_no'),
+        supabase.from('car_deals').select('id, deal_no, status, exporter, rides(id, project_code, project_name, vin, color, year, brand, model, version, special_edition)').neq('status', 'CANCELLED').order('deal_no'),
         supabase.from('deal_obligations').select('*'),
         supabase.from('deal_movements').select('*'),
         supabase.from('deal_allocations').select('*'),
       ])
-      setDeals(d.data || []); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
+      setDeals((d.data || []).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
       setLoading(false)
     })()
   }, [])
@@ -45,7 +45,8 @@ export default function CarDealPositionsPage() {
   const dirs = DIRECTIONS.filter(d => !HIDDEN[view].includes(d.key))
   const rows = useMemo(() => deals.map(d => ({ deal: d, pos: dealPositions(d.id, obligations, movements, allocations) })), [deals, obligations, movements, allocations])
   const totals = dirs.map(dir => Math.round(rows.reduce((s, r) => s + (r.pos.find(p => p.key === dir.key)?.open || 0), 0) * 100) / 100)
-  const carName = (d: any) => [d.rides?.project_code, d.rides?.project_name].filter(Boolean).join(' — ') || '—'
+  // VIN primeiro; o apelido interno (US.0xx / Joker…) só na visão GZ28
+  const carName = (d: any) => [d.rides?.vin ? `VIN ${d.rides.vin}` : 'no VIN', carDescription(d.rides), view === 'GZ28' ? carInternal(d.rides) : ''].filter(Boolean).join(' · ')
   const dealById = new Map(deals.map(d => [d.id, d]))
   // a programação: toda obrigação em aberto das direções visíveis, a vencida/datada primeiro, a condicionada depois
   const schedule = obligations

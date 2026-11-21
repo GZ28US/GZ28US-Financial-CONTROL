@@ -30,6 +30,33 @@ export const MILESTONE_LABEL: Record<string, string> = Object.fromEntries(MILEST
 export const dealNumber = (dealNo: string | null | undefined) => String(dealNo || '').replace(/^s*compras*/i, '').trim()
 export const dealLabel = (dealNo: string | null | undefined) => { const n = dealNumber(dealNo); return n ? `Compra ${n}` : 'no number' }
 
+// IDENTIFICAÇÃO DO CARRO (Márcio, 21/11/2026): «use sempre o VIN dos carros nesta área como referência PRINCIPAL, também
+// mostre o COMPRA XX, e os dados do carro, como: Charger HellCat RedEye JailBreak PlumCrazy». Ordem em toda a área:
+// 1º o VIN completo (4 finais em destaque) · 2º COMPRA XX · 3º modelo + versão + edição + cor. O apelido interno
+// (Joker, Dracula…) e o US.0xx ficam só como secundário, na visão GZ28.
+export const carDescription = (ride: any) => {
+  const ed = String(ride?.special_edition || '').trim()
+  return [ride?.model, ride?.version, /^none$/i.test(ed) ? '' : ed, ride?.color].map(x => String(x || '').trim()).filter(Boolean).join(' ')
+}
+export const vinTail = (vin: string | null | undefined) => String(vin || '').trim().slice(-4)
+export const carInternal = (ride: any) => [ride?.project_code, ride?.project_name].filter(Boolean).join(' ')
+// uma linha só, para listas, selects e PDFs: «VIN 2C3CDZL91MH657802 · Compra 15 · Challenger SRT Hellcat Pitch Black»
+export const dealLine = (deal: any) => [deal?.rides?.vin ? `VIN ${deal.rides.vin}` : 'no VIN', dealLabel(deal?.deal_no), carDescription(deal?.rides)].filter(Boolean).join(' · ')
+
+// DOCUMENTOS do deal (21/11/2026): «tudo com comprovante, documento anexo, título» — a prova fica no carro.
+export const DOC_KINDS: { kind: string; label: string }[] = [
+  { kind: 'TITLE', label: 'Title' },
+  { kind: 'BILL_OF_SALE', label: 'Bill of sale' },
+  { kind: 'PROFORMA', label: 'Proforma' },
+  { kind: 'FX_CONTRACT', label: 'Exchange contract' },
+  { kind: 'SWIFT', label: 'SWIFT' },
+  { kind: 'PAYMENT_PROOF', label: 'Payment proof' },
+  { kind: 'BL', label: 'Bill of lading' },
+  { kind: 'EXPORT', label: 'Export papers' },
+  { kind: 'OTHER', label: 'Other' },
+]
+export const DOC_LABEL: Record<string, string> = Object.fromEntries(DOC_KINDS.map(d => [d.kind, d.label]))
+
 export const MOVEMENT_KINDS = ['FX_CONTRACT', 'PIX', 'WIRE', 'ZELLE', 'STRIPE', 'CASH', 'OFFSET']
 
 export type Position = { key: string; label: string; owed: number; paid: number; open: number; next: string | null }
