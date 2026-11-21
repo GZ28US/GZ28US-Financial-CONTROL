@@ -322,7 +322,7 @@ export default function InvoicesPage() {
       {purchases.map((pc) => (
         <div key={pc.id} className="bg-gray-900 border border-blue-900 rounded-3xl p-6 mb-5 flex items-center justify-between gap-6 flex-wrap">
           <div>
-            <p className="text-sm font-bold text-blue-300">CAR PURCHASE{pc.deal?.deal_no ? ` — COMPRA ${pc.deal.deal_no}` : ''}</p>
+            <p className="text-sm font-bold text-blue-300">CAR PURCHASE{pc.deal?.deal_no ? ` — COMPRA ${String(pc.deal.deal_no).replace(/^s*compras*/i, '')}` : ''}</p>
             <h2 className="text-2xl font-bold">{pc.invoice_code}</h2>
             <p className="text-gray-400">{pc.service || ''}</p>
           </div>

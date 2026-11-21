@@ -16,6 +16,7 @@
 import type { SupabaseClient } from '@supabase/supabase-js'
 import ExcelJS from 'exceljs'
 import { jsPDF } from 'jspdf'
+import { dealNumber } from '@/lib/carDeals'
 
 const AZUL = '#0433FF', VERDE_T = '#2BE32B', VERDE_F = '#00F900', CINZA = '#D9D9D9', GRADE = '#A6A6A6', R = '#E8231A', AMARELO = '#FFF24A', K = '#000000'
 const COLS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J']
@@ -55,7 +56,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string): Promis
   const headers: string[] = Array.isArray(hd) ? hd : Array.isArray(hd?.headers) ? hd.headers : HEADERS_PADRAO
   const italic = Array.isArray(hd) ? true : hd?.italic !== false
   const firstName = String(client?.name || '').trim().split(/\s+/)[0] || ''
-  const title = deal.sheet_title || `${firstName.toUpperCase()}  ${deal.deal_no || ''}`.trim()
+  const title = deal.sheet_title || `${firstName.toUpperCase()}  ${dealNumber(deal.deal_no)}`.trim()
   const band = deal.sheet_band_color || K, bandTxt = deal.sheet_band_text_color || '#C9F23A'
   const vin = ride.vin ? `VIN ${String(ride.vin).slice(-4)}` : ''
   const colorName = deal.sheet_color_name || ride.color || ''
@@ -121,7 +122,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string): Promis
   if (balance > 0) sd[5] = cel('DEVEMOS', { c: AMARELO, fill: R })
   L.push(sd)
 
-  const fileName = `COMPRA ${deal.deal_no || '—'} - ${ride.project_name || ride.project_code || 'car'}${vin ? ` ${vin}` : ''}`.replace(/[\\/:*?"<>|]/g, ' ')
+  const fileName = `COMPRA ${dealNumber(deal.deal_no) || '—'} - ${ride.project_name || ride.project_code || 'car'}${vin ? ` ${vin}` : ''}`.replace(/[\\/:*?"<>|]/g, ' ')
   // hash do conteúdo: planilha igual não é repostada (idempotência do robô)
   const { createHash } = await import('crypto')
   const hash = createHash('sha256').update(JSON.stringify(L)).digest('hex').slice(0, 32)

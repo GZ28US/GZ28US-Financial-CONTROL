@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { dealLabel, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -158,10 +158,10 @@ export default function CarDealPage() {
 
   const positions = dealPositions(dealId, obligations, movements, allocations)
   const chargesTotal = charges.reduce((s, c) => s + (Number(c.amount_usd) || 0), 0)
-  const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `${d.deal_no ? `Compra ${d.deal_no}` : 'no number'}${d.rides?.project_name ? ` ${d.rides.project_name}` : ''}` : '?' }
+  const dealName = (id: string) => { const d = allDeals.find(x => x.id === id); return d ? `${dealLabel(d.deal_no)}${d.rides?.project_name ? ` ${d.rides.project_name}` : ''}` : '?' }
   const myMovIds = new Set(allocations.filter(a => a.deal_id === dealId).map(a => a.movement_id))
   const shownMovs = movements.filter(m => myMovIds.has(m.id) || m.status === 'PROPOSED')
-  const title = `${deal.deal_no ? `Compra ${deal.deal_no}` : 'Car deal'}${deal.rides ? ` — ${[deal.rides.project_code, deal.rides.project_name].filter(Boolean).join(' ')}` : ''}`
+  const title = `${deal.deal_no ? dealLabel(deal.deal_no) : 'Car deal'}${deal.rides ? ` — ${[deal.rides.project_code, deal.rides.project_name].filter(Boolean).join(' ')}` : ''}`
 
   return (
     <main className="min-h-screen bg-black text-white p-8">

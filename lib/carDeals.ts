@@ -26,6 +26,10 @@ export const MILESTONES: { kind: string; label: string }[] = [
 ]
 export const MILESTONE_LABEL: Record<string, string> = Object.fromEntries(MILESTONES.map(m => [m.kind, m.label]))
 
+// «Compra 15»: o número pode ter sido gravado com ou sem a palavra — a tela mostra sempre uma vez só.
+export const dealNumber = (dealNo: string | null | undefined) => String(dealNo || '').replace(/^s*compras*/i, '').trim()
+export const dealLabel = (dealNo: string | null | undefined) => { const n = dealNumber(dealNo); return n ? `Compra ${n}` : 'no number' }
+
 export const MOVEMENT_KINDS = ['FX_CONTRACT', 'PIX', 'WIRE', 'ZELLE', 'STRIPE', 'CASH', 'OFFSET']
 
 export type Position = { key: string; label: string; owed: number; paid: number; open: number; next: string | null }

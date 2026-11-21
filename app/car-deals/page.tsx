@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
-import { DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { dealLabel, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
 
 // CAR DEALS (21/11/2026): a compra dos carros, fora das invoices de oficina. Uma linha por compra, com as 4 posições
 // (quem ainda deve a quem) e o total no rodapé. Invoice de compra ainda sem deal aparece embaixo, com o botão de criar.
@@ -113,7 +113,7 @@ export default function CarDealsPage() {
                 {shown.map(d => (
                   <tr key={d.id} className="border-b border-gray-800 hover:bg-gray-800">
                     <td className="p-4 whitespace-nowrap">
-                      <Link href={`/car-deals/${d.id}`} className="text-xl font-bold underline">{d.deal_no ? `Compra ${d.deal_no}` : 'no number'}</Link>
+                      <Link href={`/car-deals/${d.id}`} className="text-xl font-bold underline">{dealLabel(d.deal_no)}</Link>
                       {d.status !== 'OPEN' && <span className="ml-2 px-2 py-1 rounded-full text-xs font-bold bg-gray-700 text-gray-300">{d.status}</span>}
                       <div className="text-sm text-gray-500">{d.invoices?.invoice_code || 'no purchase invoice'}</div>
                     </td>

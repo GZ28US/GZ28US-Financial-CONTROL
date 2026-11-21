@@ -47,6 +47,7 @@ const MENU: MenuItem[] = [
     label: 'CARS',
     items: [
       ['/car-deals', 'CAR DEALS'],
+      ['/car-deals/positions', 'POSITIONS'],
     ],
   },
   {
