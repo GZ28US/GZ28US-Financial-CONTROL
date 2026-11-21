@@ -61,14 +61,18 @@ export default function CarDealPositionsPage() {
   // VIN primeiro; o apelido interno (US.0xx / Joker…) só na visão GZ28
   const carName = (d: any) => [d.rides?.vin ? `VIN ${d.rides.vin}` : 'no VIN', carDescription(d.rides), view === 'GZ28' ? carInternal(d.rides) : ''].filter(Boolean).join(' · ')
   const dealById = new Map(deals.map(d => [d.id, d]))
+  // renda aberta que um movimento confirmado do cliente já cobriu não é mais dívida dele (está na perna Tripa Trading → GZ28US);
+  // e o texto da renda é nota INTERNA: fora da visão GZ28 sai um rótulo neutro
+  const movOk = new Set(movements.filter(m => m.status === 'CONFIRMED' && m.from_party === 'SIDNEY').map(m => m.id))
+  const coveredByClient = (i: any) => allocations.filter(a => a.invoice_income_id === i.id && movOk.has(a.movement_id)).reduce((t, a) => t + (Number(a.amount_usd) || 0), 0) >= (Number(i.amount) || 0) - 0.004
   // a programação: toda obrigação em aberto das direções visíveis, a vencida/datada primeiro, a condicionada depois
   const schedule = obligations
     .filter(o => !o.cancelled && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
     .map(o => ({ ...o, _due: obligationDue(o, milestones) }))
-    .concat(dirs.some(d => d.key === 'SIDNEY>GZ28US') ? incomes.filter(i => !i.paid_at).map(i => {
+    .concat(dirs.some(d => d.key === 'SIDNEY>GZ28US') ? incomes.filter(i => !i.paid_at && !coveredByClient(i)).map(i => {
       const deal = deals.find(x => x.purchase_invoice_id === i.invoice_id)
       const date = i.payment_date || null, due = !!date && date <= new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-      return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'SIDNEY', to_party: 'GZ28US', label: i.description || 'Payment on the purchase invoice', amount_usd: i.amount,
+      return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'SIDNEY', to_party: 'GZ28US', label: view === 'GZ28' ? (i.description || 'Payment on the purchase invoice') : 'Payment on the purchase invoice', amount_usd: i.amount,
         _due: { date, due, label: date ? `${due ? 'DUE ' : ''}${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : 'no date' } } : null
     }).filter(Boolean) as any[] : [])
     .sort((a, b) => (a._due.date ? 0 : 1) - (b._due.date ? 0 : 1) || String(a._due.date || '').localeCompare(String(b._due.date || '')))
