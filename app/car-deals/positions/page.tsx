@@ -157,7 +157,7 @@ export default function CarDealPositionsPage() {
               </tfoot>
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Sidney → Tripa Trading = the car&apos;s cost lines minus his confirmed payments to them; Sidney → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them. A negative number means more was paid than is owed.</p>
+          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Sidney → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them); Sidney → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them.</p>
 
           <h2 className="text-2xl font-bold mt-8 mb-3">PAYMENT SCHEDULE ({schedule.length})</h2>
           <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-x-auto">

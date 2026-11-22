@@ -95,9 +95,9 @@ export const dealDate = (d: string | null | undefined) => {
 //   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
 //                           + rendas abertas de invoice do MESMO carro cujo cliente é o exportador (frete a reembolsar…)
 //   GZ28US → Tripa Trading  despesas em aberto da invoice de compra para o fornecedor Tripa
-//   Sidney → Tripa Trading  custos do deal (deal_charges) − alocações CONFIRMED Sidney→Tripa Trading no deal − o que já
-//                           aparece em GZ28US → Tripa Trading (dinheiro que passa por nós não conta duas vezes), nunca
-//                           negativo; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
+//   Sidney → Tripa Trading  Tripa só exportadora: taxas dela + o que ela nos repassou − o que ele mandou a ela;
+//                           Tripa vendedora: custos do deal − o que ele mandou a ela − o aberto em GZ28US → Tripa Trading;
+//                           nunca negativo; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
 export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[]; exporterIncomes?: any[] }
 
 // O que o EXPORTADOR nos deve fora da compra (Márcio 21/11/2026, caso RedHot: «ponha o frete que pagamos pra Genesis, a
@@ -142,13 +142,23 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const sgOwed = sum(incs, i => Number(i.amount) || 0)
   const exps = inv ? ctx.expenses.filter(e => e.invoice_id === inv && isTripa(e.supplier) && !e.cancel_status) : []
   const gtOwed = sum(exps, expenseValue), gtOpen = sum(exps.filter(e => !e.payment_date), expenseValue)
-  const stOwed = sum(ctx.charges.filter(c => c.deal_id === deal.id), c => Number(c.amount_usd) || 0)
+  // SIDNEY → TRIPA TRADING — segue o DINHEIRO, não a planilha (CC Sidney, 21/11, depois de ler os grupos e o extrato):
+  //   (a) a Tripa é só o canal/exportador (a invoice de compra NÃO tem despesa para a Tripa): o carro é comprado pelo
+  //       GZ28 e pago a nós, então ele deve à Tripa só as TAXAS dela (custos de position > 0; a position 0 é o carro)
+  //       + o que ela já nos repassou por conta dele − o que ele já mandou a ela.
+  //   (b) a Tripa é a VENDEDORA (há despesa para a Tripa na invoice de compra, caso RedHot): todos os custos − o que
+  //       ele já mandou a ela − o que ainda vai passar por nós (GZ28US → Tripa Trading).
+  const tripaToGz = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'TRIPA_TRADING' && m.to_party === 'GZ28US' }
+  const myCharges = ctx.charges.filter(c => c.deal_id === deal.id)
+  const seller = exps.length > 0
   const stPaid = sum(ctx.allocations.filter(a => a.deal_id === deal.id && clientToTripa(a)), a => Number(a.amount_usd) || 0)
+  const advanced = seller ? 0 : sum(ctx.allocations.filter(a => a.deal_id === deal.id && tripaToGz(a)), a => Number(a.amount_usd) || 0)
+  const stOwed = sum(seller ? myCharges : myCharges.filter(c => (Number(c.position) || 0) > 0), c => Number(c.amount_usd) || 0) + advanced
   const dues = ctx.obligations.filter(o => o.deal_id === deal.id && !o.cancelled && o.from_party === 'SIDNEY' && o.to_party === 'TRIPA_TRADING').map(o => obligationDue(o, ctx.milestones))
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
   // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
   tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id), i => Number(i.amount) || 0)
-  const stOpen = Math.max(0, stOwed - stPaid - gtOpen)
+  const stOpen = Math.max(0, stOwed - stPaid - (seller ? gtOpen : 0))
   const stNext = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
