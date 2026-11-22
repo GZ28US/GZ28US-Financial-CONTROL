@@ -31,7 +31,7 @@ export const MILESTONE_LABEL: Record<string, string> = Object.fromEntries(MILEST
 // «Compra 15»: o número pode ter sido gravado com ou sem a palavra — a tela mostra sempre uma vez só.
 export const dealNumber = (dealNo: string | null | undefined) => String(dealNo || '').replace(/^s*compras*/i, '').trim()
 // «Compra 15» para número; nome próprio («Tripa 041») sai como está
-export const dealLabel = (dealNo: string | null | undefined) => { const n = dealNumber(dealNo); return !n ? 'no number' : /^d/.test(n) ? `Compra ${n}` : n }
+export const dealLabel = (dealNo: string | null | undefined) => { const n = dealNumber(dealNo); return !n ? 'no number' : /^\d/.test(n) ? `Compra ${n}` : n }
 
 // IDENTIFICAÇÃO DO CARRO (Márcio, 21/11/2026): «use sempre o VIN dos carros nesta área como referência PRINCIPAL, também
 // mostre o COMPRA XX, e os dados do carro, como: Charger HellCat RedEye JailBreak PlumCrazy». Ordem em toda a área:

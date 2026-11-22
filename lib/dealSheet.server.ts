@@ -191,7 +191,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   if (balance > 0) sd[5] = cel('DEVEMOS', { c: AMARELO, fill: R })
   L.push(sd)
 
-  const fileName = `${/^d/.test(dealNumber(deal.deal_no)) ? 'COMPRA ' : ''}${dealNumber(deal.deal_no) || '—'} - ${ride.project_name || ride.project_code || 'car'}${vin ? ` ${vin}` : ''}`.replace(/[\\/:*?"<>|]/g, ' ')
+  const fileName = `${/^\d/.test(dealNumber(deal.deal_no)) ? 'COMPRA ' : ''}${dealNumber(deal.deal_no) || '—'} - ${ride.project_name || ride.project_code || 'car'}${vin ? ` ${vin}` : ''}`.replace(/[\\/:*?"<>|]/g, ' ')
   // hash do conteúdo: planilha igual não é repostada (idempotência do robô)
   const { createHash } = await import('crypto')
   const hash = createHash('sha256').update(JSON.stringify(L)).digest('hex').slice(0, 32)
