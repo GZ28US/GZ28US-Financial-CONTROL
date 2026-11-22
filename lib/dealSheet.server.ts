@@ -56,6 +56,29 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
       || String(a.deal_movements.occurred_on).localeCompare(String(b.deal_movements.occurred_on))
       || String(a.created_at).localeCompare(String(b.created_at)))
   // o que a Tripa Trading já repassou ao GZ28US por conta deste carro
+  // CÂMBIO OFICIAL × PARA ONDE O DINHEIRO FOI — no padrão da tela do Tripa (Camaro, 21/11/2026):
+  //   na planilha do carro OFICIAL (o da fatura do contrato) entram duas linhas que se anulam e NÃO contam no «Total pago»:
+  //     + valor do câmbio | Câmbio dd/mm | Entrou na conta da Tamiami ou EMC            (preta)
+  //     − valor que saiu  | Câmbio dd/mm | TRANSFERIDO PARA COMPRA X — VIN #### + motivo (vermelha; motivo = nota da alocação)
+  //   a parte que ficou no próprio carro é pagamento normal; no carro que recebeu, o pagamento sai como sempre, com
+  //   «(oficial: Compra X)» no destinatário.
+  const { data: allDeals } = await db.from('car_deals').select('id, deal_no, invoices:purchase_invoice_id(rides(vin)), rides(vin)')
+  const dealTag = new Map<string, { no: string; vin: string }>((allDeals || []).map((x: any) => [x.id, { no: dealNumber(x.deal_no), vin: String(x.invoices?.rides?.vin || x.rides?.vin || '').slice(-4) }]))
+  const ddmm = (iso: unknown) => { const m = String(iso || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? `${m[2]}/${m[1]}` : '' }
+  const { data: officialMovs } = await db.from('deal_movements').select('*, deal_allocations(*)').eq('official_deal_id', dealId).eq('status', 'CONFIRMED').order('occurred_on')
+  const extras: any[] = []
+  for (const m of officialMovs || []) {
+    const out = ((m as any).deal_allocations || []).filter((al: any) => al.deal_id && al.deal_id !== dealId)
+    if (!out.length) continue
+    const label = `Câmbio ${ddmm(m.occurred_on)}`
+    extras.push({ _extra: { usd: Number(m.amount_usd) || 0, dest: label, text: 'Entrou na conta da Tamiami ou EMC', color: K } })
+    for (const al of out) {
+      const t = dealTag.get(al.deal_id)
+      extras.push({ _extra: { usd: -(Number(al.amount_usd) || 0), dest: label, color: R,
+        text: `TRANSFERIDO PARA COMPRA ${t?.no || '?'}${t?.vin ? ` — VIN ${t.vin}` : ''}${al.note ? ` — ${al.note}` : ''}` } })
+    }
+  }
+  const lines: any[] = [...pays, ...extras]
   const tripaToGz = cents(confirmed.filter((a: any) => a.deal_movements.from_party === 'TRIPA_TRADING' && a.deal_movements.to_party === 'GZ28US')
     .reduce((s: number, a: any) => s + (Number(a.amount_usd) || 0), 0))
 
@@ -75,15 +98,20 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   L.push(Array.from({ length: 10 }, (_, k) => cel('', k === 0 ? { fill: CINZA } : {})))
 
   const custos = charges || []
-  const n = Math.max(custos.length, pays.length)
+  const n = Math.max(custos.length, lines.length)
   const body: Cel[][] = []
   let paid = 0
   for (let k = 0; k < n; k++) {
-    const row = blank(), cu = custos[k], a = pays[k]
+    const row = blank(), cu = custos[k], a = lines[k]
     row[0] = cel(cu ? cu.label : '', { b: true, fill: CINZA })
     if (cu && cu.amount_usd != null) row[1] = num(Number(cu.amount_usd), 'usd')
     else if (cu && cu.text_value) row[1] = cel(cu.text_value, { c: R })
-    if (a) {
+    if (a?._extra) {
+      const x = a._extra
+      row[3] = num(x.usd, 'usd', { c: x.color, b: true })
+      row[4] = cel(x.dest, { c: x.color, b: true })
+      row[5] = cel(x.text, { c: x.color, b: x.color !== K, wrap: x.text.length > 22 })
+    } else if (a) {
       const m = a.deal_movements, raw = a.sheet_style || {}
       // as chaves valem nas duas grafias (a carga da CC Sidney gravou usd_color / origin_centered / dest_bold…)
       const st = { ...raw, usdColor: raw.usdColor ?? raw.usd_color, usdBold: raw.usdBold ?? raw.usd_bold, destBold: raw.destBold ?? raw.dest_bold, center: raw.center ?? raw.origin_centered, remarkColor: raw.remarkColor ?? raw.remark_color, remarkBold: raw.remarkBold ?? raw.remark_bold }
@@ -96,7 +124,8 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
       paid += usd
       if (hasRate) row[2] = num(rate!, 'usd', { c: corUsd })
       row[3] = num(usd, 'usd', { c: corUsd, b: !!st.usdBold })
-      row[4] = cel(m.counterparty_label || '', { c: cor, b: !!st.destBold || (!thin && hasRate) })
+      const off = m.official_deal_id && m.official_deal_id !== dealId ? dealTag.get(m.official_deal_id) : null
+      row[4] = cel(`${m.counterparty_label || (off ? `Câmbio ${ddmm(m.occurred_on)}` : '')}${off ? ` (oficial: Compra ${off.no})` : ''}`, { c: cor, b: !!st.destBold || (!thin && hasRate) })
       if (brl != null) row[5] = num(brl, 'brl', { c: cor, b: !thin })
       if (m.payer_label) row[6] = cel(m.payer_label, { c: cor, b: !thin, al: st.center ? 'center' : 'left' })
       if (st.badge) row[5] = cel(String(st.badge), { c: AMARELO, fill: R })
