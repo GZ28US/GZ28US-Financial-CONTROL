@@ -36,16 +36,17 @@ const usdNote = (n: number) => `$ ${Math.round(n).toLocaleString('pt-BR')}`
 export type SheetView = 'GZ28' | 'TRIPA' | 'SIDNEY'
 export async function buildDealSheet(db: SupabaseClient, dealId: string, view: SheetView = 'GZ28'): Promise<DealSheet | null> {
   // carro e cliente vêm da invoice de compra; a aparência da planilha mora em car_deals.sheet (um jsonb)
-  const { data: deal } = await db.from('car_deals').select('*, invoices:purchase_invoice_id(client_id, rides(project_code, project_name, vin, color))').eq('id', dealId).maybeSingle()
+  const { data: deal } = await db.from('car_deals').select('*, invoices:purchase_invoice_id(client_id, rides(project_code, project_name, vin, color)), rides(client_id, project_code, project_name, vin, color)').eq('id', dealId).maybeSingle()
   if (!deal) return null
   const inv = (deal as any).invoices || {}
   const look = (deal as any).sheet || {}
+  const ride = inv.rides || (deal as any).rides || {}   // sem invoice de compra, o carro vem do ride do deal
+  const clientId = inv.client_id || ride.client_id || null
   const [{ data: charges }, { data: allocs }, { data: client }] = await Promise.all([
     db.from('deal_charges').select('*').eq('deal_id', dealId).order('position'),
     db.from('deal_allocations').select('*, deal_movements(*)').eq('deal_id', dealId),
-    inv.client_id ? db.from('clients').select('name').eq('id', inv.client_id).maybeSingle() : Promise.resolve({ data: null as any }),
+    clientId ? db.from('clients').select('name').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null as any }),
   ])
-  const ride = inv.rides || {}
   const confirmed = (allocs || []).filter((a: any) => a.deal_movements?.status === 'CONFIRMED')
 
   // pagamentos do cliente: movimentos que saem do SIDNEY (sheet_style.hide tira a linha da planilha sem tirar do livro)

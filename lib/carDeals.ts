@@ -61,9 +61,15 @@ export const MOVEMENT_KINDS = ['FX_CONTRACT', 'PIX', 'WIRE', 'ZELLE', 'STRIPE', 
 
 // UM CAMPO PRO INFO (lei do Márcio, 21/11/2026): o carro e o cliente de um deal NÃO são colunas do deal — vêm da
 // invoice de compra. Toda tela busca com DEAL_SELECT e achata com flatDeal, que devolve d.rides / d.ride_id / d.client_id.
-export const RIDE_COLS = 'id, project_code, project_name, vin, color, year, brand, model, version, special_edition'
-export const DEAL_SELECT = `*, invoices:purchase_invoice_id(id, invoice_code, service, client_id, ride_id, rides(${RIDE_COLS}))`
-export const flatDeal = (d: any) => d ? { ...d, rides: d.invoices?.rides || null, ride_id: d.invoices?.ride_id || null, client_id: d.invoices?.client_id || null } : d
+export const RIDE_COLS = 'id, client_id, project_code, project_name, vin, color, year, brand, model, version, special_edition'
+// Carro que o exportador vendeu ao cliente SEM compra do GZ28 não tem invoice de compra: aí (e só aí) o deal aponta
+// direto para o ride (car_deals.ride_id). Uma fonte ou a outra, nunca as duas — o banco recusa.
+export const DEAL_SELECT = `*, invoices:purchase_invoice_id(id, invoice_code, service, client_id, ride_id, rides(${RIDE_COLS})), rides(${RIDE_COLS})`
+export const flatDeal = (d: any) => {
+  if (!d) return d
+  const ride = d.invoices?.rides || d.rides || null
+  return { ...d, rides: ride, ride_id: d.invoices?.ride_id || d.ride_id || null, client_id: d.invoices?.client_id || ride?.client_id || null }
+}
 
 // VENCIMENTO de uma obrigação — conta, não coluna: a data dela, ou a data do marco que a dispara + os dias.
 // due = já venceu (data ≤ hoje). Sem data e com o marco ainda não feito: «when <marco>».
@@ -146,11 +152,12 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   //   (a) a Tripa é só o canal/exportador (a invoice de compra NÃO tem despesa para a Tripa): o carro é comprado pelo
   //       GZ28 e pago a nós, então ele deve à Tripa só as TAXAS dela (custos de position > 0; a position 0 é o carro)
   //       + o que ela já nos repassou por conta dele − o que ele já mandou a ela.
-  //   (b) a Tripa é a VENDEDORA (há despesa para a Tripa na invoice de compra, caso RedHot): todos os custos − o que
+  //   (b) a Tripa é a VENDEDORA (há despesa para a Tripa na invoice de compra, caso RedHot — ou o deal nem tem invoice de
+//       compra do GZ28, Compras 12/23/24): todos os custos − o que
   //       ele já mandou a ela − o que ainda vai passar por nós (GZ28US → Tripa Trading).
   const tripaToGz = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'TRIPA_TRADING' && m.to_party === 'GZ28US' }
   const myCharges = ctx.charges.filter(c => c.deal_id === deal.id)
-  const seller = exps.length > 0
+  const seller = exps.length > 0 || !deal.purchase_invoice_id   // sem compra do GZ28, o exportador é o vendedor
   const stPaid = sum(ctx.allocations.filter(a => a.deal_id === deal.id && clientToTripa(a)), a => Number(a.amount_usd) || 0)
   const advanced = seller ? 0 : sum(ctx.allocations.filter(a => a.deal_id === deal.id && tripaToGz(a)), a => Number(a.amount_usd) || 0)
   const stOwed = sum(seller ? myCharges : myCharges.filter(c => (Number(c.position) || 0) > 0), c => Number(c.amount_usd) || 0) + advanced
