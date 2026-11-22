@@ -12,7 +12,7 @@ import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterI
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
 // Trading — «tudo com as programações de pagamento e/ou condição de envio do $».
-// VISÃO: GZ28 vê as 4 direções; a visão SIDNEY esconde a perna Tripa Trading ↔ GZ28US (o cliente não vê o acerto entre
+// VISÃO: GZ28 vê as 4 direções; a visão CLIENT esconde a perna Tripa Trading ↔ GZ28US (o cliente não vê o acerto entre
 // a casa e o exportador — e no RedHot ele nem sabe que o carro é do Tripa/Edison).
 type View = 'GZ28' | 'CLIENT' | 'TRIPA'
 const HIDDEN: Record<View, string[]> = {
