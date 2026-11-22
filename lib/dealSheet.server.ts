@@ -57,28 +57,44 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
       || String(a.created_at).localeCompare(String(b.created_at)))
   // o que a Tripa Trading já repassou ao GZ28US por conta deste carro
   // CÂMBIO OFICIAL × PARA ONDE O DINHEIRO FOI — no padrão da tela do Tripa (Camaro, 21/11/2026):
-  //   na planilha do carro OFICIAL (o da fatura do contrato) entram duas linhas que se anulam e NÃO contam no «Total pago»:
-  //     + valor do câmbio | Câmbio dd/mm | Entrou na conta da Tamiami ou EMC            (preta)
-  //     − valor que saiu  | Câmbio dd/mm | TRANSFERIDO PARA COMPRA X — VIN #### + motivo (vermelha; motivo = nota da alocação)
-  //   a parte que ficou no próprio carro é pagamento normal; no carro que recebeu, o pagamento sai como sempre, com
+  //   na planilha do carro OFICIAL (o da fatura do contrato), quando parte do câmbio foi para outro carro:
+  //     + valor OFICIAL inteiro | Câmbio dd/mm | Entrou na conta da | Tamiami ou EMC                (preta)
+  //     − cada parte que saiu   | Câmbio dd/mm | TRANSFERIDO P/ COMPRA X | VIN #### | motivo…       (vermelha; motivo = nota da alocação)
+  //   as duas contam no «Total pago» (o líquido é o que ficou) e a parte que ficou não ganha linha própria; no carro que recebeu, o pagamento sai como sempre, com
   //   «(oficial: Compra X)» no destinatário.
   const { data: allDeals } = await db.from('car_deals').select('id, deal_no, invoices:purchase_invoice_id(rides(vin)), rides(vin)')
   const dealTag = new Map<string, { no: string; vin: string }>((allDeals || []).map((x: any) => [x.id, { no: dealNumber(x.deal_no), vin: String(x.invoices?.rides?.vin || x.rides?.vin || '').slice(-4) }]))
   const ddmm = (iso: unknown) => { const m = String(iso || '').match(/^\d{4}-(\d{2})-(\d{2})/); return m ? `${m[2]}/${m[1]}` : '' }
   const { data: officialMovs } = await db.from('deal_movements').select('*, deal_allocations(*)').eq('official_deal_id', dealId).eq('status', 'CONFIRMED').order('occurred_on')
   const extras: any[] = []
+  const split = new Set<string>()
+  // quebra um texto em até n pedaços de ~22 letras (a largura de uma coluna); o que sobrar fica no último
+  const chunks = (text: string, n: number): string[] => {
+    const out: string[] = ['']
+    for (const w of text.trim().split(/\s+/).filter(Boolean)) {
+      const cur = out[out.length - 1]
+      if (!cur) out[out.length - 1] = w
+      else if ((cur + ' ' + w).length <= 22 || out.length >= n) out[out.length - 1] = cur + ' ' + w
+      else out.push(w)
+    }
+    return out.filter(Boolean)
+  }
   for (const m of officialMovs || []) {
     const out = ((m as any).deal_allocations || []).filter((al: any) => al.deal_id && al.deal_id !== dealId)
     if (!out.length) continue
     const label = `Câmbio ${ddmm(m.occurred_on)}`
-    extras.push({ _extra: { usd: Number(m.amount_usd) || 0, dest: label, text: 'Entrou na conta da Tamiami ou EMC', color: K } })
+    split.add(m.id)
+    // frases curtas em colunas vizinhas, como ele escreve («DEMA PEGOU | DINHEIRO COM | O SIDINEY PARA | PAGAR O CARRO»)
+    extras.push({ _extra: { usd: Number(m.amount_usd) || 0, dest: label, color: K, cells: ['Entrou na conta da', 'Tamiami ou EMC'] } })
     for (const al of out) {
       const t = dealTag.get(al.deal_id)
       extras.push({ _extra: { usd: -(Number(al.amount_usd) || 0), dest: label, color: R,
-        text: `TRANSFERIDO PARA COMPRA ${t?.no || '?'}${t?.vin ? ` — VIN ${t.vin}` : ''}${al.note ? ` — ${al.note}` : ''}` } })
+        cells: [`TRANSFERIDO P/ COMPRA ${t?.no || '?'}`, t?.vin ? `VIN ${t.vin}` : '', ...chunks(String(al.note || ''), 3)] } })
     }
   }
-  const lines: any[] = [...pays, ...extras]
+  // no carro OFICIAL a parte que ficou NÃO vira linha própria: o + (valor oficial inteiro) e os − (o que saiu) já dão o
+  // líquido, e contam no «Total pago» — como na tela dele (+10.000 / −10.000 dentro do total).
+  const lines: any[] = [...pays.filter((a: any) => !split.has(a.movement_id)), ...extras]
   const tripaToGz = cents(confirmed.filter((a: any) => a.deal_movements.from_party === 'TRIPA_TRADING' && a.deal_movements.to_party === 'GZ28US')
     .reduce((s: number, a: any) => s + (Number(a.amount_usd) || 0), 0))
 
@@ -108,9 +124,10 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
     else if (cu && cu.text_value) row[1] = cel(cu.text_value, { c: R })
     if (a?._extra) {
       const x = a._extra
+      paid += x.usd
       row[3] = num(x.usd, 'usd', { c: x.color, b: true })
       row[4] = cel(x.dest, { c: x.color, b: true })
-      row[5] = cel(x.text, { c: x.color, b: x.color !== K, wrap: x.text.length > 22 })
+      x.cells.forEach((t: string, i: number) => { if (t && 5 + i < 10) row[5 + i] = cel(t, { c: x.color, b: x.color !== K, wrap: t.length > 24 }) })
     } else if (a) {
       const m = a.deal_movements, raw = a.sheet_style || {}
       // as chaves valem nas duas grafias (a carga da CC Sidney gravou usd_color / origin_centered / dest_bold…)
@@ -165,7 +182,7 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   // hash do conteúdo: planilha igual não é repostada (idempotência do robô)
   const { createHash } = await import('crypto')
   const hash = createHash('sha256').update(JSON.stringify(L)).digest('hex').slice(0, 32)
-  return { fileName, title, grid: L, total, paid, balance, payments: pays.length, hash }
+  return { fileName, title, grid: L, total, paid, balance, payments: lines.length, hash }
 }
 
 const argb = (h: string) => 'FF' + h.replace('#', '').toUpperCase()
