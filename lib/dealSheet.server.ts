@@ -31,9 +31,9 @@ const num = (n: number, fmt: 'usd' | 'brl', o: Partial<Cel> = {}): Cel => ({ v: 
 const money = (n: number, prefix: string) => `${prefix} ${n.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
 const usdNote = (n: number) => `$ ${Math.round(n).toLocaleString('pt-BR')}`
 
-// VISÃO: 'SIDNEY' tira TODA nota da direita (a perna Tripa Trading ↔ GZ28US não vai a grupo com o cliente — no RedHot
+// VISÃO: 'CLIENT' tira TODA nota da direita (a perna Tripa Trading ↔ GZ28US não vai a grupo com o cliente — no RedHot
 // o Sidney nem sabe que o carro é do Tripa/Edison). 'GZ28' e 'TRIPA' levam a planilha inteira.
-export type SheetView = 'GZ28' | 'TRIPA' | 'SIDNEY'
+export type SheetView = 'GZ28' | 'TRIPA' | 'CLIENT'   // 'SIDNEY' gravado em destino antigo vale como 'CLIENT'
 export async function buildDealSheet(db: SupabaseClient, dealId: string, view: SheetView = 'GZ28'): Promise<DealSheet | null> {
   // carro e cliente vêm da invoice de compra; a aparência da planilha mora em car_deals.sheet (um jsonb)
   const { data: deal } = await db.from('car_deals').select('*, invoices:purchase_invoice_id(client_id, rides(project_code, project_name, vin, color)), rides(client_id, project_code, project_name, vin, color)').eq('id', dealId).maybeSingle()
@@ -47,11 +47,13 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
     db.from('deal_allocations').select('*, deal_movements(*)').eq('deal_id', dealId),
     clientId ? db.from('clients').select('name').eq('id', clientId).maybeSingle() : Promise.resolve({ data: null as any }),
   ])
+  // carro do próprio exportador: o cliente do deal é a Tripa Trading, e o que ela manda ao GZ28 é o pagamento do cliente
+  const clientIsExporter = /tripa/i.test(String(client?.name || ''))
   const confirmed = (allocs || []).filter((a: any) => a.deal_movements?.status === 'CONFIRMED')
 
   // pagamentos do cliente: movimentos que saem do SIDNEY (sheet_style.hide tira a linha da planilha sem tirar do livro)
   const pays = confirmed
-    .filter((a: any) => a.deal_movements.from_party === 'SIDNEY' && !(a.sheet_style || {}).hide)
+    .filter((a: any) => (a.deal_movements.from_party === 'CLIENT' || (clientIsExporter && a.deal_movements.from_party === 'TRIPA_TRADING' && a.deal_movements.to_party === 'GZ28US')) && !(a.sheet_style || {}).hide)
     .sort((a: any, b: any) => (a.sheet_position ?? 1e9) - (b.sheet_position ?? 1e9)
       || String(a.deal_movements.occurred_on).localeCompare(String(b.deal_movements.occurred_on))
       || String(a.created_at).localeCompare(String(b.created_at)))
@@ -167,13 +169,13 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
 
   // notas à direita
   const notes: any[] = Array.isArray(look.notes) ? look.notes : []
-  if (view === 'SIDNEY') { /* sem notas */ } else if (notes.length) {
+  if (view === 'CLIENT') { /* sem notas */ } else if (notes.length) {
     for (const nt of notes) {
       const r = Number(nt.row) || 0, c = COLS.indexOf(String(nt.col || '').toUpperCase())
       if (c < 0 || !body[r]) continue
       body[r][c] = Array.isArray(nt.rich) ? cel(nt.rich.map((x: any) => x[0]).join(''), { rich: nt.rich }) : cel(String(nt.text || ''), { c: nt.color || K, b: !!nt.bold, wrap: !!nt.wrap })
     }
-  } else if (tripaToGz > 0 && body[0]) {
+  } else if (tripaToGz > 0 && body[0] && !clientIsExporter) {
     body[0][7] = cel('EDISON PAGOU', { c: R, b: true })
     body[0][8] = cel(`${usdNote(tripaToGz)} PARA`, { c: R, b: true })
     body[0][9] = cel('DEMA', { c: R, b: true })

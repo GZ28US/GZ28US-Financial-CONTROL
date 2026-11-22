@@ -165,7 +165,7 @@ export default function CarDealsPage() {
               )}
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Sidney → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them). Sidney → GZ28US = open payments on the purchase invoice. Tripa Trading → GZ28US = open payments he already paid to them. GZ28US → Tripa Trading = our unpaid expenses to them on the purchase invoice. Proposed movements do not count.</p>
+          <p className="text-sm text-gray-500 mt-2">Client → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them). Client → GZ28US = open payments on the purchase invoice. Tripa Trading → GZ28US = open payments he already paid to them. GZ28US → Tripa Trading = our unpaid expenses to them on the purchase invoice. Proposed movements do not count.</p>
 
           {orphanPurchases.length > 0 && (
             <div className="mt-8">

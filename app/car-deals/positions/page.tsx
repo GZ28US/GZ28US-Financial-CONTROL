@@ -14,11 +14,11 @@ import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterI
 // Trading — «tudo com as programações de pagamento e/ou condição de envio do $».
 // VISÃO: GZ28 vê as 4 direções; a visão SIDNEY esconde a perna Tripa Trading ↔ GZ28US (o cliente não vê o acerto entre
 // a casa e o exportador — e no RedHot ele nem sabe que o carro é do Tripa/Edison).
-type View = 'GZ28' | 'SIDNEY' | 'TRIPA'
+type View = 'GZ28' | 'CLIENT' | 'TRIPA'
 const HIDDEN: Record<View, string[]> = {
   GZ28: [],
-  SIDNEY: ['TRIPA_TRADING>GZ28US', 'GZ28US>TRIPA_TRADING'],
-  TRIPA: ['SIDNEY>GZ28US'],
+  CLIENT: ['TRIPA_TRADING>GZ28US', 'GZ28US>TRIPA_TRADING'],
+  TRIPA: ['CLIENT>GZ28US'],
 }
 
 export default function CarDealPositionsPage() {
@@ -65,16 +65,16 @@ export default function CarDealPositionsPage() {
   const dealById = new Map(deals.map(d => [d.id, d]))
   // renda aberta que um movimento confirmado do cliente já cobriu não é mais dívida dele (está na perna Tripa Trading → GZ28US);
   // e o texto da renda é nota INTERNA: fora da visão GZ28 sai um rótulo neutro
-  const movOk = new Set(movements.filter(m => m.status === 'CONFIRMED' && m.from_party === 'SIDNEY').map(m => m.id))
+  const movOk = new Set(movements.filter(m => m.status === 'CONFIRMED' && m.from_party === 'CLIENT').map(m => m.id))
   const coveredByClient = (i: any) => allocations.filter(a => a.invoice_income_id === i.id && movOk.has(a.movement_id)).reduce((t, a) => t + (Number(a.amount_usd) || 0), 0) >= (Number(i.amount) || 0) - 0.004
   // a programação: toda obrigação em aberto das direções visíveis, a vencida/datada primeiro, a condicionada depois
   const schedule = obligations
     .filter(o => !o.cancelled && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
     .map(o => ({ ...o, _due: obligationDue(o, milestones) }))
-    .concat(dirs.some(d => d.key === 'SIDNEY>GZ28US') ? incomes.filter(i => !i.paid_at && !coveredByClient(i)).map(i => {
+    .concat(dirs.some(d => d.key === 'CLIENT>GZ28US') ? incomes.filter(i => !i.paid_at && !coveredByClient(i)).map(i => {
       const deal = deals.find(x => x.purchase_invoice_id === i.invoice_id)
       const date = i.payment_date || null, due = !!date && date <= new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
-      return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'SIDNEY', to_party: 'GZ28US', label: view === 'GZ28' ? (i.description || 'Payment on the purchase invoice') : 'Payment on the purchase invoice', amount_usd: i.amount,
+      return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'CLIENT', to_party: 'GZ28US', label: view === 'GZ28' ? (i.description || 'Payment on the purchase invoice') : 'Payment on the purchase invoice', amount_usd: i.amount,
         _due: { date, due, label: date ? `${due ? 'DUE ' : ''}${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : 'no date' } } : null
     }).filter(Boolean) as any[] : [])
     .sort((a, b) => (a._due.date ? 0 : 1) - (b._due.date ? 0 : 1) || String(a._due.date || '').localeCompare(String(b._due.date || '')))
@@ -116,7 +116,7 @@ export default function CarDealPositionsPage() {
         <div className="flex gap-3 flex-wrap">
           <select value={view} onChange={e => setView(e.target.value as View)} className="bg-gray-900 border border-gray-700 rounded-2xl px-4 py-3 text-lg font-bold">
             <option value="GZ28">VIEW: GZ28US (everything)</option>
-            <option value="SIDNEY">VIEW: SIDNEY (no Tripa Trading ↔ GZ28US leg)</option>
+            <option value="CLIENT">VIEW: CLIENT (no Tripa Trading ↔ GZ28US leg)</option>
             <option value="TRIPA">VIEW: TRIPA TRADING</option>
           </select>
           <button onClick={exportPdf} disabled={loading} className="bg-green-700 hover:bg-green-600 disabled:opacity-40 px-5 py-3 rounded-2xl text-lg font-bold">EXPORT PDF</button>
@@ -157,7 +157,7 @@ export default function CarDealPositionsPage() {
               </tfoot>
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Sidney → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them); Sidney → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them.</p>
+          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Client → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them); Client → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them.</p>
 
           <h2 className="text-2xl font-bold mt-8 mb-3">PAYMENT SCHEDULE ({schedule.length})</h2>
           <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-x-auto">

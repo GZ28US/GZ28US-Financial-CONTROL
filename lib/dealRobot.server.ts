@@ -114,7 +114,7 @@ export async function scanDealGroups(db: SupabaseClient, opts: { max: number; de
         ].filter(Boolean).join(' ')
         // a direção é palpite: o robô não sabe se o dinheiro foi à Tripa Trading ou ao GZ28 — fica PROPOSED para gente corrigir
         const { data: mov, error: e2 } = await db.from('deal_movements').insert({
-          occurred_on: date, kind: KINDS.includes(String(p.kind)) ? p.kind : 'WIRE', from_party: 'SIDNEY', to_party: 'TRIPA_TRADING',
+          occurred_on: date, kind: KINDS.includes(String(p.kind)) ? p.kind : 'WIRE', from_party: 'CLIENT', to_party: 'TRIPA_TRADING',
           amount_usd: amountUsd, amount_brl: brl, counterparty_label: String(p.recipient || '').slice(0, 80) || null,
           payer_label: String(p.payer || '').slice(0, 80) || null, fiscal_ref: String(p.reference || '').slice(0, 80) || null,
           source_message_id: m.message_id, status: 'PROPOSED', note,
@@ -160,7 +160,7 @@ export async function postDealSheet(
   const res: PostResult = { posted: false, reason: null, hash: full.hash, sent: [] }
   const byView = new Map<SheetView, { xlsx: string; pdf: string; name: string }>()
   for (const t of targets) {
-    const view: SheetView = t.view === 'SIDNEY' ? 'SIDNEY' : t.view === 'TRIPA' ? 'TRIPA' : 'GZ28'
+    const view: SheetView = t.view === 'CLIENT' || (t.view as string) === 'SIDNEY' ? 'CLIENT' : t.view === 'TRIPA' ? 'TRIPA' : 'GZ28'
     const row = (file: string, ok: boolean, error: string | null) => res.sent.push({ to: t.chat_id, label: t.label || null, view, file, ok, error })
     // os grupos BR vivem na instância do app BR; esta rota só fala pela instância US
     if (String(t.app || 'us').toLowerCase() !== 'us') { row('—', false, 'target is on the BR number: not supported yet'); continue }

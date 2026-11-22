@@ -3,14 +3,16 @@
 // Sidney (Sidney & Antônio) e GZ28US. Regra de ouro: uma movimentação = um dinheiro real, lançado uma vez;
 // a ALOCAÇÃO (em qual compra ele cai) é separada da referência fiscal (proforma / contrato de câmbio).
 
-export type Party = 'SIDNEY' | 'TRIPA_TRADING' | 'GZ28US' | 'DEALER'
-export const PARTIES: Party[] = ['SIDNEY', 'TRIPA_TRADING', 'GZ28US', 'DEALER']
-export const PARTY_LABEL: Record<string, string> = { SIDNEY: 'Sidney', TRIPA_TRADING: 'Tripa Trading', GZ28US: 'GZ28US', DEALER: 'Dealer' }
+export type Party = 'CLIENT' | 'TRIPA_TRADING' | 'GZ28US' | 'DEALER'
+export const PARTIES: Party[] = ['CLIENT', 'TRIPA_TRADING', 'GZ28US', 'DEALER']
+// CLIENT = o cliente do deal (o da invoice de compra; senão o do ride) — Márcio, 21/11/2026: «todos os carros que envolvem
+// o GZ28 e o Tripa têm que estar nesta área». A parte nasceu «SIDNEY» com o primeiro cliente e foi generalizada.
+export const PARTY_LABEL: Record<string, string> = { CLIENT: 'Client', TRIPA_TRADING: 'Tripa Trading', GZ28US: 'GZ28US', DEALER: 'Dealer' }
 
 // As 4 direções do relatório POSIÇÕES pedido pelo Márcio.
 export const DIRECTIONS: { key: string; from: Party; to: Party; label: string }[] = [
-  { key: 'SIDNEY>TRIPA_TRADING', from: 'SIDNEY', to: 'TRIPA_TRADING', label: 'Sidney → Tripa Trading' },
-  { key: 'SIDNEY>GZ28US', from: 'SIDNEY', to: 'GZ28US', label: 'Sidney → GZ28US' },
+  { key: 'CLIENT>TRIPA_TRADING', from: 'CLIENT', to: 'TRIPA_TRADING', label: 'Client → Tripa Trading' },
+  { key: 'CLIENT>GZ28US', from: 'CLIENT', to: 'GZ28US', label: 'Client → GZ28US' },
   { key: 'TRIPA_TRADING>GZ28US', from: 'TRIPA_TRADING', to: 'GZ28US', label: 'Tripa Trading → GZ28US' },
   { key: 'GZ28US>TRIPA_TRADING', from: 'GZ28US', to: 'TRIPA_TRADING', label: 'GZ28US → Tripa Trading' },
 ]
@@ -64,11 +66,13 @@ export const MOVEMENT_KINDS = ['FX_CONTRACT', 'PIX', 'WIRE', 'ZELLE', 'STRIPE', 
 export const RIDE_COLS = 'id, client_id, project_code, project_name, vin, color, year, brand, model, version, special_edition'
 // Carro que o exportador vendeu ao cliente SEM compra do GZ28 não tem invoice de compra: aí (e só aí) o deal aponta
 // direto para o ride (car_deals.ride_id). Uma fonte ou a outra, nunca as duas — o banco recusa.
-export const DEAL_SELECT = `*, invoices:purchase_invoice_id(id, invoice_code, service, client_id, ride_id, rides(${RIDE_COLS})), rides(${RIDE_COLS})`
+export const DEAL_SELECT = `*, invoices:purchase_invoice_id(id, invoice_code, service, client_id, ride_id, clients(name), rides(${RIDE_COLS})), rides(${RIDE_COLS})`
 export const flatDeal = (d: any) => {
   if (!d) return d
   const ride = d.invoices?.rides || d.rides || null
-  return { ...d, rides: ride, ride_id: d.invoices?.ride_id || d.ride_id || null, client_id: d.invoices?.client_id || ride?.client_id || null }
+  // carro do PRÓPRIO exportador comprado pelo GZ28: o cliente do deal é a Tripa Trading — o que ela nos manda é pagamento DELA
+  const client_is_exporter = /tripa/i.test(String(d.invoices?.clients?.name || ''))
+  return { ...d, rides: ride, ride_id: d.invoices?.ride_id || d.ride_id || null, client_id: d.invoices?.client_id || ride?.client_id || null, client_is_exporter }
 }
 
 // VENCIMENTO de uma obrigação — conta, não coluna: a data dela, ou a data do marco que a dispara + os dias.
@@ -97,11 +101,11 @@ export const dealDate = (d: string | null | undefined) => {
 }
 
 // AS 4 POSIÇÕES de um deal — cada direção tem UMA fonte, nada é gravado em dobro (lei «uma info, um campo», 21/11/2026):
-//   Sidney → GZ28US         rendas ABERTAS da invoice de compra que nenhum movimento do cliente cobre (data = payment_date)
+//   Client → GZ28US         rendas ABERTAS da invoice de compra que nenhum movimento do cliente cobre (data = payment_date)
 //   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
 //                           + rendas abertas de invoice do MESMO carro cujo cliente é o exportador (frete a reembolsar…)
 //   GZ28US → Tripa Trading  despesas em aberto da invoice de compra para o fornecedor Tripa
-//   Sidney → Tripa Trading  Tripa só exportadora: taxas dela + max(0, o que ela nos repassou − o que ele mandou a ela);
+//   Client → Tripa Trading  Tripa só exportadora: taxas dela + max(0, o que ela nos repassou − o que ele mandou a ela);
 //                           Tripa vendedora: custos do deal − o que ele mandou a ela − o aberto em GZ28US → Tripa Trading;
 //                           nunca negativo; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
 export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[]; exporterIncomes?: any[] }
@@ -128,8 +132,9 @@ const expenseValue = (e: any) => (Number(e.price) || 0) * (Number(e.quantity) ||
 
 export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const movById = new Map<string, any>(ctx.movements.map(m => [m.id, m]))
-  const clientToTripa = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'SIDNEY' && m.to_party === 'TRIPA_TRADING' }
-  const fromClient = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'SIDNEY' }
+  const clientToTripa = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && m.from_party === 'CLIENT' && m.to_party === 'TRIPA_TRADING' }
+  const own = !!deal.client_is_exporter
+  const fromClient = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && (m.from_party === 'CLIENT' || (own && m.from_party === 'TRIPA_TRADING')) }
   const sum = (xs: any[], f: (x: any) => number) => xs.reduce((t, x) => t + f(x), 0)
   const inv = deal.purchase_invoice_id
   const incs = inv ? ctx.incomes.filter(i => i.invoice_id === inv) : []
@@ -161,18 +166,19 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const stPaid = sum(ctx.allocations.filter(a => a.deal_id === deal.id && clientToTripa(a)), a => Number(a.amount_usd) || 0)
   const advanced = seller ? 0 : sum(ctx.allocations.filter(a => a.deal_id === deal.id && tripaToGz(a)), a => Number(a.amount_usd) || 0)
   const stOwed = sum(seller ? myCharges : myCharges.filter(c => (Number(c.position) || 0) > 0), c => Number(c.amount_usd) || 0) + advanced
-  const dues = ctx.obligations.filter(o => o.deal_id === deal.id && !o.cancelled && o.from_party === 'SIDNEY' && o.to_party === 'TRIPA_TRADING').map(o => obligationDue(o, ctx.milestones))
+  const dues = ctx.obligations.filter(o => o.deal_id === deal.id && !o.cancelled && o.from_party === 'CLIENT' && o.to_party === 'TRIPA_TRADING').map(o => obligationDue(o, ctx.milestones))
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
   // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
-  tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id), i => Number(i.amount) || 0)
+  // (quando o cliente do deal é a própria Tripa, as rendas da invoice de compra já estão em Client → GZ28US)
+  tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id && !(own && i.invoice_id === inv)), i => Number(i.amount) || 0)
   // exportadora: o piso é POR TERMO — quando a Tripa ainda SEGURA dinheiro dele (repassou menos do que recebeu), esse
   // saldo já aparece em Tripa Trading → GZ28US e não pode abater as taxas (Compra 25: taxas 14.000 continuam 14.000).
-  const stOpen = seller ? Math.max(0, stOwed - stPaid - gtOpen) : (stOwed - advanced) + Math.max(0, advanced - stPaid)
+  const stOpen = own ? 0 : seller ? Math.max(0, stOwed - stPaid - gtOpen) : (stOwed - advanced) + Math.max(0, advanced - stPaid)
   const stNext = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
-    'SIDNEY>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOpen), next: stNext },
-    'SIDNEY>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgOpen), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
+    'CLIENT>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOpen), next: stNext },
+    'CLIENT>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgOpen), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
     'TRIPA_TRADING>GZ28US': { owed: cents(tgOpen), paid: 0, open: cents(tgOpen), next: null },
     'GZ28US>TRIPA_TRADING': { owed: cents(gtOwed), paid: cents(gtOwed - gtOpen), open: cents(gtOpen), next: null },
   }

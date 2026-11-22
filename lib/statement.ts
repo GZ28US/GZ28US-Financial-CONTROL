@@ -22,7 +22,7 @@ export const STATEMENT_VIEWS: { key: StatementView; label: string }[] = [
   { key: 'CLIENT', label: 'Client' },
   { key: 'ACCOUNTANT', label: 'Accountant (no personal lines)' },
 ]
-export const CLIENT_PARTY = 'SIDNEY'   // a parte «cliente» do livro (o enum nasceu com o primeiro cliente)
+export const CLIENT_PARTY = 'CLIENT'   // a parte «cliente» do livro
 
 export type StatementRow = {
   key: string; kind: 'DEBIT' | 'CREDIT'; date: string; car: string; code: string; item: string

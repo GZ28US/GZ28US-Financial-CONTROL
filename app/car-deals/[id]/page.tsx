@@ -44,8 +44,8 @@ export default function CarDealPage() {
   const [loading, setLoading] = useState(true)
   const [msg, setMsg] = useState('')
   const [newCharge, setNewCharge] = useState({ label: '', value: '' })
-  const [newOb, setNewOb] = useState<any>({ from_party: 'SIDNEY', to_party: 'TRIPA_TRADING', label: '', amount: '', due_date: '', trigger_milestone: '', offset: '' })
-  const [newMov, setNewMov] = useState<any>({ occurred_on: today(), kind: 'WIRE', from_party: 'SIDNEY', to_party: 'GZ28US', amount_usd: '', amount_brl: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' })
+  const [newOb, setNewOb] = useState<any>({ from_party: 'CLIENT', to_party: 'TRIPA_TRADING', label: '', amount: '', due_date: '', trigger_milestone: '', offset: '' })
+  const [newMov, setNewMov] = useState<any>({ occurred_on: today(), kind: 'WIRE', from_party: 'CLIENT', to_party: 'GZ28US', amount_usd: '', amount_brl: '', counterparty_label: '', payer_label: '', fiscal_ref: '', note: '' })
   const [newAlloc, setNewAlloc] = useState<Record<string, { deal_id: string; amount: string }>>({})
 
   useEffect(() => { load() }, [])
@@ -535,14 +535,14 @@ export default function CarDealPage() {
           <p className="text-gray-400">Same layout as the exporter&apos;s screen. It shows confirmed movements only, and nothing here is posted anywhere: the files are downloaded to this computer.</p>
           <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
             <h2 className="text-2xl font-bold mb-1">WHERE THIS SHEET GOES</h2>
-            <p className="text-gray-400 mb-4">Each target gets the Excel and the PDF. A SIDNEY-view target gets the sheet WITHOUT the notes on the right (the Tripa Trading ↔ GZ28US leg). Never add a group the client is in with a TRIPA or GZ28 view.</p>
+            <p className="text-gray-400 mb-4">Each target gets the Excel and the PDF. A CLIENT-view target gets the sheet WITHOUT the notes on the right (the Tripa Trading ↔ GZ28US leg). Never add a group the client is in with a TRIPA or GZ28 view.</p>
             <div className="space-y-2">
               {targetList.length === 0 && <p className="text-gray-500">No targets yet — nothing can be posted for this deal.</p>}
               {targetList.map((t: any, i: number) => (
                 <div key={i} className="flex items-center gap-4 border-b border-gray-800 pb-2 flex-wrap">
                   <span className="font-bold w-64">{t.label || '(no label)'}</span>
                   <span className="text-gray-400 flex-1 min-w-40">{t.chat_id}</span>
-                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${t.view === 'SIDNEY' ? 'bg-blue-900 text-blue-200' : 'bg-gray-700 text-gray-200'}`}>{t.view || 'GZ28'} view</span>
+                  <span className={`px-3 py-1 rounded-full text-sm font-bold ${t.view === 'CLIENT' ? 'bg-blue-900 text-blue-200' : 'bg-gray-700 text-gray-200'}`}>{t.view || 'GZ28'} view</span>
                   <button onClick={() => saveTargets(targetList.filter((_: any, k: number) => k !== i))} className="text-gray-500 hover:text-red-400 font-bold">REMOVE</button>
                 </div>
               ))}
@@ -550,7 +550,7 @@ export default function CarDealPage() {
             <div className="flex gap-3 mt-4 flex-wrap items-end">
               <input className={`${inp} w-64`} placeholder="Label (Tripa private, group…)" value={newTarget.label} onChange={e => setNewTarget({ ...newTarget, label: e.target.value })} />
               <input className={`${inp} flex-1 min-w-40`} placeholder="WhatsApp chat id (…@g.us or …@c.us)" value={newTarget.chat_id} onChange={e => setNewTarget({ ...newTarget, chat_id: e.target.value })} />
-              <select className={inp} value={newTarget.view} onChange={e => setNewTarget({ ...newTarget, view: e.target.value })}><option value="TRIPA">TRIPA view (full sheet)</option><option value="SIDNEY">SIDNEY view (no right-side notes)</option><option value="GZ28">GZ28 view (full sheet)</option></select>
+              <select className={inp} value={newTarget.view} onChange={e => setNewTarget({ ...newTarget, view: e.target.value })}><option value="TRIPA">TRIPA view (full sheet)</option><option value="CLIENT">CLIENT view (no right-side notes)</option><option value="GZ28">GZ28 view (full sheet)</option></select>
               <button onClick={addTarget} className={`${btn} bg-green-700 hover:bg-green-600`}>ADD TARGET</button>
             </div>
             <div className="flex gap-4 mt-5 items-center flex-wrap border-t border-gray-800 pt-4">
