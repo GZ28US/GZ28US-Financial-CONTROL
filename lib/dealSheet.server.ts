@@ -94,7 +94,18 @@ export async function buildDealSheet(db: SupabaseClient, dealId: string, view: S
   }
   // no carro OFICIAL a parte que ficou NÃO vira linha própria: o + (valor oficial inteiro) e os − (o que saiu) já dão o
   // líquido, e contam no «Total pago» — como na tela dele (+10.000 / −10.000 dentro do total).
-  const lines: any[] = [...pays.filter((a: any) => !split.has(a.movement_id)), ...extras]
+  // UMA LINHA POR MOVIMENTO: várias alocações do mesmo movimento neste deal (o rateio por renda, que é coisa do livro)
+  // saem somadas numa linha só, com o R$ e o destinatário do movimento.
+  const merged: any[] = []
+  const seenMov = new Map<string, any>()
+  for (const a of pays) {
+    if (split.has(a.movement_id)) continue
+    const first = seenMov.get(a.movement_id)
+    if (first) { first.amount_usd = cents((Number(first.amount_usd) || 0) + (Number(a.amount_usd) || 0)); continue }
+    const copy = { ...a }
+    seenMov.set(a.movement_id, copy); merged.push(copy)
+  }
+  const lines: any[] = [...merged, ...extras]
   const tripaToGz = cents(confirmed.filter((a: any) => a.deal_movements.from_party === 'TRIPA_TRADING' && a.deal_movements.to_party === 'GZ28US')
     .reduce((s: number, a: any) => s + (Number(a.amount_usd) || 0), 0))
 

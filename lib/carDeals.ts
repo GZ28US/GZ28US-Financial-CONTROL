@@ -101,7 +101,7 @@ export const dealDate = (d: string | null | undefined) => {
 //   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
 //                           + rendas abertas de invoice do MESMO carro cujo cliente é o exportador (frete a reembolsar…)
 //   GZ28US → Tripa Trading  despesas em aberto da invoice de compra para o fornecedor Tripa
-//   Sidney → Tripa Trading  Tripa só exportadora: taxas dela + o que ela nos repassou − o que ele mandou a ela;
+//   Sidney → Tripa Trading  Tripa só exportadora: taxas dela + max(0, o que ela nos repassou − o que ele mandou a ela);
 //                           Tripa vendedora: custos do deal − o que ele mandou a ela − o aberto em GZ28US → Tripa Trading;
 //                           nunca negativo; a DATA ou CONDIÇÃO vem de deal_obligations (única info que só existe lá)
 export type PositionCtx = { charges: any[]; obligations: any[]; movements: any[]; allocations: any[]; milestones: any[]; incomes: any[]; expenses: any[]; exporterIncomes?: any[] }
@@ -165,7 +165,9 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
   // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
   tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id), i => Number(i.amount) || 0)
-  const stOpen = Math.max(0, stOwed - stPaid - (seller ? gtOpen : 0))
+  // exportadora: o piso é POR TERMO — quando a Tripa ainda SEGURA dinheiro dele (repassou menos do que recebeu), esse
+  // saldo já aparece em Tripa Trading → GZ28US e não pode abater as taxas (Compra 25: taxas 14.000 continuam 14.000).
+  const stOpen = seller ? Math.max(0, stOwed - stPaid - gtOpen) : (stOwed - advanced) + Math.max(0, advanced - stPaid)
   const stNext = dated.length ? dated[0].label : (dues[0]?.label && dues[0].label !== 'no date' ? dues[0].label : null)
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
