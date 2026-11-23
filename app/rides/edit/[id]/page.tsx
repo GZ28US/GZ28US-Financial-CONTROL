@@ -268,7 +268,8 @@ export default function EditRidePage() {
       // TuneRepository é da casa inteira, não de um app só.
       const noCarro = await put({ zone: 'US' })
       const faltou: string[] = []
-      for (const zone of ['US', 'BR']) { if (!(await put({ zone, rootFolder: 'BoneStock TuneRepository' }))) faltou.push(zone) }
+      // Carro US.XXX: o acervo é só o do US (Márcio, 23/11/2026: «os carros US.XXX só terão estas pastas no Rides do US, nada no do BR»).
+      for (const zone of (/^US\./i.test(projectCode || '') ? ['US'] : ['US', 'BR'])) { if (!(await put({ zone, rootFolder: 'BoneStock TuneRepository' }))) faltou.push(zone) }
       if (!noCarro) alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.')
       else {
         if (faltou.length) alert(`BoneStock tune saved to the car folder, but the copy to BoneStock TuneRepository failed on: ${faltou.join(', ')}.`)

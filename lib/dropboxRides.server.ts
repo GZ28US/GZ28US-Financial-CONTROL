@@ -89,7 +89,10 @@ export const SUBFOLDERS = ['HB Tuning', 'Purchases', 'Performance', 'Documentati
 // A pasta de triagem tem nome POR ZONA — Screening nos rides US, Volante nos BR —
 // derivado do path, então qualquer um dos apps nomeia certo mexendo na outra zona.
 export async function ensureSubfolders(token: string, folderPath: string) {
-  const subs = [...SUBFOLDERS, folderPath.startsWith(ROOTS.BR) ? 'Volante' : 'Screening']
+  // CARRO US NO RIDES DO BR (Márcio, 23/11/2026): «os carros US.XXX só terão estas pastas no Rides do US, nada no do BR» —
+  // a pasta dele aqui não ganha HB Tuning nem Performance.
+  const usNoBr = folderPath.startsWith(ROOTS.BR) && /^US\./i.test(folderPath.slice(ROOTS.BR.length + 1))
+  const subs = [...SUBFOLDERS.filter((x) => !(usNoBr && (x === 'HB Tuning' || x === 'Performance'))), folderPath.startsWith(ROOTS.BR) ? 'Volante' : 'Screening']
   for (const sub of subs) {
     const r = await dbx(token, 'files/create_folder_v2', { path: `${folderPath}/${sub}`, autorename: false })
     if (!r.ok && !r.text.includes('conflict')) {

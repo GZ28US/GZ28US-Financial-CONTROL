@@ -1581,6 +1581,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   // com este nome exato — "BoneStock TuneRepository", sem espaço entre as duas
   // palavras finais. Escrever "Tune Repository" criaria uma segunda pasta.
   const BONESTOCK_REPO = 'BoneStock TuneRepository'
+  // Carro US.XXX: o acervo é só o do US (Márcio, 23/11/2026: «os carros US.XXX só terão estas pastas no Rides do US, nada no do BR»).
+  const repoZones = /^US\./i.test(rideCode || '') ? ['US'] : ['US', 'BR']
 
   // O OS do módulo entra no nome do arquivo: quem lê sabe o que tem dentro sem
   // abrir. "BoneStock" só fica no carro que NÃO teve atualização de OS.
@@ -1597,7 +1599,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
   async function retagTuneOs() {
     const tag = osTag()
     const ruim: string[] = []
-    await Promise.all(['US', 'BR'].map(async (zone) => {
+    await Promise.all(repoZones.map(async (zone) => {
       try {
         const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'retag-os', zone, code: rideCode, name: rideName, osTag: tag, rootFolder: BONESTOCK_REPO }) })
         const d = await res.json().catch(() => ({}))
@@ -1643,7 +1645,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     //    então numa pasta plana não colide com o tune de outro carro. E o upload
     //    é overwrite, então regravar o mesmo carro substitui em vez de acumular.
     const faltou: string[] = []
-    for (const zone of ['US', 'BR']) {
+    for (const zone of repoZones) {
       if (!(await put({ zone, rootFolder: BONESTOCK_REPO }))) faltou.push(zone)
     }
     if (!noCarro) { alert('The BoneStock tune could not be saved to the Dropbox HB Tuning folder.'); return false }
