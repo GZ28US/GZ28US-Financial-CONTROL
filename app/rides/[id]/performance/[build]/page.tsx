@@ -1466,7 +1466,7 @@ async function loadPdfLogo(): Promise<{ data: string; w: number; h: number } | n
   } catch { return null }
 }
 
-function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client }: { rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null }) {
+function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, buildNo, client, tuneOnly }: { tuneOnly?: boolean; rideCode: string; rideName: string; rideTitle: string; carLine: string; tuneBase: string; buildNo: number; client: { name: string | null; phone: string | null; country: string | null; preferred_message_method: string | null } | null }) {
   const [sheet, setSheet] = useState<Record<string, string>>({})
   const [otherMode, setOtherMode] = useState<Record<string, boolean>>({})
   // O OS que estava gravado quando a ficha abriu — é ele que diz se este SAVE
@@ -1932,6 +1932,37 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
 
   if (bsLoading) return <p className="text-xl text-gray-400">Loading…</p>
 
+  // BONESTOCK TUNE (Márcio, 23/11/2026): «Quando o build é o BoneStock, não deve existir a aba BuildSheet, isso porque se o
+  // carro é BoneStock, não tem mod nenhuma… fica só a feature de se fazer o upload do BoneStock Tune». No build BoneStock a
+  // aba vira BONESTOCK TUNE e mostra só o upload; nos demais builds a ficha não oferece mais o arquivo BoneStock.
+  if (tuneOnly) {
+    const saveTune = async () => {
+      if (!tuneFile) { alert('Choose the BoneStock tune file first.'); return }
+      setBsSaving(true)
+      try {
+        if (await uploadTuneFile(tuneFile)) setTuneFile(null)
+        await loadTuneStatus()
+      } finally { setBsSaving(false) }
+    }
+    return (
+      <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
+        <label className="block mb-1 text-sm text-gray-400 font-bold">BONESTOCK TUNE</label>
+        <p className="mb-4 text-gray-400">The tune file read from the car before any modification. It is saved in the car&apos;s HB Tuning folder.</p>
+        {tuneExisting.length > 0 && <p className="mb-3 text-green-400 font-bold text-sm">✅ {tuneExisting.join(' · ')}</p>}
+        <label className="inline-flex items-center gap-2 bg-gray-800 border border-gray-700 hover:bg-gray-700 px-4 py-2 rounded-2xl font-bold cursor-pointer">
+          {tuneFile ? `📄 ${tuneFile.name}` : (tuneExisting.length ? '🔄 CHOOSE NEW BONESTOCK TUNE' : '⚙️ CHOOSE BONESTOCK TUNE')}
+          <input type="file" className="hidden" onChange={(e) => { setTuneFile(e.target.files?.[0] || null); e.target.value = '' }} />
+        </label>
+        {tuneFile && <span className="ml-3 text-gray-400 text-sm">uploads to HB Tuning when you press SAVE</span>}
+        <div className="flex justify-end mt-6">
+          <button onClick={saveTune} disabled={bsSaving || !tuneFile} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
+            {bsSaving ? 'SAVING…' : 'SAVE BONESTOCK TUNE'}
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-3xl p-6">
       {sheetSendOpen && (
@@ -2065,18 +2096,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           </div>
         ))}
       </div>
-      <div className="mt-6">
-        <label className="block mb-1 text-sm text-gray-400 font-bold">BONESTOCK TUNE</label>
-        {tuneExisting.length > 0 && <p className="mb-2 text-green-400 font-bold text-sm">✅ {tuneExisting.join(' · ')}</p>}
-        <label className="inline-flex items-center gap-2 bg-gray-800 border border-gray-700 hover:bg-gray-700 px-4 py-2 rounded-2xl font-bold cursor-pointer">
-          {tuneFile ? `📄 ${tuneFile.name}` : (tuneExisting.length ? '🔄 CHOOSE NEW BONESTOCK TUNE' : '⚙️ CHOOSE BONESTOCK TUNE')}
-          <input type="file" className="hidden" onChange={(e) => { setTuneFile(e.target.files?.[0] || null); e.target.value = '' }} />
-        </label>
-        {tuneFile && <span className="ml-3 text-gray-400 text-sm">uploads to HB Tuning when you press SAVE</span>}
-      </div>
       <div className="flex justify-end mt-6">
         <button onClick={saveSheet} disabled={bsSaving} className="bg-green-700 hover:bg-green-600 disabled:opacity-50 px-6 py-3 rounded-2xl font-bold text-lg">
-          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET and BONESTOCK TUNE'}
+          {bsSaving ? 'SAVING…' : 'SAVE BUILD SHEET'}
         </button>
       </div>
     </div>
@@ -2149,7 +2171,7 @@ export default function RidePerformancePage() {
             onClick={() => setTab(t)}
             className={`px-5 py-3 rounded-2xl font-bold ${tab === t ? 'bg-white text-black' : 'bg-gray-800 hover:bg-gray-700 text-gray-200'}`}
           >
-            {t}
+            {t === 'BUILD SHEET' && isBaselineName(buildName) ? 'BONESTOCK TUNE' : t}
           </button>
         ))}
       </div>
@@ -2159,7 +2181,7 @@ export default function RidePerformancePage() {
       ) : tab === 'DYNO' ? (
         <DynoSection rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} defaultLoss={defaultLoss} packName={buildName} />
       ) : tab === 'BUILD SHEET' ? (
-        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} />
+        <BuildSheetSection rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} carLine={carLine} tuneBase={tuneBase} buildNo={buildNo} client={client} tuneOnly={isBaselineName(buildName)} />
       ) : (
         // 1/4 MILE · 1/8 MILE · 100-200 (Márcio, 10/10/2026): «same standards of the dyno page» — components/TrackSection.
         <TrackSection key={tab} mode={tab === '1/4 MILE' ? 'QUARTER' : tab === '1/8 MILE' ? 'EIGHTH' : 'ROLL'} rideId={rideId} rideCode={ride.project_code || ''} rideName={ride.project_name || ''} rideTitle={title} buildNo={buildNo} packName={buildName} />
