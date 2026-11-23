@@ -198,13 +198,18 @@ export async function POST(req: NextRequest) {
     // chat -> text in `body`; image/document -> text in `caption`.
     let endpoint: string
     let fields: Record<string, string>
+    // LEGENDA TEM TETO (23/11/2026): a UltraMsg recusa legenda de imagem/documento acima de 1024 caracteres
+    // («max length limit exceeded of 1024» — foi o que derrubou o SEND DATASHEET do Swinger 1). Texto maior: o arquivo
+    // vai com a primeira linha como legenda e o texto INTEIRO segue numa mensagem logo depois. Nada é cortado.
+    const textoLongo = !!(imageUrl || documentUrl) && String(body || '').length > 1024
+    const legenda = textoLongo ? String(body).split('\n')[0].slice(0, 1024) : body
 
     if (imageUrl) {
       endpoint = `${base}/messages/image`
-      fields = { token, to, image: imageUrl, caption: body, body }
+      fields = { token, to, image: imageUrl, caption: legenda, body: legenda }
     } else if (documentUrl) {
       endpoint = `${base}/messages/document`
-      fields = { token, to, document: documentUrl, filename, caption: body, body }
+      fields = { token, to, document: documentUrl, filename, caption: legenda, body: legenda }
     } else {
       endpoint = `${base}/messages/chat`
       fields = { token, to, body, ...(mentions ? { mentions } : {}) }
@@ -258,6 +263,16 @@ export async function POST(req: NextRequest) {
       console.error('[whatsapp] send failed', { status: res.status, rawPreview: rawText.slice(0, 500) })
       await logSend({ ...logCtx, ok: false, error: ('ultramsg: ' + rawText).slice(0, 400), http_status: res.status, ultra_id: null })
       return NextResponse.json({ error: 'UltraMsg send failed', status: res.status, detail: data, raw: rawText }, { status: 502 })
+    }
+
+    if (textoLongo) {
+      // o arquivo já foi; agora o texto inteiro. Se ESTE falhar, quem chamou fica sabendo — não vira sucesso calado.
+      endpoint = `${base}/messages/chat`
+      const txt = await disparar({ token, to, body })
+      if (!txt.ok) {
+        console.error('[whatsapp] arquivo enviado, texto longo recusado', { rawPreview: txt.rawText.slice(0, 300) })
+        return NextResponse.json({ error: 'File sent, but the text message failed', status: txt.res.status, detail: txt.data, raw: txt.rawText }, { status: 502 })
+      }
     }
 
     console.log('[whatsapp] success', { messageId: data?.id, elapsedMs: Date.now() - t0 })
