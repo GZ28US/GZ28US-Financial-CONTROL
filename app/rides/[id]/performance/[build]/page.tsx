@@ -1882,6 +1882,8 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
       // Re-sync to the Dropbox HB Tuning folder first — the caption reports where it landed.
       const ROOT_LABEL = 'Dropbox\\001 - GZ28US\\GZ28US Rides'
       const savedIn: string[] = []
+      // O tune mora em «HB Tuning\\00 - BoneStock» e a ficha em «HB Tuning\\NN - pack»: quando o texto cita os DOIS, aponta a HB Tuning.
+      const hbTuning = (p: string) => p.split('\\').slice(0, -1).join('\\')
       for (const zone of (isBaselineName(buildName) ? [] : ['US'])) {   // a base não salva Build Sheet nas pastas
         try {
           const res = await fetch(`${BASE_PATH}/api/ride-folder`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ action: 'upload', zone, code: rideCode, name: rideName, filename, contentBase64: b64, buildFolder: buildFolderName(buildNo, buildName, sheetBaseNo) }) })
@@ -1909,7 +1911,7 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
           const modded = f.kind !== 'text' && v !== '—' && v !== stockVal
           return `${f.label}: ${modded ? `*${v}*` : v}`
         }),
-        ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${p}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
+        ...(savedIn.length ? ['', ...savedIn.map((p) => (tuneExisting.length ? `📁 *BoneStock TUNE* and *BuildSheet in PDF* saved in folder: ${hbTuning(p)}` : `📁 *BuildSheet in PDF* saved in folder: ${p}`))] : []),
       ]
       const res = await fetch(`${BASE_PATH}/api/whatsapp`, { method: 'POST', headers: await sessionHeaders(), body: JSON.stringify({ toGroupName: group, body: lines.join('\n'), documentUrl: urlData.publicUrl, filename }) })
       const data = await res.json().catch(() => ({}))
