@@ -233,7 +233,12 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
     const pick = (list: DynoPull[]) => list.reduce<DynoPull | null>((b, p) => ((Number(p.whp) || 0) > (Number(b?.whp) || 0) ? p : b), null)
     return bestWhp >= baseWhp ? pick(pulls.filter((p) => !isBoneStock(p))) : pick(pulls.filter(isBoneStock))
   })()
-  const dispCf = fromPull?.foreign && Number(fromPull.correction_factor) > 0 ? Number(fromPull.correction_factor) : 1
+  // NO APP DO US, SEMPRE CORRIGIDO (Márcio, 23/11/2026: «no app do US os números têm que obedecer os padrões do US (whp sempre
+  // corrigido nas leituras de dyno e targets)» · «sim, no app do US sempre corrigido»). Substitui a regra de 17/10 só para a
+  // TELA e os reports deste app: carro medido em dinamômetro do BR também mostra meta, melhor passada e o que falta em WHP
+  // corrigido. O número sem correção é o padrão do app do BR, que tem a sua própria tela.
+  void fromPull
+  const dispCf = 1
   const rawTag = dispCf !== 1 ? ' raw · BR dyno' : ''
   const [scanning, setScanning] = useState(false)
   const [saving, setSaving] = useState(false)
@@ -733,7 +738,8 @@ function DynoSection({ rideId, rideCode, rideName, rideTitle, buildNo, defaultLo
       ? [`🎯 *TARGET MET:* ${(targetWhp / cf).toFixed(1)} WHP${tag} (${targetBhp} BHP @ ${lossInUse}% loss) — *+${(diff / cf).toFixed(1)} WHP over*`]
       : [`🎯 *TARGET:* ${(targetWhp / cf).toFixed(1)} WHP${tag} (${targetBhp} BHP @ ${lossInUse}% loss) — *${(-diff / cf).toFixed(1)} WHP to go*`]
   }
-  const cfOf = (p: DynoPull | null | undefined) => (p?.foreign && Number(p.correction_factor) > 0 ? Number(p.correction_factor) : 1)
+  // app do US = sempre corrigido (23/11/2026): a linha da meta no report sai em WHP corrigido, também para passada do BR
+  const cfOf = (_p: DynoPull | null | undefined) => 1
   function pullReport(p: DynoPull, audience: 'group' | 'client' = 'group'): string {
     return [
       '🏁 *DYNO PULL*',
@@ -1531,7 +1537,9 @@ function BuildSheetSection({ rideCode, rideName, rideTitle, carLine, tuneBase, b
     const bestC = Number(bestPull?.whp) || 0, baseC = bsCar?.whp != null ? Number(bsCar.whp) : null
     // REGRA DO DINAMÔMETRO (17/10/2026): o carro está numa passada do BR → a casa lê roda SEM CORREÇÃO (÷ o fator da passada).
     const fromP = bestC >= (baseC || 0) ? bestPull : bsCar
-    const cf = fromP?.foreign && Number(fromP.correction_factor) > 0 ? Number(fromP.correction_factor) : 1
+    // app do US = sempre corrigido (Márcio, 23/11/2026): a ficha e o PDF mostram WHP corrigido também para carro medido no BR
+    void fromP
+    const cf = 1
     setDyno({
       loss: bRow?.loss_pct != null ? Number(bRow.loss_pct) : bsCar?.loss_pct != null ? Number(bsCar.loss_pct) : (rows.find((p) => p.loss_pct != null)?.loss_pct ?? null),
       best: bestC / cf,
