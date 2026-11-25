@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
   }
   // «esse e-mail voltou?» — só lê a caixa (Outlook/Hotmail), não envia nada
   if (b.checkBounce) {
-    const c = b.checkBounce, iso = /^d{4}-d{2}-d{2}Td{2}:d{2}:d{2}Z$/
+    const c = b.checkBounce, iso = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/
     const recips: string[] = Array.isArray(c.recipients) ? c.recipients.map(String) : []
     if (!iso.test(String(c.since || '')) || (c.until && !iso.test(String(c.until))) || !recips.length) return NextResponse.json({ error: 'checkBounce: since (YYYY-MM-DDTHH:MM:SSZ) e recipients[] são obrigatórios' }, { status: 400 })
     const db0 = streamDb(), auth0 = await getMailAuth(db0, Number(b.slot) || 1)
@@ -191,7 +191,7 @@ export async function POST(req: NextRequest) {
   const everyone = [...to, ...cc]
   const pub = (x: Bounce) => ({ reason: x.reason, code: x.code, failed: x.failed, all: x.all, received: x.received })
   // 5 s para trás: o relógio daqui e o do Exchange não são o mesmo
-  const stamp = () => new Date(Date.now() - 5000).toISOString().replace(/.d+Z$/, 'Z')
+  const stamp = () => new Date(Date.now() - 5000).toISOString().replace(/\.\d+Z$/, 'Z')
   let since = stamp()
   const first = await sendOnce()
   if (first.error) return NextResponse.json({ error: first.error }, { status: 502 })
