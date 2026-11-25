@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { streamDb } from '@/lib/stream.server'
 import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.server'
+import { watchBounce, findBounce, isOutboundSpamBlock, type Bounce } from '@/lib/mailBounce.server'
 
 // Envio de e-mail pelas caixas do Márcio, com anexo. Mesma chave de leitura das
 // outras rotas de correio; o token do Graph nunca sai do servidor.
@@ -16,8 +17,18 @@ import { getMailAuth, freshAccessToken, mailProvider } from '@/lib/streamMail.se
 // In-Reply-To/References pra resposta cair na mesma thread.
 //
 // REGRA DE OURO: esta rota só é chamada com o "manda" explícito do Márcio.
+//
+// DEVOLUÇÃO (25/11/2026, caixas Outlook/Hotmail — ver lib/mailBounce.server.ts): depois de enviar, a rota espera ~16 s por uma
+// devolução daquela mensagem. Não voltou nada → `ok:true, bounce_checked:true`. Voltou a recusa de SAÍDA da Microsoft
+// («5.7.501 Spam abuse detected from IP range») para TODOS os destinatários → ninguém recebeu, então a MESMA mensagem é
+// reenviada uma vez (`resent:true`) e vigiada de novo. Qualquer devolução que sobre sai na resposta em `bounced`; se ninguém
+// recebeu, a rota responde 502 com o motivo — `ok:true` deixou de significar «o Graph aceitou» e passou a significar «saiu e
+// não voltou». Devolução parcial ou de outro tipo (endereço inexistente) NÃO é reenviada: reenviar duplicaria para quem recebeu.
+// `bounceWait:false` no corpo pula a espera. Caixa Google não passa por aqui.
+// SÓ CONFERIR, SEM ENVIAR: POST { key, slot, checkBounce: { since, until?, recipients[], subject? } } → { bounce } (ou null).
 
 export const dynamic = 'force-dynamic'
+export const maxDuration = 120
 
 const G = 'https://graph.microsoft.com/v1.0'
 const gh = (t: string) => ({ Authorization: `Bearer ${t}`, 'Content-Type': 'application/json' })
@@ -94,6 +105,20 @@ export async function POST(req: NextRequest) {
   if (!b?.key || b.key !== process.env.WHATSAPP_READ_KEY) {
     return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   }
+  // «esse e-mail voltou?» — só lê a caixa (Outlook/Hotmail), não envia nada
+  if (b.checkBounce) {
+    const c = b.checkBounce, iso = /^d{4}-d{2}-d{2}Td{2}:d{2}:d{2}Z$/
+    const recips: string[] = Array.isArray(c.recipients) ? c.recipients.map(String) : []
+    if (!iso.test(String(c.since || '')) || (c.until && !iso.test(String(c.until))) || !recips.length) return NextResponse.json({ error: 'checkBounce: since (YYYY-MM-DDTHH:MM:SSZ) e recipients[] são obrigatórios' }, { status: 400 })
+    const db0 = streamDb(), auth0 = await getMailAuth(db0, Number(b.slot) || 1)
+    if (!auth0) return NextResponse.json({ error: 'slot sem autenticação' }, { status: 404 })
+    if (mailProvider(auth0) === 'gmail') return NextResponse.json({ error: 'checkBounce só existe para caixa Outlook/Hotmail' }, { status: 400 })
+    const t0 = await freshAccessToken(db0, auth0)
+    if (!t0) return NextResponse.json({ error: 'token expirado' }, { status: 502 })
+    try { return NextResponse.json({ ok: true, account: auth0.account, bounce: await findBounce(t0, String(c.since), recips, [], String(c.subject || ''), String(c.until || '')) }) }
+    catch (e) { return NextResponse.json({ error: String((e as Error).message || e).slice(0, 300) }, { status: 502 }) }
+  }
+
   const to: string[] = Array.isArray(b.to) ? b.to : b.to ? [b.to] : []
   if (!to.length || !b.subject || !b.body) {
     return NextResponse.json({ error: 'to, subject e body são obrigatórios' }, { status: 400 })
@@ -122,26 +147,27 @@ export async function POST(req: NextRequest) {
     contentBytes: a.base64,
   }))
 
+  const sendOnce = async (): Promise<{ error?: string; threaded: boolean; subject?: string }> => {
   // Resposta na thread original
   if (b.replyTo) {
     const r = await fetch(`${G}/me/messages/${encodeURIComponent(b.replyTo)}/createReply`, { method: 'POST', headers: gh(token) })
     const draft = await r.json().catch(() => null)
-    if (!draft?.id) return NextResponse.json({ error: draft?.error?.message || 'createReply falhou' }, { status: 502 })
+    if (!draft?.id) return { error: draft?.error?.message || 'createReply falhou', threaded: true }
 
     const patch = await fetch(`${G}/me/messages/${draft.id}`, {
       method: 'PATCH', headers: gh(token),
       body: JSON.stringify({ toRecipients: rec(to), ccRecipients: rec(cc), body: { contentType: 'HTML', content: asHtml(b.body) } }),
     })
-    if (!patch.ok) return NextResponse.json({ error: (await patch.text()).slice(0, 300) }, { status: 502 })
+    if (!patch.ok) return { error: (await patch.text()).slice(0, 300), threaded: true }
 
     for (const a of atts) {
       const up = await fetch(`${G}/me/messages/${draft.id}/attachments`, { method: 'POST', headers: gh(token), body: JSON.stringify(a) })
-      if (!up.ok) return NextResponse.json({ error: `anexo ${a.name}: ${(await up.text()).slice(0, 300)}` }, { status: 502 })
+      if (!up.ok) return { error: `anexo ${a.name}: ${(await up.text()).slice(0, 300)}`, threaded: true }
     }
 
     const sent = await fetch(`${G}/me/messages/${draft.id}/send`, { method: 'POST', headers: gh(token) })
-    if (!sent.ok) return NextResponse.json({ error: (await sent.text()).slice(0, 300) }, { status: 502 })
-    return NextResponse.json({ ok: true, account: auth.account, threaded: true, attachments: atts.length, to, cc })
+    if (!sent.ok) return { error: (await sent.text()).slice(0, 300), threaded: true }
+    return { threaded: true, subject: String(draft.subject || '') }
   }
 
   // Mensagem nova
@@ -158,6 +184,40 @@ export async function POST(req: NextRequest) {
       saveToSentItems: true,
     }),
   })
-  if (!r.ok) return NextResponse.json({ error: (await r.text()).slice(0, 400) }, { status: 502 })
-  return NextResponse.json({ ok: true, account: auth.account, threaded: false, attachments: atts.length, to, cc })
+  if (!r.ok) return { error: (await r.text()).slice(0, 400), threaded: false }
+  return { threaded: false, subject: String(b.subject || '') }
+  }
+
+  const everyone = [...to, ...cc]
+  const pub = (x: Bounce) => ({ reason: x.reason, code: x.code, failed: x.failed, all: x.all, received: x.received })
+  // 5 s para trás: o relógio daqui e o do Exchange não são o mesmo
+  const stamp = () => new Date(Date.now() - 5000).toISOString().replace(/.d+Z$/, 'Z')
+  let since = stamp()
+  const first = await sendOnce()
+  if (first.error) return NextResponse.json({ error: first.error }, { status: 502 })
+  const base = { account: auth.account, threaded: first.threaded, attachments: atts.length, to, cc }
+  if (b.bounceWait === false) return NextResponse.json({ ok: true, ...base, bounce_checked: false })
+
+  const w1 = await watchBounce(token, since, everyone, { subject: first.subject })
+  // não conseguiu olhar a caixa: o envio saiu, mas ninguém conferiu — diz isso, não diz «não voltou»
+  if (!w1.checked) return NextResponse.json({ ok: true, ...base, bounce_checked: false, warning: 'sent, but the bounce check could not read the mailbox: ' + w1.error })
+  const b1 = w1.bounce
+  if (!b1) return NextResponse.json({ ok: true, ...base, bounce_checked: true })
+  if (!(isOutboundSpamBlock(b1) && b1.all)) {
+    // devolução parcial ou de outro tipo: não se reenvia. Ninguém recebeu = falha; alguém recebeu = ok com o aviso.
+    if (b1.all) return NextResponse.json({ error: 'bounced — nobody received it: ' + b1.reason, ...base, bounce_checked: true, bounced: [pub(b1)] }, { status: 502 })
+    return NextResponse.json({ ok: true, ...base, bounce_checked: true, bounced: [pub(b1)], warning: 'delivery failed for: ' + b1.failed.join(', ') + ' — ' + b1.reason })
+  }
+
+  // recusa de saída da Microsoft para todos: a mesma mensagem, mais uma vez
+  await new Promise(res => setTimeout(res, 6000))
+  since = stamp()
+  const second = await sendOnce()
+  if (second.error) return NextResponse.json({ error: 'bounced (' + b1.reason + ') and the resend failed: ' + second.error, ...base, bounce_checked: true, bounced: [pub(b1)], resent: false }, { status: 502 })
+  const w2 = await watchBounce(token, since, everyone, { exclude: [b1.id], subject: second.subject })
+  if (!w2.checked) return NextResponse.json({ ok: true, ...base, bounce_checked: false, resent: true, first_bounce: pub(b1), warning: 'resent after a bounce, but the second bounce check could not read the mailbox: ' + w2.error })
+  const b2 = w2.bounce
+  if (!b2) return NextResponse.json({ ok: true, ...base, bounce_checked: true, resent: true, first_bounce: pub(b1) })
+  if (b2.all) return NextResponse.json({ error: 'bounced twice — nobody received it: ' + b2.reason, ...base, bounce_checked: true, resent: true, bounced: [pub(b1), pub(b2)] }, { status: 502 })
+  return NextResponse.json({ ok: true, ...base, bounce_checked: true, resent: true, bounced: [pub(b2)], first_bounce: pub(b1), warning: 'delivery failed for: ' + b2.failed.join(', ') + ' — ' + b2.reason })
 }
