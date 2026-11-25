@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { bankDb, plaidConfigured, syncBalances } from '@/lib/plaid.server'
-import { requireUser } from '@/lib/auth.server'
+import { requireUserRole } from '@/lib/auth.server'
 
 // SALDO REAL + INTEGRIDADE DO FEED (BANK LINK v0.4.0, pedido do João 22/ago):
 // pra cada conexão, o saldo que o BANCO diz agora (Plaid /accounts/balance/get,
@@ -23,9 +23,13 @@ const PAID = new Map<string, number>()   // 'YYYY-MM-DD' → chamadas pagas
 const todayNY = () => new Date().toLocaleDateString('en-CA', { timeZone: 'America/New_York' })
 
 export async function GET(req: NextRequest) {
-  if (!(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const role = await requireUserRole(req)
+  if (!role) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
   if (!plaidConfigured()) return NextResponse.json({ ok: true, configured: false, items: [] })
-  const force = req.nextUrl.searchParams.get('force') === '1'
+  // VIEWER (25/11/2026, Drummond): sees what is STORED. No Plaid call (free or paid) and no write to cash_balances —
+  // the screen falls back to the last stored balance; ?force is ignored.
+  const viewer = role === 'viewer'
+  const force = !viewer && req.nextUrl.searchParams.get('force') === '1'
   try {
     const db = bankDb()
     const { data: items, error } = await db.from('bank_accounts').select('id, institution, display_name, status, plaid_access_token').order('created_at')
@@ -36,7 +40,8 @@ export async function GET(req: NextRequest) {
       const cached = CACHE.get(it.id)
       let live: any = cached && !force && Date.now() - cached.at < TTL ? cached.data : null
       if (!live) {
-        if (it.status !== 'ACTIVE') live = { error: 'conexão ' + it.status }
+        if (viewer) live = { error: 'view-only access: the bank is not queried live' }
+        else if (it.status !== 'ACTIVE') live = { error: 'conexão ' + it.status }
         else {
           const day = todayNY()
           // Teto do pago: estourou = degrada pra grátis (a resposta continua vindo —

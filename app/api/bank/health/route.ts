@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { plaid, bankDb } from '@/lib/plaid.server'
-import { requireUser } from '@/lib/auth.server'
+import { requireUserRole } from '@/lib/auth.server'
 
 // POR QUE O FEED DO BANCO EMUDECEU — a pergunta que a rodada não sabia responder.
 //
@@ -26,7 +26,11 @@ export async function GET(req: NextRequest) {
   // Usuário logado OU o cron: quem vigia saúde tem de poder ser chamado por
   // robô também, senão o diagnóstico só existe quando alguém lembra de abrir.
   const cron = (req.headers.get('authorization') || '') === `Bearer ${process.env.CRON_SECRET}`
-  if (!cron && !(await requireUser(req))) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  const role = cron ? 'staff' : await requireUserRole(req)
+  if (!role) return NextResponse.json({ error: 'unauthorized' }, { status: 401 })
+  // VIEWER (25/11/2026, Drummond): only what the DATA says. This route was open to a viewer and asked Plaid (/item/get, and the
+  // probe with ?probe=1) — a read-only account makes no outside call.
+  const viewer = role === 'viewer'
   const db = bankDb()
   const { data: contas } = await db.from('bank_accounts').select('*')
   const out: any[] = []
@@ -50,7 +54,8 @@ export async function GET(req: NextRequest) {
     }
 
     // ── o que o PLAID diz ───────────────────────────────────────────────────
-    try {
+    if (viewer) linha.plaid_consultado = false
+    else try {
       const it = await plaid('/item/get', { access_token: c.plaid_access_token })
       linha.item_error = it?.item?.error
         ? { code: it.item.error.error_code, msg: String(it.item.error.error_message || '').slice(0, 200) }
@@ -79,7 +84,7 @@ export async function GET(req: NextRequest) {
     // NÃO GRAVA NADA — nem transação, nem cursor. O cursor do Plaid só avança
     // quando a gente SALVA o `next_cursor`, e aqui ele é descartado de propósito:
     // sonda que muda o estado que está medindo não é sonda ([[nao-achei-onde-procurou]]).
-    if (req.nextUrl.searchParams.get('probe') === '1' && !linha.item_error) {
+    if (!viewer && req.nextUrl.searchParams.get('probe') === '1' && !linha.item_error) {
       try {
         const s = await plaid('/transactions/sync', { access_token: c.plaid_access_token, cursor: c.sync_cursor || undefined, count: 250 })
         const novas = (s.added || []).length

@@ -36,10 +36,16 @@ export async function viewerRole(email: string): Promise<ViewerRole> {
 // GET routes a viewer cannot call either: they spend on (or talk to) outside services
 const VIEWER_DENY_GET = ['/api/plaid/', '/api/integrations/', '/api/social/', '/api/whatsapp/webhook', '/api/adm/viewers']
 
+// …except the BANK LINK reads (25/11/2026, Márcio on the Drummond access: «everything, just visualisation»). These two serve a
+// viewer ONLY what is already stored — each route asks requireUserRole and, for a viewer, makes no Plaid call and writes nothing
+// (accounts GET never did; balance skips the live read). Exact paths: link-token, exchange, history-probe, webhook stay closed.
+const VIEWER_ALLOW_GET = ['/api/plaid/accounts', '/api/plaid/balance']
+
 export function viewerMayCall(method: string, pathname: string): boolean {
   const m = String(method || 'GET').toUpperCase()
   if (m !== 'GET' && m !== 'HEAD') return false
   const p = String(pathname || '').replace(/^\/ca(?=\/)/, '')
+  if (VIEWER_ALLOW_GET.includes(p.replace(/\/$/, ''))) return true
   return !VIEWER_DENY_GET.some(d => p.startsWith(d))
 }
 

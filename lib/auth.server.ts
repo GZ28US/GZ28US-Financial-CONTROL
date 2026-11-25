@@ -4,19 +4,28 @@
 // inteiro e disparava sync cobrado no Plaid (achado da revisão de 21/ago).
 import { createClient } from '@supabase/supabase-js'
 import type { NextRequest } from 'next/server'
-import { viewerGate } from './viewer.server'
+import { viewerGate, viewerRole, viewerMayCall } from './viewer.server'
 
 export async function requireUser(req: NextRequest): Promise<boolean> {
+  return (await requireUserRole(req)) !== null
+}
+
+// Same door as requireUser, but says WHO came in — for the routes that serve a viewer the stored data only (Bank Link, 25/11/2026):
+// 'viewer' = read-only account allowed on this route; the route must then make no outside call and write nothing.
+export async function requireUserRole(req: NextRequest): Promise<'staff' | 'viewer' | null> {
   const auth = req.headers.get('authorization') || ''
   const token = auth.startsWith('Bearer ') ? auth.slice(7) : ''
-  if (!token) return false
+  if (!token) return null
   try {
     const anon = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!, { auth: { persistSession: false } })
     const { data, error } = await anon.auth.getUser(token)
-    if (error || !data.user) return false
+    if (error || !data.user) return null
     // VIEWER (10/11/2026): read-only account — no non-GET, no paid/outside-service GET, nothing when blocked
-    return await viewerGate(String(data.user.email || ''), req.method, req.nextUrl?.pathname || '')
-  } catch { return false }
+    const role = await viewerRole(String(data.user.email || ''))
+    if (!role) return 'staff'
+    if (role === 'blocked') return null
+    return viewerMayCall(req.method, req.nextUrl?.pathname || '') ? 'viewer' : null
+  } catch { return null }
 }
 
 // STAFF (06/11/2026, quote portal — security R2-05): a HUMAN logged into /ca. Same JWT check as requireUser, plus the user's
