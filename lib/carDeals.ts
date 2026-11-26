@@ -102,6 +102,7 @@ export const dealDate = (d: string | null | undefined) => {
 }
 
 // AS 4 POSIÇÕES de um deal — cada direção tem UMA fonte, nada é gravado em dobro (lei «uma info, um campo», 21/11/2026):
+//   («invoice de compra» abaixo = a do deal + as de cobrança do mesmo carro e cliente, kind CAR_PURCHASE — withPurchaseInvoices)
 //   Client → GZ28US         rendas ABERTAS da invoice de compra que nenhum movimento do cliente cobre (data = payment_date)
 //   Tripa Trading → GZ28US  rendas abertas já cobertas por movimento CONFIRMED Sidney→Tripa Trading (o dinheiro está com eles)
 //                           + rendas abertas de invoice do MESMO carro cujo cliente é o exportador (frete a reembolsar…)
@@ -126,7 +127,34 @@ export async function loadExporterIncomes(db: any, deals: any[]): Promise<any[]>
   const { data: incs } = await db.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', [...rideOf.keys()]).is('paid_at', null)
   return (incs || []).map((i: any) => ({ ...i, ride_id: rideOf.get(i.invoice_id) }))
 }
-export const POSITION_INCOME_COLS = 'id, invoice_id, amount, payment_date, paid_at, description'
+// AS INVOICES DE COMPRA DE UM DEAL (25/11/2026, CC Sidney por ordem do Márcio: «uma invoice de cobrança por carro»).
+// O saldo em aberto da compra pode sair da invoice de compra para uma invoice de COBRANÇA do mesmo carro (RedHot:
+// US.042.2 → US.042.3, as duas kind CAR_PURCHASE). O deal continua apontando para UMA (purchase_invoice_id, a fonte do
+// carro e do cliente); para as posições ele lê também as irmãs: kind CAR_PURCHASE, MESMO ride, MESMO cliente, não-quote,
+// e que não sejam a invoice de compra de OUTRO deal (carro revendido tem dois deals no mesmo ride). Sem campo novo.
+// Devolve os deals com `purchase_invoice_ids` (a principal primeiro); deal sem invoice de compra fica com [].
+export async function withPurchaseInvoices(db: any, deals: any[]): Promise<any[]> {
+  const main = deals.filter(d => d?.purchase_invoice_id && d.ride_id)
+  const rideIds = [...new Set(main.map(d => d.ride_id))]
+  let sibs: any[] = [], claimed = new Set<string>()
+  if (rideIds.length) {
+    const { data } = await db.from('invoices').select('id, ride_id, client_id').in('ride_id', rideIds).eq('kind', 'CAR_PURCHASE').eq('is_quote', false)
+    sibs = data || []
+    if (sibs.length) {
+      const { data: cl } = await db.from('car_deals').select('purchase_invoice_id').in('purchase_invoice_id', sibs.map((s: any) => s.id))
+      claimed = new Set((cl || []).map((x: any) => x.purchase_invoice_id))
+    }
+  }
+  return deals.map(d => {
+    if (!d) return d
+    if (!d.purchase_invoice_id) return { ...d, purchase_invoice_ids: [] }
+    const extra = sibs.filter(s => s.ride_id === d.ride_id && s.id !== d.purchase_invoice_id && !claimed.has(s.id) && (s.client_id || null) === (d.invoices?.client_id || null)).map(s => s.id)
+    return { ...d, purchase_invoice_ids: [d.purchase_invoice_id, ...extra] }
+  })
+}
+export const dealInvoiceIds = (deal: any): string[] => deal?.purchase_invoice_ids?.length ? deal.purchase_invoice_ids : deal?.purchase_invoice_id ? [deal.purchase_invoice_id] : []
+
+export const POSITION_INCOME_COLS ='id, invoice_id, amount, payment_date, paid_at, description'
 export const POSITION_EXPENSE_COLS = 'id, invoice_id, supplier, price, quantity, tax, extra, payment_date, cancel_status'
 const isTripa = (supplier: unknown) => /tripa/i.test(String(supplier || ''))
 const expenseValue = (e: any) => (Number(e.price) || 0) * (Number(e.quantity) || 1) + (Number(e.tax) || 0) + (Number(e.extra) || 0)
@@ -137,8 +165,9 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const own = !!deal.client_is_exporter
   const fromClient = (a: any) => { const m = movById.get(a.movement_id); return !!m && m.status === 'CONFIRMED' && (m.from_party === 'CLIENT' || (own && m.from_party === 'TRIPA_TRADING')) }
   const sum = (xs: any[], f: (x: any) => number) => xs.reduce((t, x) => t + f(x), 0)
-  const inv = deal.purchase_invoice_id
-  const incs = inv ? ctx.incomes.filter(i => i.invoice_id === inv) : []
+  // a invoice de compra + as de cobrança do mesmo carro (withPurchaseInvoices)
+  const invs = new Set(dealInvoiceIds(deal))
+  const incs = ctx.incomes.filter(i => invs.has(i.invoice_id))
   // quanto de cada renda aberta já foi pago pelo cliente (a nós, ou a terceiro por conta dele)
   let sgOpen = 0, tgOpen = 0, sgNext: string | null = null
   for (const i of incs) {
@@ -152,7 +181,7 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
     if (rest > 0.004) { sgOpen += rest; if (i.payment_date && (!sgNext || i.payment_date < sgNext)) sgNext = i.payment_date }
   }
   const sgOwed = sum(incs, i => Number(i.amount) || 0)
-  const exps = inv ? ctx.expenses.filter(e => e.invoice_id === inv && isTripa(e.supplier) && !e.cancel_status) : []
+  const exps = ctx.expenses.filter(e => invs.has(e.invoice_id) && isTripa(e.supplier) && !e.cancel_status)
   const gtOwed = sum(exps, expenseValue), gtOpen = sum(exps.filter(e => !e.payment_date), expenseValue)
   // SIDNEY → TRIPA TRADING — segue o DINHEIRO, não a planilha (CC Sidney, 21/11, depois de ler os grupos e o extrato):
   //   (a) a Tripa é só o canal/exportador (a invoice de compra NÃO tem despesa para a Tripa): o carro é comprado pelo
@@ -171,7 +200,7 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
   // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
   // (quando o cliente do deal é a própria Tripa, as rendas da invoice de compra já estão em Client → GZ28US)
-  tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id && !(own && i.invoice_id === inv)), i => Number(i.amount) || 0)
+  tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id && !(own && invs.has(i.invoice_id))), i => Number(i.amount) || 0)
   // exportadora: o piso é POR TERMO — quando a Tripa ainda SEGURA dinheiro dele (repassou menos do que recebeu), esse
   // saldo já aparece em Tripa Trading → GZ28US e não pode abater as taxas (Compra 25: taxas 14.000 continuam 14.000).
   const stOpen = own ? 0 : seller ? Math.max(0, stOwed - stPaid - gtOpen) : (stOwed - advanced) + Math.max(0, advanced - stPaid)

@@ -5,7 +5,7 @@ import Link from 'next/link'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
-import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, DEAL_SELECT, flatDeal, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, MILESTONES, MILESTONE_LABEL, PARTY_LABEL, dealPositions, movementUnallocated, withPurchaseInvoices, dealInvoiceIds } from '@/lib/carDeals'
 
 // CAR DEALS (21/11/2026): a compra dos carros, fora das invoices de oficina. Uma linha por compra, com as 4 posições
 // (quem ainda deve a quem) e o total no rodapé. Invoice de compra ainda sem deal aparece embaixo, com o botão de criar.
@@ -39,18 +39,19 @@ export default function CarDealsPage() {
       supabase.from('deal_milestones').select('*'),
       supabase.from('clients').select('id, name'),
     ])
-    setDeals((d.data || []).map(flatDeal)); setPurchases(p.data || []); setObligations(o.data || []); setMovements(m.data || [])
+    const flat = await withPurchaseInvoices(supabase, (d.data || []).map(flatDeal))
+    setDeals(flat); setPurchases(p.data || []); setObligations(o.data || []); setMovements(m.data || [])
     setAllocations(a.data || []); setMilestones(ms.data || [])
     setClients(Object.fromEntries((c.data || []).map((x: any) => [x.id, x.name || ''])))
     // as 4 posições leem os custos dos deals e as rendas/despesas das invoices de compra
-    const invIds = (d.data || []).map((x: any) => x.purchase_invoice_id).filter(Boolean)
+    const invIds = flat.flatMap(dealInvoiceIds)
     const [ch, inc, exp] = await Promise.all([
       supabase.from('deal_charges').select('*'),
       invIds.length ? supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
       invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
     ])
     setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
-    setExporterIncomes(await loadExporterIncomes(supabase, (d.data || []).map(flatDeal)))
+    setExporterIncomes(await loadExporterIncomes(supabase, flat))
     setLoading(false)
   }
 
@@ -64,7 +65,8 @@ export default function CarDealsPage() {
     window.location.href = `${BASE_PATH}/car-deals/${data.id}`
   }
 
-  const withDeal = new Set(deals.map(d => d.purchase_invoice_id).filter(Boolean))
+  // a invoice de cobrança do mesmo carro já pertence ao deal dele — não é compra sem deal
+  const withDeal = new Set(deals.flatMap(dealInvoiceIds))
   const orphanPurchases = purchases.filter(p => !withDeal.has(p.id))
   const exporters = [...new Set(deals.map(d => d.exporter).filter(Boolean))] as string[]
   const clientIds = [...new Set(deals.map(d => d.client_id).filter(Boolean))] as string[]

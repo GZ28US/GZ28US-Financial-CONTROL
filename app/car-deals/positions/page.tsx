@@ -7,7 +7,7 @@ import autoTable from 'jspdf-autotable'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { formatUSD } from '@/lib/utils'
-import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue } from '@/lib/carDeals'
+import { DEAL_SELECT, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DIRECTIONS, PARTY_LABEL, carDescription, carInternal, dealLabel, dealPositions, flatDeal, obligationDue, withPurchaseInvoices, dealInvoiceIds } from '@/lib/carDeals'
 
 // POSITIONS (CAR DEALS etapa 3, 21/11/2026) — o relatório pedido pelo Márcio: por carro e no total, quanto o Sidney manda
 // à Tripa Trading, quanto o Sidney manda ao GZ28, quanto a Tripa Trading manda ao GZ28 e quanto o GZ28 manda à Tripa
@@ -44,15 +44,16 @@ export default function CarDealPositionsPage() {
         supabase.from('deal_allocations').select('*'),
       ])
       setMilestones(ms.data || [])
-      const invIds = (d.data || []).map((x: any) => x.purchase_invoice_id).filter(Boolean)
+      const flat = await withPurchaseInvoices(supabase, (d.data || []).map(flatDeal))
+      const invIds = flat.flatMap(dealInvoiceIds)
       const [ch, inc, exp] = await Promise.all([
         supabase.from('deal_charges').select('*'),
         invIds.length ? supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
         invIds.length ? supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', invIds) : Promise.resolve({ data: [] as any[] }),
       ])
       setCharges(ch.data || []); setIncomes(inc.data || []); setExpenses(exp.data || [])
-    setExporterIncomes(await loadExporterIncomes(supabase, (d.data || []).map(flatDeal)))
-      setDeals((d.data || []).map(flatDeal).sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
+      setExporterIncomes(await loadExporterIncomes(supabase, flat))
+      setDeals(flat.sort((a: any, b: any) => String(a.rides?.vin || '~').localeCompare(String(b.rides?.vin || '~')))); setObligations(o.data || []); setMovements(m.data || []); setAllocations(a.data || [])
       setLoading(false)
     })()
   }, [])
@@ -72,7 +73,7 @@ export default function CarDealPositionsPage() {
     .filter(o => !o.cancelled && dealById.has(o.deal_id) && dirs.some(d => d.from === o.from_party && d.to === o.to_party))
     .map(o => ({ ...o, _due: obligationDue(o, milestones) }))
     .concat(dirs.some(d => d.key === 'CLIENT>GZ28US') ? incomes.filter(i => !i.paid_at && !coveredByClient(i)).map(i => {
-      const deal = deals.find(x => x.purchase_invoice_id === i.invoice_id)
+      const deal = deals.find(x => dealInvoiceIds(x).includes(i.invoice_id))
       const date = i.payment_date || null, due = !!date && date <= new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
       return deal ? { id: `inc:${i.id}`, deal_id: deal.id, from_party: 'CLIENT', to_party: 'GZ28US', label: view === 'GZ28' ? (i.description || 'Payment on the purchase invoice') : 'Payment on the purchase invoice', amount_usd: i.amount,
         _due: { date, due, label: date ? `${due ? 'DUE ' : ''}${date.slice(8, 10)}/${date.slice(5, 7)}/${date.slice(0, 4)}` : 'no date' } } : null
@@ -157,7 +158,7 @@ export default function CarDealPositionsPage() {
               </tfoot>
             </table>
           </div>
-          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Client → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them); Client → GZ28US = open payments on the purchase invoice; Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them.</p>
+          <p className="text-sm text-gray-500 mt-2">Each direction has one source: Client → Tripa Trading = their fees plus what they passed on to us, minus what he sent them (when they are the seller: all cost lines minus what he sent them); Client → GZ28US = open payments on the purchase invoice and on the car&apos;s collection invoices (same car, same client, kind car purchase); Tripa Trading → GZ28US = open payments he already paid to them; GZ28US → Tripa Trading = our unpaid expenses to them.</p>
 
           <h2 className="text-2xl font-bold mt-8 mb-3">PAYMENT SCHEDULE ({schedule.length})</h2>
           <div className="bg-gray-900 border border-gray-800 rounded-3xl overflow-x-auto">

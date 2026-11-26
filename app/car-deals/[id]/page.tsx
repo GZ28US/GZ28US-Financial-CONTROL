@@ -7,7 +7,7 @@ import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
 import { BASE_PATH, formatUSD } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated } from '@/lib/carDeals'
+import { carDescription, carInternal, dealLabel, vinTail, DEAL_SELECT, flatDeal, obligationDue, POSITION_EXPENSE_COLS, POSITION_INCOME_COLS, loadExporterIncomes, DOC_KINDS, DOC_LABEL, MILESTONES, MILESTONE_LABEL, MOVEMENT_KINDS, PARTIES, PARTY_LABEL, dealDate, dealPositions, movementUnallocated, withPurchaseInvoices, dealInvoiceIds } from '@/lib/carDeals'
 
 // CAR DEAL (21/11/2026) — uma compra de carro. Abas: SUMMARY (posições, custos, obrigações) · MOVEMENTS (o livro:
 // proposta → alocar → confirmar) · MILESTONES (marcar o marco torna DUE a obrigação condicionada a ele).
@@ -71,7 +71,7 @@ export default function CarDealPage() {
 
   async function load() {
     const { data: d0 } = await supabase.from('car_deals').select(DEAL_SELECT).eq('id', dealId).single()
-    const d = flatDeal(d0)
+    const d = d0 ? (await withPurchaseInvoices(supabase, [flatDeal(d0)]))[0] : flatDeal(d0)
     const [ad, ch, ob, al, ms] = await Promise.all([
       supabase.from('car_deals').select(DEAL_SELECT).order('deal_no'),
       supabase.from('deal_charges').select('*').eq('deal_id', dealId).order('position'),
@@ -96,8 +96,8 @@ export default function CarDealPage() {
     setExporterIncomes(d ? await loadExporterIncomes(supabase, [d]) : [])
     if (d?.purchase_invoice_id) {
       const [inc, exp] = await Promise.all([
-        supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).eq('invoice_id', d.purchase_invoice_id),
-        supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).eq('invoice_id', d.purchase_invoice_id),
+        supabase.from('invoice_incomes').select(POSITION_INCOME_COLS).in('invoice_id', dealInvoiceIds(d)),
+        supabase.from('invoice_expenses').select(POSITION_EXPENSE_COLS).in('invoice_id', dealInvoiceIds(d)),
       ])
       setIncomes(inc.data || []); setExpenses(exp.data || [])
     }
