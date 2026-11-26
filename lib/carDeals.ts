@@ -200,6 +200,8 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const dated = dues.filter(x => x.date).sort((x, y) => String(x.date).localeCompare(String(y.date)))
   // frete e afins: o exportador é o CLIENTE de outra invoice do mesmo carro
   // (quando o cliente do deal é a própria Tripa, as rendas da invoice de compra já estão em Client → GZ28US)
+  // o «paid» do cliente desconta só o dinheiro DELE parado na Tripa — o frete que a Tripa nos deve não é pagamento dele a menos
+  const tgFromClient = tgOpen
   tgOpen += sum((ctx.exporterIncomes || []).filter(i => deal.ride_id && i.ride_id === deal.ride_id && !(own && invs.has(i.invoice_id))), i => Number(i.amount) || 0)
   // exportadora: o piso é POR TERMO — quando a Tripa ainda SEGURA dinheiro dele (repassou menos do que recebeu), esse
   // saldo já aparece em Tripa Trading → GZ28US e não pode abater as taxas (Compra 25: taxas 14.000 continuam 14.000).
@@ -208,7 +210,7 @@ export function dealPositions(deal: any, ctx: PositionCtx): Position[] {
   const hoje = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date())
   const byKey: Record<string, Omit<Position, 'key' | 'label'>> = {
     'CLIENT>TRIPA_TRADING': { owed: cents(stOwed), paid: cents(stPaid), open: cents(stOpen), next: stNext },
-    'CLIENT>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgOpen), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
+    'CLIENT>GZ28US': { owed: cents(sgOwed), paid: cents(sgOwed - sgOpen - tgFromClient), open: cents(sgOpen), next: sgNext ? `${sgNext <= hoje ? 'DUE ' : ''}${dealDate(sgNext)}` : null },
     'TRIPA_TRADING>GZ28US': { owed: cents(tgOpen), paid: 0, open: cents(tgOpen), next: null },
     'GZ28US>TRIPA_TRADING': { owed: cents(gtOwed), paid: cents(gtOwed - gtOpen), open: cents(gtOpen), next: null },
   }
