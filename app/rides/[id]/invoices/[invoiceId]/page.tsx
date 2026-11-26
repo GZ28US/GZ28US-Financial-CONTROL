@@ -12,7 +12,7 @@ import { docMoneyFor, primeApproved } from '@/lib/money'
 import { isPackageInvoice } from '@/lib/packageRule'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
-import { serviceHours, fmtServiceHours } from '@/lib/serviceHours'
+import { servicesHours, fmtServiceHours } from '@/lib/serviceHours'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, CancelChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 import { foraDoDinheiro, cancelOf } from '@/lib/estorno'
@@ -57,7 +57,7 @@ type Client = {
 // campo que a tela não usa.
 // cancel_status (14/set/2026, MIGRATION_invoice_items_cancel_status.sql): o item estornado fica na lista, riscado, e sai dos totais.
 type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null; cancel_status?: string | null }
-type Service = { id: string; description: string; price: number; duty_id?: string | null }
+type Service = { id: string; description: string; price: number }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
 // order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha.
@@ -144,7 +144,7 @@ export default function ViewInvoicePage() {
 
   const [fixedMember, setFixedMember] = useState<FixedMember | null>(null)
   const [dutySecs, setDutySecs] = useState(0)
-  const [dutySecsById, setDutySecsById] = useState<Map<string, number>>(new Map())   // horas do serviço = 2× a duty (lib/serviceHours)
+  const [dutyRows, setDutyRows] = useState<{ service_id: string | null; estimated_seconds: number | null }[]>([])   // horas do serviço = 2× as duties (lib/serviceHours)
   useEffect(() => { loadAll(); loadLabor() }, [])
 
   // MÃO DE OBRA DA CASA no FINAL MARKUP — as horas PREVISTAS das duties desta
@@ -153,9 +153,9 @@ export default function ViewInvoicePage() {
   // visualização não lista duties, então só o somatório do previsto é buscado.
   async function loadLabor() {
     setFixedMember(await loadFixedMember())
-    const { data } = await supabase.from('invoice_duties').select('id, estimated_seconds').eq('invoice_id', invoiceId)
+    const { data } = await supabase.from('invoice_duties').select('id, estimated_seconds, service_id').eq('invoice_id', invoiceId)
     setDutySecs((data || []).reduce((t: number, d: any) => t + (Number(d.estimated_seconds) || 0), 0))
-    setDutySecsById(new Map((data || []).map((d: any) => [String(d.id), Number(d.estimated_seconds) || 0])))
+    setDutyRows((data || []) as any)
   }
 
   // Load part numbers from the parts DB (only used when SHOW PART NUMBERS is on).
@@ -595,7 +595,8 @@ export default function ViewInvoicePage() {
   // client.country; a tela do app segue em inglês. Desde 13/set/2026 vale pra todo
   // cliente de língua portuguesa (ANGOLA também) — só o rótulo "UF" é do Brasil.
   const ptPrint = clientSpeaksPortuguese(client?.country)
-  const svcHasHours = services.some(sv => serviceHours(sv.duty_id, dutySecsById) != null)
+  const svcHours = servicesHours(services, dutyRows)
+  const svcHasHours = services.some(sv => svcHours.has(sv.id))
   const T = ptPrint ? {
     quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
     clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: client?.country === 'ANGOLA' ? 'Cidade/Província' : 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
@@ -798,7 +799,7 @@ export default function ViewInvoicePage() {
                   {services.map(sv => (
                     <tr key={sv.id}>
                       <td>{sv.description}</td>
-                      {svcHasHours && <td className="r">{fmtServiceHours(serviceHours(sv.duty_id, dutySecsById), ptPrint ? 'pt' : 'en')}</td>}
+                      {svcHasHours && <td className="r">{fmtServiceHours(svcHours.get(sv.id), ptPrint ? 'pt' : 'en')}</td>}
                       <td className="r">{sv.price === 0 ? ZERO : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
@@ -1109,7 +1110,7 @@ export default function ViewInvoicePage() {
                 {services.map((svc, index) => (
                   <div key={svc.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <p className="text-base font-bold flex-1 truncate" title={svc.description}>{svc.description}</p>
-                    {serviceHours(svc.duty_id, dutySecsById) != null && <p className="text-gray-400 font-bold shrink-0">{fmtServiceHours(serviceHours(svc.duty_id, dutySecsById))}</p>}
+                    {svcHours.has(svc.id) && <p className="text-gray-400 font-bold shrink-0" title="2× the real hours of its duties — display only">{fmtServiceHours(svcHours.get(svc.id))}</p>}
                     <p className="text-gray-400 font-bold">{svc.price === 0 ? ZERO : formatUSD(svc.price)}</p>
                   </div>
                 ))}

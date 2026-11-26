@@ -12,7 +12,7 @@
 // markup or other invoices.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
-import { serviceHours } from './serviceHours'
+import { servicesHours } from './serviceHours'
 import { invoiceMoneyFor, type InvoiceMoney } from './flTax'
 import { foraDoDinheiro } from './estorno'
 
@@ -42,7 +42,7 @@ export async function loadInvoiceMoney(db: SupabaseClient, invoiceId: string): P
     db.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
     db.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
     db.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
-    db.from('invoice_duties').select('id, estimated_seconds').eq('invoice_id', invoiceId),
+    db.from('invoice_duties').select('id, estimated_seconds, service_id').eq('invoice_id', invoiceId),
   ])
   for (const [n, r] of [['ride', rideR], ['items', itemsR], ['services', servicesR], ['notes', notesR], ['incomes', incomesR], ['duties', dutiesR]] as const) {
     if (r.error) throw new Error(`invoice ${invoiceId} ${n}: ${r.error.message}`)
@@ -54,9 +54,10 @@ export async function loadInvoiceMoney(db: SupabaseClient, invoiceId: string): P
   const client = (clientR.data as Record<string, any> | null) || null
 
   const items = (itemsR.data || []) as Record<string, any>[]
-  // hours = 2× the linked duty's estimate — DISPLAY ONLY for the client (lib/serviceHours, 26/11/2026); never in the money
-  const dutySecs = Object.fromEntries((dutiesR.data || []).map((d: any) => [String(d.id), num(d.estimated_seconds)]))
-  const services: Record<string, any>[] = ((servicesR.data || []) as Record<string, any>[]).map(s => ({ ...s, hours: serviceHours(s.duty_id, dutySecs) }))
+  // hours = 2× the real hours of the service's duties — DISPLAY ONLY for the client (lib/serviceHours, 26/11/2026); never in the money
+  const rawSvcs = (servicesR.data || []) as Record<string, any>[]
+  const svcHours = servicesHours(rawSvcs as any, (dutiesR.data || []) as any)
+  const services: Record<string, any>[] = rawSvcs.map(s => ({ ...s, hours: svcHours.get(String(s.id)) ?? null }))
   const itemLine = (p: Record<string, any>) => num(p.unit_price) * num(p.quantity)
   const out = foraDoDinheiro(items, itemLine, () => invoiceId)
   const live = items.filter(p => !out.has(p))
