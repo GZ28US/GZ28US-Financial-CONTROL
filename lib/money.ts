@@ -4,12 +4,13 @@
 // `fl_tax`, `fl_tax_status` are the truth for every money consumer (lists, view, HOME/FUTURE, statements), so a later edit of the
 // car's title scope, the client's state or the discount never silently changes what the client signed. The live numbers keep
 // showing the drift ("signed total ≠ live total" on /doc and the Data Checker card) until a CHANGE ORDER (M4) freezes a new one.
+// EXCEPTION (25/11/2026): the signed total is a CEILING — when the live total is LOWER than the signed one, the live one rules.
 // Isomorphic (no server-only imports). Readers call `primeApproved(db)` once per load, then `docMoneyFor(...)` like invoiceMoneyFor.
 import type { SupabaseClient } from '@supabase/supabase-js'
 import { invoiceMoneyFor, type InvoiceMoney, type FlTaxStatus } from './flTax'
 
 export type Approved = { invoice_id: string; revision_id: string; seq: number; grand: number; fl_tax: number; fl_tax_status: string; signed_at: string }
-export type DocMoney = InvoiceMoney & { source: 'approved' | 'live'; live?: InvoiceMoney; approvedSeq?: number }
+export type DocMoney = InvoiceMoney & { source: 'approved' | 'live'; live?: InvoiceMoney; approvedSeq?: number; signed?: number }
 
 let approved = new Map<string, Approved>()
 let primedAt = 0
@@ -44,6 +45,12 @@ export function docMoneyFor(inv: Parameters<typeof invoiceMoneyFor>[0] & { id?: 
   client: Parameters<typeof invoiceMoneyFor>[2], partLines: number[], serviceLines: number[], ap: Approved | null = approvedFor(inv?.id)): DocMoney {
   const live = invoiceMoneyFor(inv, scope, client, partLines, serviceLines)
   if (!ap) return { ...live, source: 'live' }
+  // O ASSINADO É TETO, NÃO PISO (25/11/2026, Márcio no caso 068.1: «o retrovisor passou pra outra invoice, o pagamento tem que
+  // ter ido também, e isso não pode mudar nada no "a receber"» · «corrija isso no app»). Quando o que a invoice vale HOJE é
+  // MENOS do que o cliente assinou (item que saiu para outra invoice, linha retirada), vale o de hoje: a casa pode cobrar menos
+  // sem nova assinatura; cobrar MAIS é que exige change order. O total assinado segue em `signed` e a diferença continua
+  // aparecendo em /doc e no Data Checker (signedDrift).
+  if (live.grand < ap.grand - 0.005) return { ...live, source: 'live', live, approvedSeq: ap.seq, signed: ap.grand }
   const status = ap.fl_tax_status as FlTaxStatus
   return { ...live, status, taxable: ap.fl_tax > 0, tax: ap.fl_tax, grand: ap.grand, source: 'approved', live, approvedSeq: ap.seq }
 }

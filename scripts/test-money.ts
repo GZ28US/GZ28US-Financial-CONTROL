@@ -12,6 +12,10 @@ const ap = { invoice_id: 'x', revision_id: 'r', seq: 2, grand: 3500, fl_tax: 0, 
 const d1 = docMoneyFor(inv, 'FL', client, [1000, 500, 999], [2000], ap)
 ok(d1.source === 'approved' && d1.grand === 3500 && d1.tax === 0 && d1.status === 'EXPORT' && d1.taxable === false, 'approval → grand/tax/status from the signed revision')
 ok(!!d1.live && d1.live.grand !== d1.grand && d1.approvedSeq === 2, 'live numbers kept alongside (drift visible)')
+// 25/11/2026: o assinado é teto — quando o vivo é MENOR (item saiu para outra invoice), vale o vivo
+const lower = invoiceMoneyFor(inv, 'FL', client, [1000], [2000])
+const d3 = docMoneyFor(inv, 'FL', client, [1000], [2000], { ...ap, grand: lower.grand + 500 })
+ok(d3.source === 'live' && d3.grand === lower.grand && d3.tax === lower.tax && d3.signed === lower.grand + 500 && d3.approvedSeq === 2, 'live below signed → live rules, signed kept aside')
 const d2 = docMoneyFor({ id: 'nope' }, null, null, [100], [], undefined)
 ok(d2.source === 'live', 'unprimed cache → live law')
 console.log(fail ? `\n${fail} FAIL` : '\nTODOS VERDES'); process.exit(fail ? 1 : 0)
