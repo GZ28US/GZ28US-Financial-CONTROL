@@ -4,6 +4,7 @@
 import { useEffect, useState } from 'react'
 import Header from '@/components/Header'
 import { supabase } from '@/lib/supabase'
+import { oneRowPerInvoice } from '@/lib/flowRows'
 import { pageAll } from '@/lib/pageAll'
 import { isClientInvoice, invoiceGrand, receivableOf } from '@/lib/receivables'
 import { docMoneyFor, primeApproved } from '@/lib/money'
@@ -454,7 +455,9 @@ export default function HomePage() {
     const today = todayYmd()
     const allDatedIncome = income.filter(r => r.dated && !r.milestone && r.date)
     allDatedIncome.forEach(r => { if ((r.date as string) <= today) r.delayed = true })
-    const datedIncome = allDatedIncome.filter(r => !r.delayed)
+    // uma linha por invoice em cada listagem (lib/flowRows) — so agrupa, nenhum total muda
+    income.splice(0, income.length, ...oneRowPerInvoice(income))
+    const datedIncome = income.filter(r => r.dated && !r.milestone && r.date && !r.delayed)
     // Mirror the income side: a dated bill whose date is today or past, still unpaid, is
     // DELAYED — it stays in the DUE by GZ28 box (under its own DELAYED group, before
     // UNDATED) and keeps counting. Only UPCOMING (future) dated bills go to the flow below.
