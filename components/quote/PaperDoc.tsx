@@ -14,12 +14,12 @@ import { fmtDay } from '@/lib/orlando'
 const W = { en: { quoteNo: 'Quote #', invoiceNo: 'Invoice #', clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', itemsTotal: 'Items Total',
-    services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', grand: 'Grand Total', notesT: 'Notes',
+    services: 'Services', servicesTotal: 'Services Total', hours: 'Hours', itemsServices: 'Items + Services', grand: 'Grand Total', notesT: 'Notes',
     plan: 'Payment Plan', due: 'Due', amount: 'Amount', exempt: 'Florida sales tax exempt', rev: 'Rev', valid: 'Valid until', paid: 'PAID', net: (n: number) => `Net ${n} days` },
   pt: { quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', itemsTotal: 'Total dos Itens',
-    services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', grand: 'Total Geral', notesT: 'Observações',
+    services: 'Serviços', servicesTotal: 'Total dos Serviços', hours: 'Horas', itemsServices: 'Itens + Serviços', grand: 'Total Geral', notesT: 'Observações',
     plan: 'Plano de Pagamento', due: 'Vencimento', amount: 'Valor', exempt: 'Isento de imposto sobre vendas da Flórida', rev: 'Rev', valid: 'Válido até', paid: 'PAGO', net: (n: number) => `${n} dias` } }
 
 export const PAPER_CSS = `
@@ -107,6 +107,8 @@ export default function PaperDoc({ doc, plan, lang, isInvoice }: { doc: any; pla
       <td className="r">{l.display === 'price' ? money(l.unit_price, lang) : zero(l)}</td><td className="r">{l.quantity || 1}</td><td className="r">{shown(l)}</td></tr>)
   }
   const itemsTotal = Number(tot.parts ?? sum(items)), servicesTotal = Number(tot.services ?? sum(services))
+  // HOURS = 2× the linked duty — display only (lib/serviceHours, 26/11/2026); column only when a line has hours
+  const svcH = services.some((l: any) => l.hours != null), hrsOf = (h: any, lang: string) => h == null ? '' : `${lang === 'pt' ? String(h).replace('.', ',') : String(h)} h`
   const dueOf = (p: any) => p.due_date ? fmtDay(p.due_date, lang) : p.due_rule === 'NET_DAYS' && p.net_days != null ? T.net(Number(p.net_days)) : ['ON_APPROVAL', 'ON_ARRIVAL', 'ON_CONCLUSION'].includes(p.due_rule) ? t(lang, 'due.' + p.due_rule) : '—'
 
   return (
@@ -151,10 +153,10 @@ export default function PaperDoc({ doc, plan, lang, isInvoice }: { doc: any; pla
           {services.length > 0 && <div className="pi-sec">
             <div className="pi-sec-title">{T.services}</div>
             <table className="pi-table">
-              <thead><tr><th style={{ width: '80%' }}>{T.desc}</th><th className="r" style={{ width: '20%' }}>{T.total}</th></tr></thead>
+              <thead><tr><th style={{ width: svcH ? '68%' : '80%' }}>{T.desc}</th>{svcH && <th className="r" style={{ width: '12%' }}>{T.hours}</th>}<th className="r" style={{ width: '20%' }}>{T.total}</th></tr></thead>
               <tbody>
-                {services.map(l => <tr key={l.id}><td>{l.description}</td><td className="r">{shown(l)}</td></tr>)}
-                <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{groupTotal(services, servicesTotal)}</td></tr>
+                {services.map(l => <tr key={l.id}><td>{l.description}</td>{svcH && <td className="r">{hrsOf(l.hours, lang)}</td>}<td className="r">{shown(l)}</td></tr>)}
+                <tr className="pi-stotal"><td className="r" colSpan={svcH ? 2 : 1}>{T.servicesTotal}</td><td className="r">{groupTotal(services, servicesTotal)}</td></tr>
               </tbody>
             </table>
           </div>}

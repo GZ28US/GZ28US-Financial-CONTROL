@@ -12,6 +12,7 @@ import { docMoneyFor, primeApproved } from '@/lib/money'
 import { isPackageInvoice } from '@/lib/packageRule'
 import { formatUSD, BASE_PATH, orderIncomes, formatPhone, toWaNumber, clientSpeaksPortuguese, realEdition } from '@/lib/utils'
 import { sessionHeaders } from '@/lib/sessionHeaders'
+import { serviceHours, fmtServiceHours } from '@/lib/serviceHours'
 import { loadFixedMember, staffCostOf, type FixedMember } from '@/lib/laborCost'
 import { OrderChip, DeliverChip, CancelChip, hasDeliverChip, type DeliverChipRow } from '@/components/DeliverChip'
 import { foraDoDinheiro, cancelOf } from '@/lib/estorno'
@@ -56,7 +57,7 @@ type Client = {
 // campo que a tela não usa.
 // cancel_status (14/set/2026, MIGRATION_invoice_items_cancel_status.sql): o item estornado fica na lista, riscado, e sai dos totais.
 type Part = { id: string; description: string; unit_price: number; quantity: number; payment_date: string | null; kit_group?: string | null; kit_name?: string | null; source_item?: string | null; mirror_expense_id?: string | null; cancel_status?: string | null }
-type Service = { id: string; description: string; price: number }
+type Service = { id: string; description: string; price: number; duty_id?: string | null }
 type Payment = { id: string; amount: number; amount_brl: number | null; payment_date: string | null; source: string | null; paid_to: string | null; description: string | null; paid_at: string | null; date_label: string | null }
 type Note = { id: string; note: string }
 // order_number: ORDER NUMBER é SAGRADO (29/ago/2026) — o pedido mora na linha.
@@ -143,6 +144,7 @@ export default function ViewInvoicePage() {
 
   const [fixedMember, setFixedMember] = useState<FixedMember | null>(null)
   const [dutySecs, setDutySecs] = useState(0)
+  const [dutySecsById, setDutySecsById] = useState<Map<string, number>>(new Map())   // horas do serviço = 2× a duty (lib/serviceHours)
   useEffect(() => { loadAll(); loadLabor() }, [])
 
   // MÃO DE OBRA DA CASA no FINAL MARKUP — as horas PREVISTAS das duties desta
@@ -151,8 +153,9 @@ export default function ViewInvoicePage() {
   // visualização não lista duties, então só o somatório do previsto é buscado.
   async function loadLabor() {
     setFixedMember(await loadFixedMember())
-    const { data } = await supabase.from('invoice_duties').select('estimated_seconds').eq('invoice_id', invoiceId)
+    const { data } = await supabase.from('invoice_duties').select('id, estimated_seconds').eq('invoice_id', invoiceId)
     setDutySecs((data || []).reduce((t: number, d: any) => t + (Number(d.estimated_seconds) || 0), 0))
+    setDutySecsById(new Map((data || []).map((d: any) => [String(d.id), Number(d.estimated_seconds) || 0])))
   }
 
   // Load part numbers from the parts DB (only used when SHOW PART NUMBERS is on).
@@ -592,12 +595,13 @@ export default function ViewInvoicePage() {
   // client.country; a tela do app segue em inglês. Desde 13/set/2026 vale pra todo
   // cliente de língua portuguesa (ANGOLA também) — só o rótulo "UF" é do Brasil.
   const ptPrint = clientSpeaksPortuguese(client?.country)
+  const svcHasHours = services.some(sv => serviceHours(sv.duty_id, dutySecsById) != null)
   const T = ptPrint ? {
     quoteNo: 'Orçamento #', invoiceNo: 'Fatura #', hiring: 'Contratação', entry: 'Entrada', deliveryHdr: 'Entrega',
     clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: client?.country === 'ANGOLA' ? 'Cidade/Província' : 'Cidade/UF', phone: 'Telefone', email: 'E-Mail', noClient: 'Sem cliente vinculado',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Imposto sobre vendas da Flórida', flExempt: 'Isento de imposto sobre vendas da Flórida', itemsTotal: 'Total dos Itens',
-    services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
+    services: 'Serviços', servicesTotal: 'Total dos Serviços', hours: 'Horas', itemsServices: 'Itens + Serviços', discount: 'Desconto', grand: 'Total Geral',
     payments: 'Pagamentos', date: 'Data', source: 'Origem', amount: 'Valor', totalPaidL: 'Total Pago', balance: 'Saldo',
     notesT: 'Observações', deliverySig: 'Data de Entrega', clientSig: 'Cliente — Nome Legível', courtesy: 'CORTESIA', included: 'INCLUÍDO',
     REFUNDED: 'ESTORNADO', CANCELLED: 'CANCELADO',
@@ -606,7 +610,7 @@ export default function ViewInvoicePage() {
     clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail', noClient: 'No client linked',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', flTax: 'Florida Sales Tax', flExempt: 'Florida sales tax exempt', itemsTotal: 'Items Total',
-    services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
+    services: 'Services', servicesTotal: 'Services Total', hours: 'Hours', itemsServices: 'Items + Services', discount: 'Discount', grand: 'Grand Total',
     payments: 'Payments', date: 'Date', source: 'Source', amount: 'Amount', totalPaidL: 'Total Paid', balance: 'Balance',
     notesT: 'Notes', deliverySig: 'Delivery Date', clientSig: 'Client — Printed Name', courtesy: 'COURTESY', included: 'INCLUDED',
     REFUNDED: 'REFUNDED', CANCELLED: 'CANCELLED',
@@ -786,17 +790,19 @@ export default function ViewInvoicePage() {
               <div className="pi-sec-title">{T.services}</div>
               <table className="pi-table">
                 <thead><tr>
-                  <th style={{width:'80%'}}>{T.desc}</th>
+                  <th style={{width: svcHasHours ? '68%' : '80%'}}>{T.desc}</th>
+                  {svcHasHours && <th className="r" style={{width:'12%'}}>{T.hours}</th>}
                   <th className="r" style={{width:'20%'}}>{T.total}</th>
                 </tr></thead>
                 <tbody>
                   {services.map(sv => (
                     <tr key={sv.id}>
                       <td>{sv.description}</td>
+                      {svcHasHours && <td className="r">{fmtServiceHours(serviceHours(sv.duty_id, dutySecsById), ptPrint ? 'pt' : 'en')}</td>}
                       <td className="r">{sv.price === 0 ? ZERO : formatUSD(sv.price)}</td>
                     </tr>
                   ))}
-                  <tr className="pi-stotal"><td className="r">{T.servicesTotal}</td><td className="r">{/* pacote fechado: o preço está no item, todo serviço INCLUÍDO → nunca «$0.00» (09/11/2026) */}{Math.abs(servicesTotal) < 0.005 ? ZERO : formatUSD(servicesTotal)}</td></tr>
+                  <tr className="pi-stotal"><td className="r" colSpan={svcHasHours ? 2 : 1}>{T.servicesTotal}</td><td className="r">{/* pacote fechado: o preço está no item, todo serviço INCLUÍDO → nunca «$0.00» (09/11/2026) */}{Math.abs(servicesTotal) < 0.005 ? ZERO : formatUSD(servicesTotal)}</td></tr>
                 </tbody>
               </table>
             </div>}
@@ -1103,6 +1109,7 @@ export default function ViewInvoicePage() {
                 {services.map((svc, index) => (
                   <div key={svc.id} className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                     <p className="text-base font-bold flex-1 truncate" title={svc.description}>{svc.description}</p>
+                    {serviceHours(svc.duty_id, dutySecsById) != null && <p className="text-gray-400 font-bold shrink-0">{fmtServiceHours(serviceHours(svc.duty_id, dutySecsById))}</p>}
                     <p className="text-gray-400 font-bold">{svc.price === 0 ? ZERO : formatUSD(svc.price)}</p>
                   </div>
                 ))}

@@ -12,6 +12,7 @@
 // markup or other invoices.
 
 import type { SupabaseClient } from '@supabase/supabase-js'
+import { serviceHours } from './serviceHours'
 import { invoiceMoneyFor, type InvoiceMoney } from './flTax'
 import { foraDoDinheiro } from './estorno'
 
@@ -35,14 +36,15 @@ export async function loadInvoiceMoney(db: SupabaseClient, invoiceId: string): P
   const { data: invoice, error } = await db.from('invoices').select('*').eq('id', invoiceId).maybeSingle()
   if (error) throw new Error(`invoice ${invoiceId}: ${error.message}`)
   if (!invoice) return null
-  const [rideR, itemsR, servicesR, notesR, incomesR] = await Promise.all([
+  const [rideR, itemsR, servicesR, notesR, incomesR, dutiesR] = await Promise.all([
     invoice.ride_id ? db.from('rides').select('*').eq('id', invoice.ride_id).maybeSingle() : Promise.resolve({ data: null, error: null }),
     db.from('invoice_items').select('*').eq('invoice_id', invoiceId).order('position', { ascending: true, nullsFirst: false }).order('created_at', { ascending: true }),
     db.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
     db.from('invoice_notes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
     db.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true }),
+    db.from('invoice_duties').select('id, estimated_seconds').eq('invoice_id', invoiceId),
   ])
-  for (const [n, r] of [['ride', rideR], ['items', itemsR], ['services', servicesR], ['notes', notesR], ['incomes', incomesR]] as const) {
+  for (const [n, r] of [['ride', rideR], ['items', itemsR], ['services', servicesR], ['notes', notesR], ['incomes', incomesR], ['duties', dutiesR]] as const) {
     if (r.error) throw new Error(`invoice ${invoiceId} ${n}: ${r.error.message}`)
   }
   const ride = (rideR.data as Record<string, any> | null) || null
@@ -52,7 +54,9 @@ export async function loadInvoiceMoney(db: SupabaseClient, invoiceId: string): P
   const client = (clientR.data as Record<string, any> | null) || null
 
   const items = (itemsR.data || []) as Record<string, any>[]
-  const services = (servicesR.data || []) as Record<string, any>[]
+  // hours = 2× the linked duty's estimate — DISPLAY ONLY for the client (lib/serviceHours, 26/11/2026); never in the money
+  const dutySecs = Object.fromEntries((dutiesR.data || []).map((d: any) => [String(d.id), num(d.estimated_seconds)]))
+  const services: Record<string, any>[] = ((servicesR.data || []) as Record<string, any>[]).map(s => ({ ...s, hours: serviceHours(s.duty_id, dutySecs) }))
   const itemLine = (p: Record<string, any>) => num(p.unit_price) * num(p.quantity)
   const out = foraDoDinheiro(items, itemLine, () => invoiceId)
   const live = items.filter(p => !out.has(p))

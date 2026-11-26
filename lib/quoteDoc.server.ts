@@ -116,6 +116,7 @@ export function buildRevision(b: InvoiceMoneyBundle, terms: Terms, plan: PlanRow
     return {
       id: String(row.id), kind, description: String(row.description || ''), unit_price: r2(unit), quantity: qty, total,
       kit_group: row.kit_group || null, kit_name: row.kit_name || null,
+      ...(kind === 'service' && row.hours != null ? { hours: Number(row.hours) } : {}),   // 2× the duty — display only (lib/serviceHours)
       display: total !== 0 ? 'price' : (hasPackage || row.kit_group ? 'included' : 'courtesy'),
     }
   }

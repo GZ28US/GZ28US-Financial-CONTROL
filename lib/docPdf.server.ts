@@ -41,13 +41,13 @@ const L = {
   en: { quoteNo: 'Quote #', receiptNo: 'Receipt #', clientT: 'Client', name: 'Name', address: 'Address', cityst: 'City/ST', phone: 'Phone', email: 'E-Mail',
     vehicle: 'Vehicle', make: 'Make / Brand', model: 'Model', yearvin: 'Year / VIN', colorplate: 'Color / Plate / Mi', pack: 'Service',
     items: 'Items', desc: 'Description', unit: 'Unit Price', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', itemsTotal: 'Items Total',
-    services: 'Services', servicesTotal: 'Services Total', itemsServices: 'Items + Services', grand: 'Grand Total', notesT: 'Notes',
+    services: 'Services', servicesTotal: 'Services Total', hours: 'Hours', itemsServices: 'Items + Services', grand: 'Grand Total', notesT: 'Notes',
     plan: 'Payment Plan', due: 'Due', amount: 'Amount', planTotal: 'Total', net: (n: number) => `Net ${n} days`, payment: 'Payment',
     installment: 'Installment', method: 'Method', date: 'Date', reference: 'Reference', received: 'Amount Received', page: 'Page' },
   pt: { quoteNo: 'Orçamento #', receiptNo: 'Recibo #', clientT: 'Cliente', name: 'Nome', address: 'Endereço', cityst: 'Cidade/UF', phone: 'Telefone', email: 'E-Mail',
     vehicle: 'Veículo', make: 'Marca / Fabricante', model: 'Modelo', yearvin: 'Ano / VIN', colorplate: 'Cor / Placa / Mi', pack: 'Serviço',
     items: 'Itens', desc: 'Descrição', unit: 'Preço Unit.', qt: 'Qt', total: 'Total', subtotal: 'Sub-Total', itemsTotal: 'Total dos Itens',
-    services: 'Serviços', servicesTotal: 'Total dos Serviços', itemsServices: 'Itens + Serviços', grand: 'Total Geral', notesT: 'Observações',
+    services: 'Serviços', servicesTotal: 'Total dos Serviços', hours: 'Horas', itemsServices: 'Itens + Serviços', grand: 'Total Geral', notesT: 'Observações',
     plan: 'Plano de Pagamento', due: 'Vencimento', amount: 'Valor', planTotal: 'Total', net: (n: number) => `${n} dias`, payment: 'Pagamento',
     installment: 'Parcela', method: 'Meio', date: 'Data', reference: 'Referência', received: 'Valor Recebido', page: 'Página' },
 }
@@ -218,11 +218,14 @@ export function revisionPdf(o: { document: any; seq: number; sha256: string; app
   }
   if (services.length) {
     y = secTitle(pdf, k, y, T.services)
-    const body: any[] = services.map((l: any) => [cell(l.description), cell(shown(l), R)])
-    body.push([cell(T.servicesTotal, { ...R, ...BLACKROW }), cell(zeroTotal(services, Number(tot.services ?? sumOf(services))), { ...R, ...BLACKROW })])
+    // HOURS = 2× the linked duty — display only (lib/serviceHours, 26/11/2026); the column exists only when a line has hours
+    const hrsOf = (h: any, lang: string) => h == null ? '' : `${lang === 'pt' ? String(h).replace('.', ',') : String(h)} h`
+    const withH = services.some((l: any) => l.hours != null)
+    const body: any[] = services.map((l: any) => withH ? [cell(l.description), cell(hrsOf(l.hours, lang), R), cell(shown(l), R)] : [cell(l.description), cell(shown(l), R)])
+    body.push([cell(T.servicesTotal, { ...R, ...BLACKROW }, withH ? 2 : 1), cell(zeroTotal(services, Number(tot.services ?? sumOf(services))), { ...R, ...BLACKROW })])
     autoTable(pdf, { ...tableBase(), startY: y,
-      head: [[pdfText(T.desc.toUpperCase()), cell(T.total.toUpperCase(), R)]],
-      body, columnStyles: { 0: { cellWidth: k.CW * 0.80 }, 1: { cellWidth: k.CW * 0.20 } } })
+      head: [withH ? [pdfText(T.desc.toUpperCase()), cell(T.hours.toUpperCase(), R), cell(T.total.toUpperCase(), R)] : [pdfText(T.desc.toUpperCase()), cell(T.total.toUpperCase(), R)]],
+      body, columnStyles: withH ? { 0: { cellWidth: k.CW * 0.68 }, 1: { cellWidth: k.CW * 0.12 }, 2: { cellWidth: k.CW * 0.20 } } : { 0: { cellWidth: k.CW * 0.80 }, 1: { cellWidth: k.CW * 0.20 } } })
     y = (pdf as any).lastAutoTable.finalY + px(7)
   }
 

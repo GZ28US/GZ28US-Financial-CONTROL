@@ -6,6 +6,7 @@ import Header from '@/components/Header'
 import DatePicker from '@/components/DatePicker'
 import { supabase } from '@/lib/supabase'
 import { flTaxStatus, invoiceMoney, FL_TAX_STATUS_LABEL, FL_TAX_RATE_LABEL, type FlTaxOverride } from '@/lib/flTax'
+import { serviceHours, fmtServiceHours } from '@/lib/serviceHours'
 import { formatUSD, BASE_PATH, pad3, CODE_PREFIX, partMatches, toWaNumber, partStatusBadge, dutyEstSeconds, dutyEstHours, fmtDutyEst } from '@/lib/utils'
 import { nextFreeCode } from '@/lib/rideCodes'
 import { sessionHeaders } from '@/lib/sessionHeaders'
@@ -33,7 +34,7 @@ import { isPackageInvoice } from '@/lib/packageRule'
 // cancel_status (14/set/2026 — Márcio: «deixe nas invoices como estornado, e faça os controles financeiros»): o item cobrado
 // também se estorna. Fica na lista, riscado, e sai de todo total (lib/estorno.ts). Coluna: MIGRATION_invoice_items_cancel_status.sql.
 type Part = { id?: string; description: string; unit_price: string; quantity: string; base_cost?: string; payment_date?: string | null; kit_group?: string; kit_name?: string; source_item?: string; mirror_src?: string; cancel_status?: CancelStatus | null }
-type Service = { id?: string; description: string; price: string; payment_date?: string | null }
+type Service = { id?: string; description: string; price: string; payment_date?: string | null; duty_id?: string | null }
 // paid_at: ISO timestamp string when the user explicitly clicked PAID. Empty = UNPAID.
 // date_label: a milestone marker ("ARRIVAL" / "CONCLUSION") used
 // INSTEAD of a calendar payment_date. Empty = a real date (or undated) is used.
@@ -688,7 +689,7 @@ export default function EditInvoicePage() {
     if (partsData) setParts(partsData.map(p => ({ id: p.id, description: p.description, unit_price: String(p.unit_price), quantity: String(p.quantity), base_cost: p.base_cost != null ? String(p.base_cost) : (savedFactor !== 0 ? ((Number(p.unit_price) || 0) / savedFactor).toFixed(2) : String(p.unit_price)), payment_date: p.payment_date ?? null, kit_group: p.kit_group || undefined, kit_name: p.kit_name || undefined, source_item: p.source_item || undefined, mirror_src: p.mirror_src || undefined, cancel_status: normCancelStatus(p.cancel_status) })))
 
     const { data: servicesData } = await supabase.from('invoice_services').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
-    if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null })))
+    if (servicesData) setServices(servicesData.map(s => ({ id: s.id, description: s.description, price: String(s.price), payment_date: s.payment_date ?? null, duty_id: s.duty_id ?? null })))
 
     const { data: paymentsData } = await supabase.from('invoice_incomes').select('*').eq('invoice_id', invoiceId).order('created_at', { ascending: true })
     if (paymentsData) setPayments(sortByDateAsc(paymentsData.map(p => ({
@@ -2104,6 +2105,7 @@ export default function EditInvoicePage() {
     if (svc.id) setRemovedServiceIds(prev => [...prev, svc.id!])
     setServices(services.filter((_, i) => i !== index))
   }
+  const svcHoursOf = (dutyId?: string | null) => serviceHours(dutyId, Object.fromEntries(duties.filter(d => d.id).map(d => [d.id, d.estimated_seconds || 0])))
   function startEditService(index: number) { setEditingServiceIndex(index); setEditingService({ ...services[index] }) }
   // Toggle a service's PAID status (payment_date = today / cleared). Persists immediately for saved services.
   async function toggleServicePaid(index: number) {
@@ -2119,7 +2121,7 @@ export default function EditInvoicePage() {
     if (!editingService.description) { alert('Please enter a description'); return }
     const svc = services[editingServiceIndex!]
     if (svc.id) {
-      const { error } = await supabase.from('invoice_services').update({ description: editingService.description, price: parseFloat(editingService.price) || 0 }).eq('id', svc.id)
+      const { error } = await supabase.from('invoice_services').update({ description: editingService.description, price: parseFloat(editingService.price) || 0, duty_id: editingService.duty_id || null }).eq('id', svc.id)
       if (error) { alert(error.message); return }
     }
     const updated = [...services]; updated[editingServiceIndex!] = { ...editingService, id: svc.id }; setServices(updated)
@@ -2832,7 +2834,7 @@ export default function EditInvoicePage() {
     }
     const newServices = services.filter(s => !s.id)
     if (newServices.length > 0) {
-      const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0, payment_date: isValidDate(s.payment_date || '') ? s.payment_date : null })))
+      const { error: e } = await supabase.from('invoice_services').insert(newServices.map(s => ({ invoice_id: invoiceId, description: s.description, price: parseFloat(s.price) || 0, duty_id: s.duty_id && duties.some(d => d.id === s.duty_id) ? s.duty_id : null, payment_date: isValidDate(s.payment_date || '') ? s.payment_date : null })))
       if (e) { alert(e.message); return }
     }
     // Persist the auto-calculated Full Project Labor on an existing row (the
@@ -4364,6 +4366,11 @@ export default function EditInvoicePage() {
                             </div>
                           </div>
                         </div>
+                        {duties.some(d => d.id) && <div><label className="block mb-1 text-sm text-gray-400">DUTY — the client sees 2× its hours on this service (display only, never in the price)</label>
+                          <select value={editingService.duty_id || ''} onChange={(e) => setEditingService({ ...editingService, duty_id: e.target.value || null })} className={`${smallInputClass} w-full`}>
+                            <option value="">— no duty (no hours shown) —</option>
+                            {duties.filter(d => d.id).map(d => <option key={d.id} value={d.id}>{d.description}{d.estimated_seconds ? ` · ${dutyEstHours(d.estimated_seconds)} h → shows ${fmtServiceHours(svcHoursOf(d.id))}` : ' · no estimate'}</option>)}
+                          </select></div>}
                         <div className="flex gap-3">
                           <button onClick={saveEditService} className="bg-green-700 hover:bg-green-600 px-5 py-3 rounded-2xl font-bold text-lg">SAVE</button>
                           <button onClick={cancelEditService} className="bg-gray-600 hover:bg-gray-500 px-5 py-3 rounded-2xl font-bold text-lg">CANCEL</button>
@@ -4373,7 +4380,7 @@ export default function EditInvoicePage() {
                       <div className={`flex items-center justify-between gap-4 px-4 py-3 ${index < services.length - 1 ? 'border-b border-gray-700' : ''}`}>
                         <div className="flex-1 min-w-0">
                           <p className={`text-base font-bold truncate ${(isQuote || isValidDate(svc.payment_date || '')) ? '' : 'text-yellow-400'}`} title={serviceDisplayName(svc.description)}>{serviceDisplayName(svc.description)}{(isQuote || isValidDate(svc.payment_date || '')) ? '' : ' — PENDING'}</p>
-                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? ZERO : formatUSD(parseFloat(svc.price))}</p>
+                          <p className="text-sm text-gray-400">{!svc.price || parseFloat(svc.price) === 0 ? ZERO : formatUSD(parseFloat(svc.price))}{svcHoursOf(svc.duty_id) != null ? ` · ${fmtServiceHours(svcHoursOf(svc.duty_id))} (2× duty)` : ''}</p>
                           {!isQuote && <p className="text-sm text-gray-500">{isValidDate(svc.payment_date || '') ? `Paid: ${formatDate(svc.payment_date || '')}` : 'Not paid yet'}</p>}
                         </div>
                         <div className="flex gap-2 shrink-0">
